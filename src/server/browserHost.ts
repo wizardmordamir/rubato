@@ -24,11 +24,18 @@ import type {
 } from '../shared/automation';
 
 // The Node host ships as raw .mjs in dev (src/scripts/) and is copied verbatim
-// into dist/ when published — resolve whichever exists.
+// into dist/ when published — resolve whichever exists. A bun-COMPILED binary has
+// neither src/ nor dist/ on disk (and no node_modules), so we also look beside the
+// executable: a friend app that wants runs to work from its binary ships
+// browser-host.mjs (and a `playwright` install) next to it. The probe + spawn use
+// `cwd = dirname(HOST_SCRIPT)`, so a beside-the-binary node_modules resolves too.
 const ROOT = findPackageRoot(import.meta.dir);
 const HOST_SCRIPT =
-  [resolve(ROOT, 'src/scripts/browser-host.mjs'), resolve(ROOT, 'dist/browser-host.mjs')].find(existsSync) ??
-  resolve(ROOT, 'src/scripts/browser-host.mjs');
+  [
+    resolve(dirname(process.execPath), 'browser-host.mjs'),
+    resolve(ROOT, 'src/scripts/browser-host.mjs'),
+    resolve(ROOT, 'dist/browser-host.mjs'),
+  ].find(existsSync) ?? resolve(ROOT, 'src/scripts/browser-host.mjs');
 
 // The host exits with this code when a headed browser is closed by the user (not
 // by us) — see browser-host.mjs. Kept in sync by hand across the stdio boundary.
