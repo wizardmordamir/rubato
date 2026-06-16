@@ -266,10 +266,16 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
   }
 
   // Web-UI page enablement: GET resolves toggles for the nav; POST persists changes.
+  // The nav is scoped to the host's feature set:
+  //   • rubato's own boot passes no pluginPages → the FULL built-in page set
+  //     (resolvePages over UI_PAGES, each default-enabled).
+  //   • A friend app passes pluginPages → ONLY those pages (an empty base), so its
+  //     nav shows exactly the plugins it assembled, not all of rubato's pages.
   // A plugin's pages are enabled by default (you included the plugin, so you want
-  // its page) but an explicit `ui.pages.<key>` config toggle still wins. This only
-  // affects a friend app that passes pluginPages; rubato's own boot passes none.
+  // its page) but an explicit `ui.pages.<key>` config toggle still wins.
   if (pathname === '/api/ui') {
+    const friendMode = (opts.pluginPages ?? []).length > 0;
+    const basePages = (ui: UiConfig | undefined): Record<string, boolean> => (friendMode ? {} : resolvePages(ui));
     const withPluginPages = (pages: Record<string, boolean>, ui: UiConfig | undefined): Record<string, boolean> => {
       for (const p of opts.pluginPages ?? []) pages[p.key] = ui?.pages?.[p.key] ?? true;
       return pages;
@@ -283,10 +289,10 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
         return jsonError('invalid JSON body', 400);
       }
       const ui = await setUiConfig(patch);
-      return json({ pages: withPluginPages(resolvePages(ui), ui), admin: ui.admin === true } satisfies UiState);
+      return json({ pages: withPluginPages(basePages(ui), ui), admin: ui.admin === true } satisfies UiState);
     }
     return json({
-      pages: withPluginPages(resolvePages(cfg.ui), cfg.ui),
+      pages: withPluginPages(basePages(cfg.ui), cfg.ui),
       admin: cfg.ui?.admin === true,
     } satisfies UiState);
   }
