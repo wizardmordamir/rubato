@@ -175,6 +175,20 @@ describe('applyDrainPatch', () => {
     expect(applyDrainPatch(next, { model: '' }).model).toBeUndefined();
   });
 
+  test('fleetTiers: sets tiers (clamped) + syncs jobs; null/empty reverts to flat', () => {
+    const fleet = applyDrainPatch(defaultDrainConfig(), {
+      fleetTiers: [
+        { modelAlias: 'opus', slots: 2, thinkingLevel: 'high', fastMode: false },
+        { modelAlias: 'sonnet', slots: 12, thinkingLevel: 'off', fastMode: true }, // slots clamped to 8
+      ],
+    });
+    expect(fleet.fleetTiers?.map((t) => t.slots)).toEqual([2, 8]);
+    expect(fleet.jobs).toBe(10); // jobs kept in sync as the sum of tier slots
+    // null and [] both clear fleet mode back to flat.
+    expect(applyDrainPatch(fleet, { fleetTiers: null }).fleetTiers).toBeUndefined();
+    expect(applyDrainPatch(fleet, { fleetTiers: [] }).fleetTiers).toBeUndefined();
+  });
+
   test('resumeAt: a positive epoch sets the gate; 0 / negative clears it', () => {
     const armed = applyDrainPatch(parseDrainConfig('ENABLED=1\n'), { resumeAt: 1781560000 });
     expect(armed.resumeAt).toBe(1781560000);
