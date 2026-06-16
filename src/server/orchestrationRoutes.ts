@@ -37,6 +37,7 @@ import {
   deleteFleetPreset,
   getWatchdog,
   listFleetPresets,
+  reconcileFleet,
   restartDrainer,
   saveFleetPreset,
   setWatchdogInterval,
@@ -65,6 +66,16 @@ export async function handleOrchestrationApi(pathname: string, req: Request): Pr
   // ── Named fleet presets (save / load / swap worker-mix configs) ─────────────
   if (pathname.startsWith('/api/orchestration/fleet-presets')) {
     return handleFleetPresets(pathname, req);
+  }
+
+  // POST /api/orchestration/fleet/reconcile → grow the fleet to cover unservable tasks.
+  if (pathname === '/api/orchestration/fleet/reconcile') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    try {
+      return json(await reconcileFleet());
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'failed to reconcile fleet', 500);
+    }
   }
 
   // GET /api/orchestration/claude-usage → live rate-limit probe + key status.
@@ -402,6 +413,10 @@ export function sanitizePatch(body: DrainConfigPatch): DrainConfigPatch | null {
   if (body.fastMode !== undefined) {
     if (typeof body.fastMode !== 'boolean') return null;
     patch.fastMode = body.fastMode;
+  }
+  if (body.autoTier !== undefined) {
+    if (typeof body.autoTier !== 'boolean') return null;
+    patch.autoTier = body.autoTier;
   }
   if (body.startDir !== undefined) {
     if (typeof body.startDir !== 'string') return null;

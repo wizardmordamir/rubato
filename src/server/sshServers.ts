@@ -8,7 +8,7 @@
  * in a network-exposed deployment.
  */
 
-import { type SshServerConfig, expandPath } from '../lib/config';
+import { expandPath, type SshServerConfig } from '../lib/config';
 
 /** Human-readable label for a server. */
 export function serverLabel(s: SshServerConfig): string {
@@ -49,7 +49,7 @@ export async function openSshInTerminal(server: SshServerConfig): Promise<SshOpe
   const cmd = buildSshCommand(server);
 
   // iTerm2 — preferred when available.
-  if (Bun.which('osascript') && await isAppInstalled('iTerm')) {
+  if (Bun.which('osascript') && (await isAppInstalled('iTerm'))) {
     const script = [
       'tell application "iTerm"',
       '  activate',

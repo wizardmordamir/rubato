@@ -340,6 +340,12 @@ export interface DrainConfig {
   /** `FAST_MODE` — whether `/fast` faster-output mode is requested (optional knob). */
   fastMode?: boolean;
   /**
+   * `AUTO_TIER` — when on, the fleet auto-grows to cover any unblocked task no
+   * current tier can claim: adding 1 slot of the needed model (at the task's
+   * thinking level). Lets you queue any difficulty and trust something will take it.
+   */
+  autoTier?: boolean;
+  /**
    * `RESUME_AT` — a custom "don't start a new drain until this time" gate, as a
    * UNIX epoch in SECONDS. While set and in the future, the (armed) watchdog ticks
    * but stays idle; once now ≥ `resumeAt` the watchdog clears it and proceeds.
@@ -369,6 +375,8 @@ export interface DrainConfigPatch {
   addDir?: string;
   thinkingLevel?: ThinkingLevel;
   fastMode?: boolean;
+  /** Toggle AUTO_TIER (auto-grow the fleet to cover otherwise-unservable tasks). */
+  autoTier?: boolean;
   /** Set a custom resume time (epoch seconds); `0` / a past time clears the gate. */
   resumeAt?: number;
   /** Set fleet tiers (fleet mode); `null` or `[]` clears fleet mode (reverts to flat). */
@@ -404,7 +412,15 @@ export const DRAIN_SETTING_CLASS: Record<string, DrainSettingClass> = {
 };
 
 /** The drain.config fields fixed at launch — a change to any needs a restart to apply. */
-export const NEEDS_RESTART_FIELDS = ['jobs', 'model', 'thinkingLevel', 'fastMode', 'startDir', 'addDir', 'fleetTiers'] as const;
+export const NEEDS_RESTART_FIELDS = [
+  'jobs',
+  'model',
+  'thinkingLevel',
+  'fastMode',
+  'startDir',
+  'addDir',
+  'fleetTiers',
+] as const;
 export type NeedsRestartField = (typeof NEEDS_RESTART_FIELDS)[number];
 
 /** One selectable worker model for the MODEL dropdown (id + human label). */
@@ -649,15 +665,134 @@ export interface WorkerInstance {
   thinkingLevel?: string;
 }
 
-/** A problem / attention item surfaced to the dashboard. */
+/** A one-click remediation the dashboard can offer for a {@link Problem}. */
+export interface ProblemFix {
+  /** Which action resolves it (maps to a watchdog endpoint / config change). */
+  action: 'wake' | 'enable' | 'start' | 'restart' | 'add-tier' | 'none';
+  /** Button label, e.g. "Wake workers". */
+  label: string;
+  /**
+   * True when the system ALREADY self-heals this (the watchdog relaunches, the
+   * drainer auto-restarts) — render as an informational "auto-fixing" note rather
+   * than a manual button.
+   */
+  auto?: boolean;
+}
+
+/**
+ * A problem / attention item surfaced to the dashboard. Beyond the raw `detail`
+ * paragraph, it carries a friendly `category`, scannable `fields`, and an optional
+ * one-click `fix` so the UI can show structured values (not prose) and self-heal.
+ */
 export interface Problem {
-  kind: 'blocked' | 'worker-error' | 'watchdog-disabled' | 'stale-instance' | 'no-runner' | 'missing-workers';
+  kind:
+    | 'blocked'
+    | 'worker-error'
+    | 'watchdog-disabled'
+    | 'stale-instance'
+    | 'no-runner'
+    | 'missing-workers'
+    | 'unservable-tasks';
   /** Short title. */
   title: string;
-  /** Optional detail (a reason, an error excerpt). */
+  /** Optional detail (a reason, an error excerpt) — shown only when expanded. */
   detail?: string;
   /** Severity for tone. */
   severity: 'warn' | 'error';
+  /** Friendly one-word category for the chip ("Capacity", "Blocked", "Coverage", "Worker"). */
+  category?: string;
+  /** Structured key/value fields for at-a-glance scanning (no paragraph reading). */
+  fields?: { label: string; value: string }[];
+  /** A suggested/auto remediation, when one exists. */
+  fix?: ProblemFix;
+}
+
+/** Per-configured-slot worker status — drives the color-coded Worker rows. */
+export type WorkerSlotStatus =
+  /** Alive worker actively on a claimed task. */
+  | 'working'
+  /** Alive worker with no task right now (between tasks / nothing for its model). */
+  | 'waiting'
+  /** Drainer running but this slot has no live process (exited / short-handed). */
+  | 'missing'
+  /** Drainer not running — nothing to run. */
+  | 'stopped';
+
+/**
+ * One CONFIGURED worker slot — always rendered (3 configured → 3 rows), so a
+ * short-handed drainer is visually obvious. Combines the slot's intended
+ * model/thinking with the live process + claimed task backing it (if any).
+ */
+export interface FleetSlot {
+  /** 1-based slot id (sequential across tiers). Matches {@link WorkerProcess.id}. */
+  id: number;
+  /** Model alias for this slot ('opus' | 'sonnet' | …). */
+  modelAlias: string;
+  /** Human model label ("Opus 4.8"). */
+  modelLabel: string;
+  /** Thinking cap for this slot. */
+  thinkingLevel: ThinkingLevel;
+  /** Whether /fast is requested for this slot. */
+  fastMode: boolean;
+  /** 0-based fleet tier this slot belongs to (0 in flat mode). */
+  tier: number;
+  /** Derived status. */
+  status: WorkerSlotStatus;
+  /** A short, scannable reason for the status ("No task for this model"). */
+  reason: string;
+  /** OS pid of the live worker process backing this slot, when alive. */
+  pid?: number;
+  /** The drainer (parent) pid this slot runs under, when running. */
+  drainPid?: number;
+  /** The task title this slot is working, when on a task. */
+  task?: string;
+  /** TASKS.md line of the current task (jump-to-edit). */
+  taskLine?: number;
+  /** ISO start of the current task (when working). */
+  startedAt?: string;
+  /** Seconds elapsed on the current task (server-computed; client refines against `now`). */
+  elapsedSeconds?: number;
+  /** ISO the slot's last task finished (between tasks). */
+  endedAt?: string;
+  /** Tasks this slot completed this drain session. */
+  tasksCompleted?: number;
+  /** Whether the slot's most recent task errored (an error tint, even while waiting). */
+  lastErrored?: boolean;
+}
+
+/** A ready (unblocked) task as the snapshot exposes it — enough to judge fleet coverage. */
+export interface ReadyTask {
+  title: string;
+  /** TASKS.md heading line. */
+  line: number;
+  /** Per-task `(model:X)` marker (alias), when present. */
+  model?: string;
+  /** Per-task `(think:Y)` marker, when present. */
+  thinkingLevel?: string;
+}
+
+/** Outcome of growing the fleet to cover otherwise-unservable tasks (the reconcile action). */
+export interface ReconcileFleetResult {
+  /** The tiers added (one 1-slot tier per missing model); empty when nothing to do. */
+  added: FleetTier[];
+  /** The model aliases that were covered. */
+  models: string[];
+  /** The resulting config. */
+  config: DrainConfig;
+  /** A graceful restart that fired so the new tier takes effect now (when a drainer was live). */
+  restarted?: RestartResult;
+}
+
+/** Fleet-coverage summary: which unblocked tasks no current tier can ever claim. */
+export interface UnservableSummary {
+  /** Ready tasks whose `(model:X)` matches no tier in the fleet (model-match rule). */
+  tasks: ReadyTask[];
+  /** Total count (== tasks.length; convenience for headers). */
+  count: number;
+  /** The distinct model aliases that would need a tier to clear the backlog. */
+  neededModels: string[];
+  /** Whether AUTO_TIER is on (the fleet auto-grows to cover unservable tasks). */
+  autoTier: boolean;
 }
 
 /** One log/state file the dashboard can tail/open. */
@@ -745,12 +880,22 @@ export interface WatchdogSnapshot {
   pending: PendingChange[];
   /** Live worker processes (from the drainer's per-worker PID files). */
   workers: WorkerProcess[];
+  /**
+   * One row PER CONFIGURED SLOT (3 configured → 3 rows), each combining its
+   * intended model/thinking with the live process + claimed task backing it — so a
+   * short-handed drainer ("3 configured, 1 live") is visually obvious.
+   */
+  slots: FleetSlot[];
   /** In-progress claimed tasks (from the board's `[~]` entries). */
   instances: WorkerInstance[];
   /** Per-status board counts. */
   counts: WatchdogCounts;
   /** Titles of the ready tasks (what's next up), in board order. */
   readyTitles: string[];
+  /** Ready (unblocked) tasks with their per-task model/thinking markers, in board order. */
+  readyTasks: ReadyTask[];
+  /** Fleet-coverage summary — unblocked tasks no current tier can ever claim. */
+  unservable: UnservableSummary;
   /** The last watchdog check, when the status file exists. */
   status?: WatchdogStatusLine;
   /** Launchd agent info (interval / program / loaded). */

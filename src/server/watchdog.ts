@@ -26,9 +26,12 @@ import {
   changedDrainFields,
   computePending,
   defaultDrainConfig,
+  deriveFleetSlots,
   deriveInstances,
   deriveNextRun,
   deriveProblems,
+  deriveUnservable,
+  effectiveSlots,
   emptyTaskBoard,
   fleetPresetId,
   needsRestartFieldChanged,
@@ -45,6 +48,7 @@ import {
   serializeFleetPresets,
   setPlistInterval,
   summarizeRunEntries,
+  tiersToCoverUnservable,
   upsertFleetPreset,
   wakeAction,
 } from '../lib/orchestration';
@@ -60,6 +64,8 @@ import type {
   LogFileInfo,
   LogTail,
   Problem,
+  ReadyTask,
+  ReconcileFleetResult,
   RestartResult,
   SaveFleetPreset,
   WatchdogAgentResult,
@@ -397,6 +403,24 @@ export async function getWatchdog(): Promise<WatchdogSnapshot> {
   // not produce phantom "pending" markers.
   const liveActiveRun = runner.running ? activeRun : undefined;
   const pending = computePending(config, liveActiveRun);
+  // Ready (unblocked) tasks with their per-task model/thinking markers — feeds both
+  // the per-slot "waiting for this model" reason and the fleet-coverage check.
+  const readyTasks: ReadyTask[] = board.groups.ready.map((t) => ({
+    title: t.title,
+    line: t.line,
+    ...(t.meta.model ? { model: t.meta.model } : {}),
+    ...(t.meta.thinkingLevel ? { thinkingLevel: t.meta.thinkingLevel } : {}),
+  }));
+  const unservable = deriveUnservable(readyTasks, config);
+  // One row per CONFIGURED slot, combined with its live process + claimed task.
+  const slots = deriveFleetSlots({
+    running: runner.running,
+    ...(runner.pid ? { drainPid: runner.pid } : {}),
+    specs: effectiveSlots(runner.running, liveActiveRun, config),
+    workers,
+    instances,
+    readyTasks,
+  });
   const problems: Problem[] = deriveProblems({
     board,
     config,
@@ -404,6 +428,7 @@ export async function getWatchdog(): Promise<WatchdogSnapshot> {
     instances,
     workerErrors,
     liveWorkers,
+    unservable,
   });
 
   return {
@@ -415,6 +440,7 @@ export async function getWatchdog(): Promise<WatchdogSnapshot> {
     ...(liveActiveRun ? { activeRun: liveActiveRun } : {}),
     pending,
     workers,
+    slots,
     instances,
     counts: {
       ready: board.counts.ready,
@@ -424,6 +450,8 @@ export async function getWatchdog(): Promise<WatchdogSnapshot> {
       done: board.counts.done,
     },
     readyTitles: board.groups.ready.map((t) => t.title),
+    readyTasks,
+    unservable,
     ...(status ? { status } : {}),
     launchd,
     ...(tick ? { lastRun: tick } : {}),
@@ -536,6 +564,37 @@ export async function applyFleetPreset(id: string): Promise<ApplyFleetPresetResu
   if (!preset) throw new Error(`unknown fleet preset: ${id}`);
   const result = await applyDrainConfigPatch({ fleetTiers: preset.tiers });
   return { ...result, preset };
+}
+
+/**
+ * Grow the fleet so every unblocked task has a tier that can claim it — add a
+ * 1-slot tier per needed model (at the task's thinking level), then (per the
+ * auto-tier behavior) apply + restart so it takes effect immediately. A no-op when
+ * nothing is unservable. The pure decision lives in {@link tiersToCoverUnservable};
+ * this is just the fs/process seam.
+ */
+export async function reconcileFleet(): Promise<ReconcileFleetResult> {
+  const p = await watchdogPaths();
+  const config = await loadConfig(p.config);
+  const boardText = await readMaybe(p.queue);
+  const board = boardText === null ? emptyTaskBoard() : parseTaskBoard(boardText);
+  const readyTasks: ReadyTask[] = board.groups.ready.map((t) => ({
+    title: t.title,
+    line: t.line,
+    ...(t.meta.model ? { model: t.meta.model } : {}),
+    ...(t.meta.thinkingLevel ? { thinkingLevel: t.meta.thinkingLevel } : {}),
+  }));
+  const tiers = tiersToCoverUnservable(deriveUnservable(readyTasks, config), config);
+  if (tiers.length === 0) return { added: [], models: [], config };
+
+  const before = new Set((config.fleetTiers ?? []).map((t) => t.modelAlias));
+  const added = tiers.filter((t) => !before.has(t.modelAlias));
+  const result = await applyDrainConfigPatch({ fleetTiers: tiers });
+  // Auto-add → apply + restart. If AUTO_RESTART already fired one, reuse it; else
+  // force a graceful restart so the new tier picks up work immediately.
+  let restarted = result.autoRestart;
+  if (!restarted && (await loadRunner(p.lock)).running) restarted = await restartDrainer('graceful');
+  return { added, models: added.map((t) => t.modelAlias), config: result.config, ...(restarted ? { restarted } : {}) };
 }
 
 // ── control: the launchd tick interval (the headline "update interval" ask) ───

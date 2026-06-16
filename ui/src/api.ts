@@ -1419,6 +1419,7 @@ import type {
   OrchestrationFileDoc,
   OrchestrationFileInfo,
   OrchestrationOverview,
+  ReconcileFleetResult,
   RestartResult,
   SaveFleetPreset,
   WatchdogAgentResult,
@@ -1435,8 +1436,14 @@ export type {
   DrainSettingClass,
   FileLocation,
   FleetPreset,
+  FleetSlot,
   FleetTier,
+  ProblemFix,
+  ReadyTask,
+  ReconcileFleetResult,
   SaveFleetPreset,
+  UnservableSummary,
+  WorkerSlotStatus,
   HistoryEntry,
   LaunchdInfo,
   LogFileInfo,
@@ -1565,6 +1572,8 @@ export async function deleteFleetPreset(id: string): Promise<FleetPreset[]> {
 /** Apply (swap to) a named fleet preset — writes its tiers into drain.config (auto-restarts when armed). */
 export const applyFleetPreset = (id: string) =>
   postJson<ApplyFleetPresetResult>(`/api/orchestration/fleet-presets/${encodeURIComponent(id)}/apply`, {});
+/** Grow the fleet to cover unservable tasks — add a tier per needed model, apply + restart. */
+export const reconcileFleet = () => postJson<ReconcileFleetResult>("/api/orchestration/fleet/reconcile", {});
 
 // ── Orchestration Processing (per-category timing analytics) ─────────────────
 

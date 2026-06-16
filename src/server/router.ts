@@ -478,7 +478,11 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
     if (req.method !== 'POST') return jsonError('use POST', 405);
     const { openSshInTerminal } = await import('./sshServers');
     let body: { index?: unknown } = {};
-    try { body = (await req.json()) as typeof body; } catch { /* no body */ }
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      /* no body */
+    }
     const idx = typeof body.index === 'number' ? body.index : 0;
     const cfg = await loadConfig();
     const servers = cfg.servers?.ssh ?? [];
