@@ -5,27 +5,23 @@
  * or grab a curated subset from here.
  */
 
-export { automationsPlugin, migrateAutomationsDb } from './automations';
 export type { AutomationsPluginOptions } from './automations';
-
-export { boardPlugin, migrateBoardDb } from './board';
+export { automationsPlugin, migrateAutomationsDb } from './automations';
 export type { BoardPluginOptions } from './board';
-
-export { excelPlugin, migrateExcelDb } from './excel';
+export { boardPlugin, migrateBoardDb } from './board';
 export type { ExcelPluginOptions } from './excel';
-
-export { linksPlugin, migrateLinksDb } from './links';
+export { excelPlugin, migrateExcelDb } from './excel';
 export type { LinksPluginOptions } from './links';
-
-export { vaultPlugin, migrateVaultDb } from './vault';
+export { linksPlugin, migrateLinksDb } from './links';
 export type { VaultPluginOptions } from './vault';
+export { migrateVaultDb, vaultPlugin } from './vault';
 
+import type { RubatoPlugin } from '../plugin/types';
 import { automationsPlugin } from './automations';
 import { boardPlugin } from './board';
 import { excelPlugin } from './excel';
 import { linksPlugin } from './links';
 import { vaultPlugin } from './vault';
-import type { RubatoPlugin } from '../plugin/types';
 
 /** The full set of plugins rubato uses when running as the monolith. */
 export const ALL_PLUGINS: RubatoPlugin[] = [

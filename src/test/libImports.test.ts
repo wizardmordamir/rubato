@@ -82,9 +82,7 @@ describe('library import hygiene', () => {
     // and `*.css` entries are static shipped stylesheets (e.g. `./styles.css`) —
     // both are excluded from this JS dist-entry drift check.
     const actual = new Set(
-      Object.keys(pkg.exports).filter(
-        (k) => k !== './package.json' && !k.startsWith('./ui/') && !k.endsWith('.css'),
-      ),
+      Object.keys(pkg.exports).filter((k) => k !== './package.json' && !k.startsWith('./ui/') && !k.endsWith('.css')),
     );
     expect(actual).toEqual(expected);
   });
