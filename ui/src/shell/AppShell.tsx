@@ -7,6 +7,7 @@
 // scope the nav. See the plugin-system plan (Stage 4).
 
 import type { UiPage } from "@shared/ui";
+import { ScrollToTopButton } from "cwip/react";
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { AppBreadcrumbs } from "../breadcrumbs";
@@ -87,6 +88,7 @@ export function AppShell({ accent, pages, children }: AppShellProps) {
           <HeaderSearch />
         </header>
         <main className="flex-1 overflow-auto p-4 sm:p-6 md:p-8">
+          <ScrollToTopButton />
           <div className="mx-auto h-full w-full max-w-4xl">
             <AppBreadcrumbs />
             {children}
