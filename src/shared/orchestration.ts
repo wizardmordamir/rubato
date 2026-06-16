@@ -227,6 +227,51 @@ export function thinkingTokensFor(level: ThinkingLevel | undefined): number {
 }
 
 /**
+ * One model-tier in a fleet configuration — a dedicated pool of workers that claims
+ * tasks matching its model alias and applies its own thinking cap.
+ */
+export interface FleetTier {
+  /**
+   * Short model alias matching `queue-status.sh`'s `resolve_model()`:
+   * `'opus'` | `'opus-1m'` | `'sonnet'` | `'haiku'` | `'fable'`.
+   */
+  modelAlias: string;
+  /** Concurrent workers for this tier (1–8). */
+  slots: number;
+  /** Maximum thinking-level cap — tasks asking for more are clamped here. */
+  thinkingLevel: ThinkingLevel;
+  /** Request `/fast` mode for this tier's workers. */
+  fastMode: boolean;
+}
+
+/** A fleet model option — alias, full model id, and human label. */
+export interface FleetModelOption {
+  /** Short alias used in drain.config / `queue-status.sh`. */
+  alias: string;
+  /** Full Claude model id (e.g. `claude-sonnet-4-6`). */
+  id: string;
+  /** Human-readable label for UI dropdowns. */
+  label: string;
+}
+
+/** Available models for fleet tier configuration (alias ↔ id ↔ label). */
+export const FLEET_MODEL_OPTIONS: FleetModelOption[] = [
+  { alias: 'opus', id: 'claude-opus-4-8', label: 'Opus 4.8' },
+  { alias: 'opus-1m', id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 · 1M' },
+  { alias: 'sonnet', id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+  { alias: 'haiku', id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+  { alias: 'fable', id: 'claude-fable-5', label: 'Fable 5' },
+];
+
+/**
+ * Serialize fleet tiers to a pipe-separated string for the `active-run.json`
+ * comparison — `alias,slots,thinking,fast` per tier, joined by `|`.
+ */
+export function serializeFleetTiers(tiers: FleetTier[]): string {
+  return tiers.map((t) => `${t.modelAlias},${t.slots},${t.thinkingLevel},${t.fastMode ? 1 : 0}`).join('|');
+}
+
+/**
  * Parsed `orchestration/drain.config` — the watchdog/drainer's saved settings,
  * the single source of truth the watchdog reuses when it restarts the drainer.
  */
@@ -260,6 +305,14 @@ export interface DrainConfig {
    * automatically when `enabled` is turned off.
    */
   resumeAt?: number;
+  /**
+   * `FLEET_TIERS` + `FLEET_N` — per-model worker tiers for fleet mode.
+   * When set, replaces the flat `jobs`/`model`/`thinkingLevel`/`fastMode` with
+   * dedicated pools. Each tier spawns `slots` workers that only claim tasks
+   * matching their `modelAlias` (or untagged tasks), applying the tier's thinking cap.
+   * `jobs` is kept in sync as the sum of all tier slots.
+   */
+  fleetTiers?: FleetTier[];
   /** Any keys we didn't recognize, preserved verbatim on round-trip. */
   extra: Record<string, string>;
 }
@@ -276,6 +329,8 @@ export interface DrainConfigPatch {
   fastMode?: boolean;
   /** Set a custom resume time (epoch seconds); `0` / a past time clears the gate. */
   resumeAt?: number;
+  /** Set fleet tiers (fleet mode); `null` or `[]` clears fleet mode (reverts to flat). */
+  fleetTiers?: FleetTier[] | null;
 }
 
 /** How a drain.config setting takes effect — the single source of truth. */
@@ -302,11 +357,12 @@ export const DRAIN_SETTING_CLASS: Record<string, DrainSettingClass> = {
   fastMode: 'needs-restart',
   startDir: 'needs-restart',
   addDir: 'needs-restart',
+  fleetTiers: 'needs-restart',
   interval: 'needs-launchd',
 };
 
 /** The drain.config fields fixed at launch — a change to any needs a restart to apply. */
-export const NEEDS_RESTART_FIELDS = ['jobs', 'model', 'thinkingLevel', 'fastMode', 'startDir', 'addDir'] as const;
+export const NEEDS_RESTART_FIELDS = ['jobs', 'model', 'thinkingLevel', 'fastMode', 'startDir', 'addDir', 'fleetTiers'] as const;
 export type NeedsRestartField = (typeof NEEDS_RESTART_FIELDS)[number];
 
 /** One selectable worker model for the MODEL dropdown (id + human label). */
@@ -359,6 +415,11 @@ export interface ActiveRun {
   startDir?: string;
   /** Effective ADD_DIR at launch. */
   addDir?: string;
+  /**
+   * Serialized fleet tiers at launch — pipe-separated `alias,slots,think,fast` per tier
+   * (see `serializeFleetTiers`). Present only when fleet mode was active at launch.
+   */
+  fleetConfig?: string;
 }
 
 /**

@@ -19,6 +19,7 @@ import type {
   ActiveRun,
   DrainConfig,
   DrainConfigPatch,
+  FleetTier,
   LaunchdInfo,
   NeedsRestartField,
   PendingChange,
@@ -30,7 +31,7 @@ import type {
   WorkerInstance,
   WorkflowBoard,
 } from '../../shared/orchestration';
-import { NEEDS_RESTART_FIELDS, THINKING_LEVELS } from '../../shared/orchestration';
+import { FLEET_MODEL_OPTIONS, NEEDS_RESTART_FIELDS, THINKING_LEVELS, serializeFleetTiers } from '../../shared/orchestration';
 
 // ── drain.config (KEY=value shell assignments) ────────────────────────────────
 
@@ -128,6 +129,32 @@ export function parseDrainConfig(text: string): DrainConfig {
         if (!KNOWN_KEYS.has(key)) cfg.extra[key] = value;
     }
   }
+  // Post-process: reconstruct fleetTiers from FLEET_TIERS + FLEET_N keys in extra.
+  const fleetCountRaw = cfg.extra['FLEET_TIERS'];
+  if (fleetCountRaw) {
+    const count = Number.parseInt(fleetCountRaw, 10);
+    if (Number.isFinite(count) && count > 0) {
+      const validAliases = new Set(FLEET_MODEL_OPTIONS.map((m) => m.alias));
+      const tiers: FleetTier[] = [];
+      for (let i = 0; i < Math.min(count, 16); i++) {
+        const raw = cfg.extra[`FLEET_${i}`];
+        if (!raw) continue;
+        const [aliasRaw, slotsRaw, thinkRaw, fastRaw] = raw.split(',');
+        const alias = aliasRaw?.trim() ?? '';
+        if (!alias || !validAliases.has(alias)) continue;
+        const slots = Math.max(1, Math.min(8, Number.parseInt(slotsRaw ?? '1', 10) || 1));
+        const thinkingLevel = asThinkingLevel(thinkRaw ?? '') ?? 'off';
+        const fastMode = truthy(fastRaw ?? '0');
+        tiers.push({ modelAlias: alias, slots, thinkingLevel, fastMode });
+      }
+      if (tiers.length > 0) {
+        cfg.fleetTiers = tiers;
+        cfg.jobs = tiers.reduce((s, t) => s + t.slots, 0);
+        delete cfg.extra['FLEET_TIERS'];
+        for (let i = 0; i < count; i++) delete cfg.extra[`FLEET_${i}`];
+      }
+    }
+  }
   return cfg;
 }
 
@@ -153,6 +180,12 @@ export function serializeDrainConfig(cfg: DrainConfig): string {
   if (cfg.addDir) lines.push(`ADD_DIR=${shq(cfg.addDir)}`);
   if (cfg.thinkingLevel) lines.push(`THINKING_LEVEL=${cfg.thinkingLevel}`);
   if (cfg.fastMode !== undefined) lines.push(`FAST_MODE=${cfg.fastMode ? 1 : 0}`);
+  if (cfg.fleetTiers && cfg.fleetTiers.length > 0) {
+    lines.push(`FLEET_TIERS=${cfg.fleetTiers.length}`);
+    cfg.fleetTiers.forEach((t, i) => {
+      lines.push(`FLEET_${i}=${t.modelAlias},${t.slots},${t.thinkingLevel},${t.fastMode ? 1 : 0}`);
+    });
+  }
   // RESUME_AT (epoch seconds) — emitted only when a real future-or-pending gate is
   // set, so a config without a custom resume time never carries a stale key. The
   // watchdog clears it (grep -v) once it elapses; drain-queue.sh drops it on launch.
@@ -179,6 +212,24 @@ export function applyDrainPatch(cfg: DrainConfig, patch: DrainConfigPatch): Drai
   // Invariant: a disabled watchdog has no pending resume — turning ENABLED off
   // clears any custom next-start time (so re-arming later doesn't honor a stale one).
   if (next.enabled === false) next.resumeAt = undefined;
+  // Fleet tiers: null / empty array clears fleet mode; otherwise validate + clamp each tier.
+  if (patch.fleetTiers !== undefined) {
+    if (!patch.fleetTiers || patch.fleetTiers.length === 0) {
+      next.fleetTiers = undefined;
+    } else {
+      const validAliases = new Set(FLEET_MODEL_OPTIONS.map((m) => m.alias));
+      const tiers = patch.fleetTiers
+        .filter((t) => t.modelAlias && validAliases.has(t.modelAlias))
+        .map((t) => ({
+          modelAlias: t.modelAlias,
+          slots: Math.max(1, Math.min(8, Math.floor(t.slots) || 1)),
+          thinkingLevel: (THINKING_LEVELS as string[]).includes(t.thinkingLevel) ? t.thinkingLevel : ('off' as ThinkingLevel),
+          fastMode: Boolean(t.fastMode),
+        }));
+      next.fleetTiers = tiers.length > 0 ? tiers : undefined;
+      if (next.fleetTiers) next.jobs = next.fleetTiers.reduce((s, t) => s + t.slots, 0);
+    }
+  }
   return next;
 }
 
@@ -227,6 +278,7 @@ export function parseActiveRun(text: string): ActiveRun | undefined {
   if (typeof obj.fastMode === 'string') run.fastMode = obj.fastMode.trim();
   if (typeof obj.startDir === 'string' && obj.startDir.trim()) run.startDir = obj.startDir.trim();
   if (typeof obj.addDir === 'string' && obj.addDir.trim()) run.addDir = obj.addDir.trim();
+  if (typeof obj.fleetConfig === 'string' && obj.fleetConfig.trim()) run.fleetConfig = obj.fleetConfig.trim();
   return run;
 }
 
@@ -240,6 +292,7 @@ const NEEDS_RESTART_LABELS: Record<NeedsRestartField, string> = {
   fastMode: 'Fast mode',
   startDir: 'Start dir',
   addDir: 'Add dir',
+  fleetTiers: 'Fleet tiers',
 };
 
 /** Normalize a thinking level for comparison (empty/undefined → 'off'). */
@@ -272,6 +325,8 @@ function savedDisplay(cfg: DrainConfig, field: NeedsRestartField): string {
       return cfg.startDir ?? '';
     case 'addDir':
       return cfg.addDir ?? '';
+    case 'fleetTiers':
+      return cfg.fleetTiers && cfg.fleetTiers.length > 0 ? serializeFleetTiers(cfg.fleetTiers) : '(flat mode)';
   }
 }
 
@@ -290,6 +345,8 @@ function runningDisplay(run: ActiveRun, field: NeedsRestartField): string {
       return run.startDir ?? '';
     case 'addDir':
       return run.addDir ?? '';
+    case 'fleetTiers':
+      return run.fleetConfig ?? '(flat mode)';
   }
 }
 
@@ -306,6 +363,16 @@ export function computePending(cfg: DrainConfig, run: ActiveRun | undefined): Pe
   if (!run) return [];
   const out: PendingChange[] = [];
   for (const field of NEEDS_RESTART_FIELDS) {
+    // Fleet tiers: special handling — compare serialized forms; skip if both sides are flat.
+    if (field === 'fleetTiers') {
+      const savedFleet = cfg.fleetTiers && cfg.fleetTiers.length > 0 ? serializeFleetTiers(cfg.fleetTiers) : '';
+      const runningFleet = run.fleetConfig ?? '';
+      // Only report pending when at least one side is in fleet mode.
+      if ((savedFleet || runningFleet) && savedFleet !== runningFleet) {
+        out.push({ key: 'fleetTiers', label: NEEDS_RESTART_LABELS['fleetTiers'], running: runningFleet || '(flat)', saved: savedFleet || '(flat)' });
+      }
+      continue;
+    }
     // Skip fields the running drainer didn't record (can't assert a divergence).
     if (field === 'jobs' && run.jobs === undefined) continue;
     if (field === 'model' && run.model === undefined) continue;
@@ -313,6 +380,8 @@ export function computePending(cfg: DrainConfig, run: ActiveRun | undefined): Pe
     if (field === 'fastMode' && run.fastMode === undefined) continue;
     if (field === 'startDir' && run.startDir === undefined) continue;
     if (field === 'addDir' && run.addDir === undefined) continue;
+    // In fleet mode, skip the flat-mode fields since they're superseded by fleet tiers.
+    if (cfg.fleetTiers && cfg.fleetTiers.length > 0 && (field === 'jobs' || field === 'model' || field === 'thinkingLevel' || field === 'fastMode')) continue;
     const saved = savedDisplay(cfg, field);
     const running = runningDisplay(run, field);
     if (saved !== running) out.push({ key: field, label: NEEDS_RESTART_LABELS[field], running, saved });
@@ -336,7 +405,12 @@ export function changedDrainFields(prev: DrainConfig, next: DrainConfig): string
     'startDir',
     'addDir',
   ];
-  return fields.filter((f) => (prev[f] ?? undefined) !== (next[f] ?? undefined));
+  const changed = fields.filter((f) => (prev[f] ?? undefined) !== (next[f] ?? undefined));
+  // Fleet tiers: JSON-compare since it's an array.
+  const prevFleet = JSON.stringify(prev.fleetTiers ?? null);
+  const nextFleet = JSON.stringify(next.fleetTiers ?? null);
+  if (prevFleet !== nextFleet) changed.push('fleetTiers');
+  return changed;
 }
 
 /** Whether any changed field is a needs-restart setting (so a restart would apply it). */
