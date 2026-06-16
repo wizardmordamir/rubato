@@ -1583,6 +1583,13 @@ export const ingestTimings = () => postJson<TimingIngestResult>("/api/orchestrat
 export const clearTimings = (before?: number) =>
   postJson<{ deleted: number }>("/api/orchestration/timings/clear", before != null ? { before } : {});
 
+/** Per-category stats for one history entry, matched by its [start, end] time window. */
+export const fetchEntryTimings = (start: string, end: string, repo?: string): Promise<OrchCategoryStat[]> => {
+  const sp = new URLSearchParams({ start, end });
+  if (repo) sp.set("repo", repo);
+  return getJson<OrchCategoryStat[]>(`/api/orchestration/timings/entry?${sp}`);
+};
+
 // Re-exported so the page can name them without re-importing from cwip directly.
 export type { OrchCategoryStat, TimingRow as OrchTimingRow, TimingSource as OrchTimingSource };
 export type { TimingSummary as OrchTimingSummary, TimingTrendPoint as OrchTimingTrendPoint };

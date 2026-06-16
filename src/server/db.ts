@@ -2595,6 +2595,24 @@ export interface TimingTableRow {
   sourceFile?: string;
 }
 
+/**
+ * Load timing events within an explicit ms time window (for per-history-entry breakdown).
+ * Same mapping as `listTimingEvents` but filters by `ts BETWEEN from AND to`.
+ */
+export function listTimingEventsInWindow(from: number, to: number, repo?: string): TimingEvent[] {
+  const where: string[] = ['ts >= ?', 'ts <= ?'];
+  const params: (number | string)[] = [from, to];
+  if (repo && repo !== 'all') {
+    where.push('repo = ?');
+    params.push(repo);
+  }
+  const sql = `SELECT * FROM orchestration_timings WHERE ${where.join(' AND ')} ORDER BY ts ASC`;
+  return getDb()
+    .query<OrchTimingRow, (number | string)[]>(sql)
+    .all(...params)
+    .map(toTimingEvent);
+}
+
 /** Per-source-file ingested counts (for the page's "synced files" list). */
 export function listTimingSources(): OrchTimingSource[] {
   return getDb()

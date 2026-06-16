@@ -28,7 +28,7 @@ import { DRAIN_MODEL_IDS, THINKING_LEVELS } from '../shared/orchestration';
 import type { TimingQuery } from './db';
 import { json, jsonError, readJsonBody } from './http';
 import { getOverview, listFiles, readFileDoc, writeFileDoc } from './orchestration';
-import { clearStoredTimings, getTimingOverview, ingestTimings } from './orchestrationTimings';
+import { clearStoredTimings, getEntryCategoryStats, getTimingOverview, ingestTimings } from './orchestrationTimings';
 import {
   applyDrainConfigPatch,
   controlWatchdog,
@@ -104,13 +104,31 @@ export async function handleOrchestrationApi(pathname: string, req: Request): Pr
 
 /**
  * Sub-router for the Orchestration Processing timing analytics:
- *   GET  /api/orchestration/timings?from=&to=&repo=  → TimingOverview (aggregated)
- *   POST /api/orchestration/timings/ingest           → sync from timing-*.jsonl
+ *   GET  /api/orchestration/timings?from=&to=&repo=   → TimingOverview (aggregated)
+ *   GET  /api/orchestration/timings/entry?start=&end=&repo= → CategoryStat[] for one history entry
+ *   POST /api/orchestration/timings/ingest            → sync from timing-*.jsonl
  *   POST /api/orchestration/timings/clear  { before? } → delete all / older rows
  * Only the filters (epoch-ms bounds + a repo string) come from the client — never a
  * path; the ingest source dir is fixed server-side (see orchestrationTimings.ts).
  */
 async function handleTimings(pathname: string, req: Request): Promise<Response> {
+  // GET /api/orchestration/timings/entry?start=<ISO>&end=<ISO>&repo=<> →
+  // CategoryStat[] for one history entry's time window.
+  if (pathname === '/api/orchestration/timings/entry') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    const params = new URL(req.url).searchParams;
+    const start = params.get('start') ?? '';
+    const end = params.get('end') ?? '';
+    if (!start || !end) return jsonError('start and end query params are required', 400);
+    const repoRaw = params.get('repo');
+    const repo = repoRaw && repoRaw !== 'all' ? repoRaw : undefined;
+    try {
+      return json(getEntryCategoryStats(start, end, repo));
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'failed to get entry stats', 500);
+    }
+  }
+
   if (pathname === '/api/orchestration/timings') {
     if (req.method !== 'GET') return jsonError('use GET', 405);
     const params = new URL(req.url).searchParams;

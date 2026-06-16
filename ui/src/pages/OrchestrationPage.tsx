@@ -1,15 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { colorForCategory } from "cwip/orchestration";
+import {
+  CategoryBars,
+  CategoryDonut,
+  ChartThemeProvider,
+  chartThemeFor,
+  type BarDatum,
+  type DonutSlice,
+  formatMs,
+  StatTile,
+} from "cwip/react";
 import { formatDuration, formatTokens, formatUsd, WORKFLOW_STATUS_LABELS } from "@shared/orchestration";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import {
+  fetchEntryTimings,
   fetchOrchestration,
   fetchOrchestrationFile,
   fetchOrchestrationFiles,
+  fetchTimings,
+  ingestTimings,
   saveOrchestrationFile,
   type HistoryEntry,
+  type OrchCategoryStat,
   type OrchestrationFileDoc,
   type OrchestrationOverview,
   type RunEntry,
@@ -32,6 +47,7 @@ import {
 } from "../components";
 import { IconList, IconMaximize, IconMinimize } from "../icons";
 import { usePersistentBoolean } from "../persisted";
+import { getTheme } from "../theme";
 import { useToast } from "../toast";
 import { WatchdogView } from "./WatchdogView";
 
@@ -223,8 +239,42 @@ function TaskCard({ task }: { task: WorkflowTask }) {
 
 function HistoryView({ data }: { data: OrchestrationOverview }) {
   const { history, stats } = data;
+  const isDark = getTheme() === "dark";
+
+  // Auto-ingest timing data once (idempotent) — shared queryKey with Processing page.
+  const autoIngest = useQuery({
+    queryKey: ["orchestration", "timings", "auto-ingest"],
+    queryFn: ingestTimings,
+    staleTime: Number.POSITIVE_INFINITY,
+    gcTime: Number.POSITIVE_INFINITY,
+    retry: false,
+  });
+
+  // Overall per-category stats (unfiltered — all time, all repos).
+  const { data: timingData } = useQuery({
+    queryKey: ["orchestration", "timings", {}],
+    queryFn: () => fetchTimings({}),
+    enabled: !autoIngest.isPending,
+    staleTime: 60_000,
+  });
+
+  const categoryStats = timingData?.stats ?? [];
+  const summary = timingData?.summary;
+  const busiest = categoryStats[0];
+
+  const barData: BarDatum[] = useMemo(
+    () => categoryStats.map((s) => ({ label: s.label, value: s.totalMs, color: colorForCategory(s.category) })),
+    [categoryStats],
+  );
+
+  const donutData: DonutSlice[] = useMemo(
+    () => categoryStats.map((s) => ({ name: s.label, value: s.totalMs, color: colorForCategory(s.category) })),
+    [categoryStats],
+  );
+
   return (
     <div className="space-y-6">
+      {/* Task + run KPIs */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Stat label="Tasks done" value={String(stats.totalTasks)} />
         <Stat label="Total time" value={formatDuration(stats.totalDurationSeconds)} />
@@ -234,6 +284,7 @@ function HistoryView({ data }: { data: OrchestrationOverview }) {
         <Stat label="Total cost" value={formatUsd(stats.totalCostUsd)} />
       </div>
 
+      {/* Per-repo breakdown */}
       {stats.byRepo.length > 0 && (
         <section>
           <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">By repo</h3>
@@ -260,6 +311,92 @@ function HistoryView({ data }: { data: OrchestrationOverview }) {
         </section>
       )}
 
+      {/* Per-category timing analytics (from the timings DB) */}
+      {categoryStats.length > 0 && summary && (
+        <section>
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Category timing</h3>
+          <ChartThemeProvider theme={chartThemeFor(isDark)}>
+            {/* KPI tiles */}
+            <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className={`${CARD_CLASS} p-4`}>
+                <StatTile label="Tasks tracked" value={summary.taskCount} sub={`${summary.eventCount} events`} />
+              </div>
+              <div className={`${CARD_CLASS} p-4`}>
+                <StatTile label="Total tracked time" value={formatMs(summary.totalMs)} />
+              </div>
+              <div className={`${CARD_CLASS} p-4`}>
+                <StatTile
+                  label="Avg per task"
+                  value={formatMs(summary.taskCount ? summary.totalMs / summary.taskCount : 0)}
+                />
+              </div>
+              <div className={`${CARD_CLASS} p-4`}>
+                <StatTile
+                  label="Busiest category"
+                  value={busiest ? busiest.label : "—"}
+                  sub={busiest ? `${formatMs(busiest.totalMs)} total` : undefined}
+                  color={busiest ? colorForCategory(busiest.category) : undefined}
+                />
+              </div>
+            </div>
+
+            {/* Charts side-by-side */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className={`${CARD_CLASS} p-4 lg:col-span-2`}>
+                <h4 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Duration by category</h4>
+                <CategoryBars data={barData} height={220} valueFormatter={formatMs} />
+              </div>
+              <div className={`${CARD_CLASS} p-4`}>
+                <h4 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Share of time</h4>
+                <CategoryDonut
+                  data={donutData}
+                  height={220}
+                  valueFormatter={formatMs}
+                  centerValue={formatMs(summary.totalMs)}
+                  centerLabel="total"
+                />
+              </div>
+              {/* Per-category % table */}
+              <div className={`${CARD_CLASS} overflow-hidden`}>
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500 dark:bg-gray-950">
+                    <tr>
+                      <th className="px-3 py-2">Category</th>
+                      <th className="px-3 py-2 text-right">Count</th>
+                      <th className="px-3 py-2 text-right">Total</th>
+                      <th className="px-3 py-2 text-right">Avg</th>
+                      <th className="px-3 py-2 text-right">%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {categoryStats.map((s) => (
+                      <tr key={s.category} className="border-t border-gray-100 dark:border-gray-800">
+                        <td className="px-3 py-2">
+                          <span className="inline-flex items-center gap-2">
+                            <span
+                              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                              style={{ backgroundColor: colorForCategory(s.category) }}
+                            />
+                            {s.label}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-500">{s.count}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{formatMs(s.totalMs)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-500">{formatMs(s.avgMs)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-400">
+                          {summary.totalMs > 0 ? `${Math.round((s.totalMs / summary.totalMs) * 100)}%` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </ChartThemeProvider>
+        </section>
+      )}
+
+      {/* History list */}
       <section>
         <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
           History <span className="text-gray-400">({history.length})</span>
@@ -269,7 +406,7 @@ function HistoryView({ data }: { data: OrchestrationOverview }) {
         ) : (
           <div className="space-y-2">
             {history.map((h, i) => (
-              <HistoryRow key={`${h.line}-${i}`} entry={h} />
+              <HistoryCard key={`${h.line}-${i}`} entry={h} />
             ))}
           </div>
         )}
@@ -278,16 +415,126 @@ function HistoryView({ data }: { data: OrchestrationOverview }) {
   );
 }
 
-function HistoryRow({ entry }: { entry: HistoryEntry }) {
+const REPO_BADGE_TONE: Record<string, "accent" | "success" | "neutral"> = {
+  rubato: "accent",
+  cursedalchemy: "success",
+  cwip: "neutral",
+};
+
+function HistoryCard({ entry }: { entry: HistoryEntry }) {
+  const [open, setOpen] = useState(false);
+  const isDark = getTheme() === "dark";
+  const canExpand = !!(entry.start && entry.end);
+
+  const { data: entryStats, isLoading: statsLoading } = useQuery({
+    queryKey: ["orchestration", "timings", "entry", entry.start, entry.end, entry.repo],
+    queryFn: () => fetchEntryTimings(entry.start!, entry.end!, entry.repo),
+    enabled: open && canExpand,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
+  const entryBarData: BarDatum[] = useMemo(
+    () => (entryStats ?? []).map((s) => ({ label: s.label, value: s.totalMs, color: colorForCategory(s.category) })),
+    [entryStats],
+  );
+
+  const entryTotal = useMemo(() => (entryStats ?? []).reduce((acc, s) => acc + s.totalMs, 0), [entryStats]);
+
   return (
-    <div className={`${CARD_CLASS} flex flex-wrap items-center justify-between gap-x-4 gap-y-1 p-3`}>
-      <p className="min-w-0 flex-1 font-medium">{entry.title}</p>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-        {entry.repo && <span className="font-mono">{entry.repo}</span>}
-        {entry.commit && <span className="font-mono text-gray-400">{entry.commit}</span>}
-        {entry.start && <Tooltip content={entry.start}><span>{fmtTime(entry.start)}</span></Tooltip>}
-        {entry.durationText && <Badge tone="neutral">{entry.durationText}</Badge>}
+    <div className={`${CARD_CLASS} p-4`}>
+      {/* Card header */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold leading-snug">{entry.title}</p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+            {entry.repo && (
+              <Badge tone={REPO_BADGE_TONE[entry.repo] ?? "neutral"}>{entry.repo}</Badge>
+            )}
+            {entry.commit && (
+              <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                {entry.commit}
+              </span>
+            )}
+            {entry.durationText && (
+              <Badge tone="neutral">{entry.durationText}</Badge>
+            )}
+            {entry.start && (
+              <Tooltip content={entry.start}>
+                <span className="text-gray-400">{fmtDate(entry.start)}</span>
+              </Tooltip>
+            )}
+            {entry.end && (
+              <Tooltip content={entry.end}>
+                <span className="text-gray-400">→ {fmtDate(entry.end)}</span>
+              </Tooltip>
+            )}
+          </div>
+        </div>
+        {canExpand && (
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            className="shrink-0 rounded-md px-2 py-1 text-xs text-accent hover:bg-accent-soft transition-colors"
+          >
+            {open ? "Hide timing" : "Show timing"}
+          </button>
+        )}
       </div>
+
+      {/* Per-entry category breakdown (lazy) */}
+      {open && (
+        <div className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-800">
+          {statsLoading ? (
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <Spinner />
+              Loading timing breakdown…
+            </div>
+          ) : entryStats && entryStats.length > 0 ? (
+            <ChartThemeProvider theme={chartThemeFor(isDark)}>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <p className="mb-2 text-xs font-medium text-gray-500">Time by category</p>
+                  <CategoryBars data={entryBarData} height={140} valueFormatter={formatMs} />
+                </div>
+                <div className="overflow-auto">
+                  <table className="w-full text-xs">
+                    <thead className="text-left text-gray-400">
+                      <tr>
+                        <th className="pb-1 pr-3">Category</th>
+                        <th className="pb-1 pr-3 text-right">Count</th>
+                        <th className="pb-1 pr-3 text-right">Time</th>
+                        <th className="pb-1 text-right">%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entryStats.map((s) => (
+                        <tr key={s.category} className="border-t border-gray-50 dark:border-gray-800/60">
+                          <td className="py-1 pr-3">
+                            <span className="inline-flex items-center gap-1.5">
+                              <span
+                                className="inline-block h-2 w-2 shrink-0 rounded-full"
+                                style={{ backgroundColor: colorForCategory(s.category) }}
+                              />
+                              {s.label}
+                            </span>
+                          </td>
+                          <td className="py-1 pr-3 text-right tabular-nums text-gray-500">{s.count}</td>
+                          <td className="py-1 pr-3 text-right tabular-nums">{formatMs(s.totalMs)}</td>
+                          <td className="py-1 text-right tabular-nums text-gray-400">
+                            {entryTotal > 0 ? `${Math.round((s.totalMs / entryTotal) * 100)}%` : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </ChartThemeProvider>
+          ) : (
+            <p className="text-xs text-gray-400">No timing recorded for this task.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -538,6 +785,13 @@ function FilesView() {
 
 /** Format an ISO timestamp compactly for the local timezone; pass through on parse failure. */
 function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Format an ISO timestamp for history cards — date + time, no year. */
+function fmtDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });

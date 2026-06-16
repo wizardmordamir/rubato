@@ -31,6 +31,7 @@ import {
   clearTimings,
   insertTimingEvents,
   listTimingEvents,
+  listTimingEventsInWindow,
   listTimingRepos,
   listTimingRows,
   listTimingSources,
@@ -131,6 +132,20 @@ export async function getTimingOverview(q: TimingQuery = {}): Promise<TimingOver
     repos: listTimingRepos(),
     total: events.length,
   };
+}
+
+/**
+ * Return per-category stats for one history entry, matched by time-window overlap.
+ * The `ts` of each orchlog event is compared against `[startIso, endIso]` — events
+ * whose timestamp falls within the entry's wall-clock range are included. Returns []
+ * when the ISO strings are invalid or no events match (shown as "no timing recorded").
+ */
+export function getEntryCategoryStats(startIso: string, endIso: string, repo?: string): CategoryStat[] {
+  const startMs = Date.parse(startIso);
+  const endMs = Date.parse(endIso);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return [];
+  const events = listTimingEventsInWindow(startMs, endMs, repo);
+  return toCategoryStats(events);
 }
 
 /** Delete stored timings (all, or `ts < before`). Returns how many were removed. */
