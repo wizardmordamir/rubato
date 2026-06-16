@@ -1,0 +1,40 @@
+# Global gitignore template — managed by rubato.
+#
+# `globalgitignore` merges these patterns into your machine's global ignore
+# file (git's core.excludesFile, ~/.gitignore_global by default) so every repo
+# ignores them without per-project .gitignore edits.
+#
+# This file is the source of truth for the default patterns: edit it to change
+# what gets ignored everywhere, then re-run `globalgitignore`. Re-running only
+# appends what's missing — your existing global file is never rewritten.
+# Section headers (# ...) and blank lines are cosmetic; only patterns matter.
+
+# --- Dependencies / build output ---
+node_modules
+
+# --- Rubato scratch & private files ---
+# ___* covers personal, repo-local dirs like ___Notes, ___Prompts, ___linked.
+# *.ignore* covers any file/dir you tag as throwaway (foo.ignore, x.ignore.ts).
+___*
+*.ignore*
+*.bu.*
+
+# --- OS files ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# --- Editor / IDE ---
+*.swp
+*.swo
+*~
+.idea/
+*.sublime-workspace
+
+# --- Local / scratch ---
+*.local

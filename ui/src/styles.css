@@ -1,0 +1,259 @@
+@import "tailwindcss";
+/* ---- Generate cwip's shipped Tailwind classes ------------------------------
+   cwip/react's Tailwind-first components (e.g. InfoHint) AND cwip/layout's
+   grid/style classes (col-span-*, tone backgrounds, borders — emitted as literal
+   strings by the LayoutRenderer the Pages feature uses) ship as plain strings in
+   cwip's dist. Tailwind v4 skips node_modules, so cwip's dist must be registered
+   as a Tailwind source; importing `cwip/styles.css` does that for the WHOLE dist
+   in one line (its `@source "."` is relative to cwip's shipped dist root), so we
+   carry no relative path. Without it, every layout node collapses to a 1/12-width
+   track. cwip's classes lean on our own tokens (accent, the gray scale, the
+   `dark:` variant), so they adopt rubato's theme. */
+@import "cwip/styles.css";
+
+/* ---- Class-based dark mode --------------------------------------------------
+   Tailwind v4 defaults the `dark:` variant to the OS `prefers-color-scheme`
+   media query, which can't be toggled in-app. Redefine it to key off a `.dark`
+   class on <html> instead, so the theme toggle (theme.ts) controls it. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---- Accent token with light/dark swap -------------------------------------
+   rubato's brand accent is violet (distinct from the sibling app's emerald).
+   It's defined as a CSS variable swapped under `.dark`, then exposed to Tailwind
+   via `@theme inline` so utilities (text-accent, bg-accent, ring-accent,
+   border-accent, bg-accent-hover, …) auto-switch with no `dark:` variant. */
+:root {
+  --accent: #7c3aed; /* violet-600 */
+  --accent-hover: #6d28d9; /* violet-700 */
+  --accent-soft: #f5f3ff; /* violet-50  — faint fill for soft chips/surfaces */
+}
+.dark {
+  --accent: #a78bfa; /* violet-400 */
+  --accent-hover: #c4b5fd; /* violet-300 */
+  --accent-soft: #2e1065; /* violet-950 */
+}
+@theme inline {
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+}
+
+/* ---- Global base defaults ---------------------------------------------------
+   Lowest precedence: inline utility classes always win, so these only fill gaps
+   and give every page the right surface + typography by default. */
+@layer base {
+  /* Bind native control rendering (scrollbars, form controls) to the app's
+     `.dark` class rather than the OS, so they match the active theme. */
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100;
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  /* Keyboard focus uses the accent; only shows on keyboard nav. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background-color: var(--accent);
+    color: #ffffff;
+  }
+  /* User bubbles are already accent-on-white, so the default selection is
+     invisible there — invert it (white highlight, accent text) so dragging
+     to select/copy gives visible feedback. */
+  .user-msg::selection {
+    background-color: #ffffff;
+    color: var(--accent);
+  }
+}
+
+/* The canonical icon-button (header hamburger, sidebar footer toggle/theme/settings,
+   drawer close, in-page toggles): square, muted, accent-tinted on hover. 36px on a
+   fine pointer; promoted to a ≥44px finger target on touch (Apple HIG / WCAG 2.5.5)
+   via pointer-coarse, so every icon-btn site is tappable without mis-hits. */
+@utility icon-btn {
+  @apply inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-accent-soft hover:text-accent dark:text-gray-400 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px];
+}
+
+/* ---- Chat markdown ----------------------------------------------------------
+   react-markdown emits raw tags; style them within `.chat-md` (no typography
+   plugin needed). Tuned for assistant answers: tight spacing, readable code. */
+.chat-md {
+  @apply text-sm leading-relaxed break-words;
+}
+.chat-md > :first-child {
+  margin-top: 0;
+}
+.chat-md > :last-child {
+  margin-bottom: 0;
+}
+.chat-md p {
+  @apply my-2;
+}
+.chat-md ul {
+  @apply my-2 list-disc pl-5;
+}
+.chat-md ol {
+  @apply my-2 list-decimal pl-5;
+}
+.chat-md li {
+  @apply my-0.5;
+}
+.chat-md h1,
+.chat-md h2,
+.chat-md h3,
+.chat-md h4 {
+  @apply mt-3 mb-1 font-semibold;
+}
+.chat-md a {
+  @apply text-accent underline;
+}
+.chat-md blockquote {
+  @apply my-2 border-l-2 border-gray-300 pl-3 text-gray-500 dark:border-gray-700;
+}
+.chat-md code {
+  @apply rounded bg-gray-100 px-1 py-0.5 font-mono text-[0.85em] dark:bg-gray-800;
+}
+.chat-md pre {
+  @apply my-2 overflow-auto rounded-lg bg-gray-100 p-3 dark:bg-gray-800/70;
+}
+/* Code fences are wrapped so a hover copy button can sit in the corner; carry
+   the block's vertical margin on the wrapper and zero it on the inner <pre>. */
+.chat-md .code-block {
+  @apply relative my-2;
+}
+.chat-md .code-block pre {
+  @apply my-0;
+}
+.chat-md pre code {
+  @apply bg-transparent p-0 text-xs;
+}
+
+/* ---- Syntax highlighting (rehype-highlight / highlight.js tokens) -----------
+   rehype-highlight tags code spans with `.hljs-*` classes but ships no colors,
+   so without a theme fenced code renders flat/monochrome. highlight.js's own
+   themes are single-mode and set their own background; this app toggles dark
+   via a `.dark` class, so define a compact GitHub-flavoured token palette here
+   for both modes and leave the `pre` background to the rules above. Scoped to
+   `.hljs` (the class rehype-highlight puts on every code element) rather than
+   `.chat-md`, so any highlighted block reuses it — e.g. the Config page JSON. */
+.hljs .hljs-comment,
+.hljs .hljs-quote {
+  color: #6a737d;
+  font-style: italic;
+}
+.hljs .hljs-keyword,
+.hljs .hljs-selector-tag,
+.hljs .hljs-subst,
+.hljs .hljs-type,
+.hljs .hljs-class .hljs-title {
+  color: #d73a49;
+}
+.hljs .hljs-number,
+.hljs .hljs-literal,
+.hljs .hljs-variable,
+.hljs .hljs-template-variable,
+.hljs .hljs-built_in,
+.hljs .hljs-builtin-name {
+  color: #005cc5;
+}
+.hljs .hljs-string,
+.hljs .hljs-doctag,
+.hljs .hljs-regexp,
+.hljs .hljs-addition {
+  color: #032f62;
+}
+.hljs .hljs-title,
+.hljs .hljs-section,
+.hljs .hljs-selector-id {
+  color: #6f42c1;
+}
+.hljs .hljs-tag,
+.hljs .hljs-name,
+.hljs .hljs-attribute,
+.hljs .hljs-attr {
+  color: #22863a;
+}
+.hljs .hljs-symbol,
+.hljs .hljs-bullet,
+.hljs .hljs-meta {
+  color: #e36209;
+}
+.hljs .hljs-deletion {
+  color: #b31d28;
+}
+.hljs .hljs-emphasis {
+  font-style: italic;
+}
+.hljs .hljs-strong {
+  font-weight: 600;
+}
+/* Dark-mode palette (GitHub dark token colors). */
+.dark .hljs .hljs-comment,
+.dark .hljs .hljs-quote {
+  color: #8b949e;
+}
+.dark .hljs .hljs-keyword,
+.dark .hljs .hljs-selector-tag,
+.dark .hljs .hljs-subst,
+.dark .hljs .hljs-type,
+.dark .hljs .hljs-class .hljs-title {
+  color: #ff7b72;
+}
+.dark .hljs .hljs-number,
+.dark .hljs .hljs-literal,
+.dark .hljs .hljs-variable,
+.dark .hljs .hljs-template-variable {
+  color: #79c0ff;
+}
+.dark .hljs .hljs-built_in,
+.dark .hljs .hljs-builtin-name,
+.dark .hljs .hljs-symbol,
+.dark .hljs .hljs-bullet,
+.dark .hljs .hljs-meta {
+  color: #ffa657;
+}
+.dark .hljs .hljs-string,
+.dark .hljs .hljs-doctag,
+.dark .hljs .hljs-regexp,
+.dark .hljs .hljs-addition {
+  color: #a5d6ff;
+}
+.dark .hljs .hljs-title,
+.dark .hljs .hljs-section,
+.dark .hljs .hljs-selector-id {
+  color: #d2a8ff;
+}
+.dark .hljs .hljs-tag,
+.dark .hljs .hljs-name,
+.dark .hljs .hljs-attribute,
+.dark .hljs .hljs-attr {
+  color: #7ee787;
+}
+.dark .hljs .hljs-deletion {
+  color: #ffa198;
+}
+
+.chat-md table {
+  @apply my-2 w-full border-collapse text-xs;
+}
+.chat-md th,
+.chat-md td {
+  @apply border border-gray-300 px-2 py-1 text-left dark:border-gray-700;
+}

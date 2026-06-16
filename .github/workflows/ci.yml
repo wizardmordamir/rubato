@@ -1,0 +1,57 @@
+name: CI
+
+# Mirrors rubato's local `bun run done` gate (typecheck → lint/format check →
+# tests) so PRs to main are held to the same bar contributors run locally.
+#
+# NOTE: this installs cwip from the npm registry. Until cwip is published with
+# its `query` / `servicenow` / `dbquery` subpaths (rubato imports them), the
+# typecheck/test steps will fail here even though they pass locally against the
+# bun-linked dev cwip. CI goes green automatically once that cwip is published.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel an in-flight run when a newer commit lands on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'ui/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install dependencies (root + ui)
+        run: bun run setup
+
+      - name: Typecheck
+        run: bun run tsc
+
+      - name: Lint + format check (non-mutating)
+        run: bunx biome check ./src
+
+      - name: Tests (unit · integration · functional)
+        run: bun test
+
+      - name: Build (library + web UI)
+        run: |
+          bun run web:build
+          bun run build

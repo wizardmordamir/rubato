@@ -1,0 +1,106 @@
+[
+  {
+    "name": "rubato-config",
+    "aliases": [
+      "config",
+      "appsjson",
+      "rubatocfg"
+    ],
+    "absolutePath": "<HOME>/.rubato/apps.json",
+    "group": null,
+    "pinned": true
+  },
+  {
+    "name": "zshrc",
+    "aliases": ["zh", "zshrc", "zsh", "zs"],
+    "absolutePath": "<HOME>/.zshrc",
+    "group": null,
+    "pinned": true
+  },
+  {
+    "name": "codeium",
+    "aliases": ["codeium", "codium"],
+    "absolutePath": "<HOME>/.codeium"
+  },
+  {
+    "name": "codeiumIgnore",
+    "aliases": ["codeiumignore", "codiumignore", "aiignore"],
+    "absolutePath": "<HOME>/.codeium/.codeiumignore"
+  },
+  {
+    "name": "gitConfig",
+    "aliases": ["gitconfig", "git"],
+    "absolutePath": "<HOME>/.config/git"
+  },
+  {
+    "name": "ignore",
+    "aliases": ["ignore", "ignores", "gitignore", "gitignores"],
+    "absolutePath": "<HOME>/.config/git/ignore"
+  },
+  {
+    "name": "gptConfigmap",
+    "aliases": ["gptconfigmap", "gptconfig", "gptconf"],
+    "absolutePath": "<HOME>/code/apps/configs/gpt-configmap"
+  },
+  {
+    "name": "gptSecret",
+    "aliases": ["gptsec", "gptsecret", "gptsecrets", "gptsecretmap"],
+    "absolutePath": "<HOME>/code/apps/configs/gpt-secret"
+  },
+  {
+    "name": "skills",
+    "aliases": ["skills", "skill"],
+    "absolutePath": "<HOME>/.codeium/windsurf/skills"
+  },
+  {
+    "name": "windsurf",
+    "aliases": ["windsurf", "ws", "wind", "surf"],
+    "absolutePath": "<HOME>/.codeium/windsurf"
+  },
+  {
+    "name": "bash_profile",
+    "aliases": ["bash_profile", "bashprofile", "bash", "bashprof", "bash_prof"],
+    "absolutePath": "<HOME>/.bash_profile"
+  },
+  {
+    "name": "workspaceNotes",
+    "aliases": ["notes", "workspace", "wsnotes"],
+    "absolutePath": "<HOME>/code/workspaces/___Workspace_Notes",
+    "group": null,
+    "pinned": true
+  },
+  {
+    "name": "agentWorkspace",
+    "aliases": ["agent", "agentws", "tasks", "orchestration"],
+    "absolutePath": "<HOME>/code/workspaces/___Agent_Workspace",
+    "group": null,
+    "pinned": true
+  },
+  {
+    "name": "tasksBoard",
+    "aliases": ["tasksmd", "board", "queue"],
+    "absolutePath": "<HOME>/code/workspaces/___Agent_Workspace/TASKS.md"
+  },
+  {
+    "name": "claudeDir",
+    "aliases": ["claudedir", "dotclaude", "claudehome"],
+    "absolutePath": "<HOME>/.claude",
+    "group": null,
+    "pinned": true
+  },
+  {
+    "name": "claudeCommands",
+    "aliases": ["commands", "slashcommands", "claudecommands"],
+    "absolutePath": "<HOME>/.claude/commands"
+  },
+  {
+    "name": "claudeMd",
+    "aliases": ["claudemd", "globalclaude"],
+    "absolutePath": "<HOME>/.claude/CLAUDE.md"
+  },
+  {
+    "name": "loopMd",
+    "aliases": ["loop", "loopmd"],
+    "absolutePath": "<HOME>/.claude/loop.md"
+  }
+]

@@ -1,0 +1,7 @@
+{
+  "description": "Summarize a CSV left in the run dir; write csv-summary.csv to the output dir.",
+  "params": [
+    { "name": "input", "type": "string", "description": "CSV filename in the run dir", "required": false }
+  ],
+  "timeout": 15000
+}
