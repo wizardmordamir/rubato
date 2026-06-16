@@ -10,7 +10,7 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { LIB_ENTRIES, SERVER_ENTRY } from '../../scripts/libEntries';
+import { LIB_ENTRIES, SERVER_COUPLED_ENTRIES, SERVER_ENTRY } from '../../scripts/libEntries';
 
 const ROOT = resolve(import.meta.dir, '../..');
 const FORBIDDEN_BARE = new Set(['bun:sqlite', 'ws', 'playwright', 'playwright-core']);
@@ -62,7 +62,7 @@ function reach(entry: string): { serverFiles: string[]; uiFiles: string[]; bare:
 }
 
 describe('library import hygiene', () => {
-  const libEntries = Object.entries(LIB_ENTRIES).filter(([name]) => name !== SERVER_ENTRY);
+  const libEntries = Object.entries(LIB_ENTRIES).filter(([name]) => !SERVER_COUPLED_ENTRIES.has(name));
 
   test.each(libEntries)("'%s' imports no server / UI / db / playwright", (_name, entry) => {
     const { serverFiles, uiFiles, bare } = reach(entry);
@@ -79,9 +79,12 @@ describe('library import hygiene', () => {
     const pkg = (await Bun.file(resolve(ROOT, 'package.json')).json()) as { exports: Record<string, string> };
     const expected = new Set(Object.keys(LIB_ENTRIES).map((n) => (n === 'index' ? '.' : `./${n}`)));
     // `./ui/*` entries are built by the separate Vite UI lib build (ui/dist-lib),
-    // not from LIB_ENTRIES, so they're excluded from this dist-entry drift check.
+    // and `*.css` entries are static shipped stylesheets (e.g. `./styles.css`) —
+    // both are excluded from this JS dist-entry drift check.
     const actual = new Set(
-      Object.keys(pkg.exports).filter((k) => k !== './package.json' && !k.startsWith('./ui/')),
+      Object.keys(pkg.exports).filter(
+        (k) => k !== './package.json' && !k.startsWith('./ui/') && !k.endsWith('.css'),
+      ),
     );
     expect(actual).toEqual(expected);
   });

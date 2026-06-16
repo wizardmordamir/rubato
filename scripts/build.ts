@@ -41,9 +41,12 @@ async function assertExportsInSync(): Promise<void> {
     Object.keys(LIB_ENTRIES).map((n) => (n === "index" ? "." : `./${n}`)),
   );
   // `./ui/*` entries are produced by the separate Vite lib build (ui/dist-lib),
-  // not by LIB_ENTRIES/this dist build, so they're outside this drift check.
+  // not by LIB_ENTRIES/this dist build; `*.css` entries are static shipped
+  // stylesheets (e.g. `./styles.css`) — both are outside this JS-entry drift check.
   const actual = new Set(
-    Object.keys(pkg.exports).filter((k) => k !== "./package.json" && !k.startsWith("./ui/")),
+    Object.keys(pkg.exports).filter(
+      (k) => k !== "./package.json" && !k.startsWith("./ui/") && !k.endsWith(".css"),
+    ),
   );
   const missing = [...expected].filter((k) => !actual.has(k));
   const extra = [...actual].filter((k) => !expected.has(k));
@@ -78,7 +81,12 @@ async function main() {
   );
   const shimPaths: string[] = [];
   for (const [name, src] of Object.entries(lib)) {
-    const shim = resolve(SHIM_DIR, `${name}.ts`);
+    // A slashed entry name (e.g. `plugins/automations`) maps to a nested export
+    // KEY but a flat dist FILE — flatten `/`→`__` for the shim/output basename so
+    // it lands at `dist/plugins__automations.js` (package.json points the
+    // `./plugins/automations` export there). It stays in this same splitting
+    // build, so it shares chunks (one `getDb`, etc.) with the `server` entry.
+    const shim = resolve(SHIM_DIR, `${name.replace(/\//g, "__")}.ts`);
     await writeFile(shim, `export * from ${JSON.stringify(src)};\n`);
     shimPaths.push(shim);
   }

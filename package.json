@@ -29,6 +29,8 @@
     "./request": "./dist/request.js",
     "./orchestration": "./dist/orchestration.js",
     "./server": "./dist/server.js",
+    "./plugins/automations": "./dist/plugins__automations.js",
+    "./styles.css": "./styles.css",
     "./ui/shell": {
       "types": "./ui/dist-lib/ui/src/shell/index.d.ts",
       "import": "./ui/dist-lib/shell.js"
@@ -43,7 +45,8 @@
     "dist",
     "ui/dist",
     "ui/dist-lib",
-    "src/shared"
+    "src/shared",
+    "styles.css"
   ],
   "engines": {
     "bun": ">=1.0.0"

@@ -34,7 +34,20 @@ export const LIB_ENTRIES: Record<string, string> = {
   // pulls in the server/db/UI; kept out of the library barrel so importing
   // `rubato` (or any other library subpath) stays server/UI/Playwright-free.
   server: "src/on.ts",
+  // The automations plugin — a friend mini-app assembles it via
+  // `import { automationsPlugin } from 'rubato/plugins/automations'`. It's
+  // server-coupled (wraps the automation route handlers + DDL), so like `server`
+  // it's exempt from the "no server import" library-hygiene guard. The slash in
+  // the name maps to the `./plugins/automations` export key; the built bundle
+  // flattens it to a single dist file (see scripts/build.ts).
+  "plugins/automations": "src/plugins/automations.ts",
 };
 
-/** The single entry that's allowed to import the server/UI/db. */
+/**
+ * Entries allowed to reach the server/UI/db — exempt from the library import
+ * hygiene guard (they intentionally pull in the embeddable server surface). The
+ * first, `server`, is the canonical embeddable entry the positive guard test
+ * asserts against.
+ */
 export const SERVER_ENTRY = "server";
+export const SERVER_COUPLED_ENTRIES = new Set([SERVER_ENTRY, "plugins/automations"]);
