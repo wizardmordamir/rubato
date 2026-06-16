@@ -272,6 +272,48 @@ export function serializeFleetTiers(tiers: FleetTier[]): string {
 }
 
 /**
+ * A named, reusable fleet configuration — e.g. "Strong" (Opus-heavy), "Fast"
+ * (Sonnet/Haiku), "Slow & cheap". Saved alongside `drain.config` so you can swap
+ * the whole worker mix in one click. Applying a preset writes its {@link FleetTier}s
+ * into `drain.config` (fleet mode) exactly as the per-tier editor would.
+ */
+export interface FleetPreset {
+  /** Stable id — a slug of {@link name}; saving the same name overwrites the preset. */
+  id: string;
+  /** Human label shown in the UI ("Strong", "Fast", "Slow"). */
+  name: string;
+  /** The worker pools this preset applies when loaded. */
+  tiers: FleetTier[];
+  /** Optional one-line description (when/why to use this fleet). */
+  note?: string;
+  /** Epoch ms of the last save (for ordering / display). */
+  updatedAt?: number;
+}
+
+/** The client → server payload to create or overwrite a {@link FleetPreset}. */
+export interface SaveFleetPreset {
+  name: string;
+  tiers: FleetTier[];
+  note?: string;
+}
+
+/** Result of applying a named fleet preset — the config-patch outcome plus which preset ran. */
+export interface ApplyFleetPresetResult extends ConfigPatchResult {
+  /** The preset that was loaded into `drain.config`. */
+  preset: FleetPreset;
+}
+
+/** Derive a {@link FleetPreset} id (stable key) from a display name. */
+export function fleetPresetId(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'fleet';
+}
+
+/**
  * Parsed `orchestration/drain.config` — the watchdog/drainer's saved settings,
  * the single source of truth the watchdog reuses when it restarts the drainer.
  */

@@ -23,7 +23,7 @@
  * (every action is pinned to a resolved orchestration path / known pid).
  */
 
-import type { DrainConfigPatch, ThinkingLevel } from '../shared/orchestration';
+import type { DrainConfigPatch, FleetTier, SaveFleetPreset, ThinkingLevel } from '../shared/orchestration';
 import { DRAIN_MODEL_IDS, THINKING_LEVELS } from '../shared/orchestration';
 import { getClaudeRateLimits } from './claudeUsage';
 import type { TimingQuery } from './db';
@@ -32,9 +32,13 @@ import { getOverview, listFiles, readFileDoc, writeFileDoc } from './orchestrati
 import { clearStoredTimings, getEntryCategoryStats, getTimingOverview, ingestTimings } from './orchestrationTimings';
 import {
   applyDrainConfigPatch,
+  applyFleetPreset,
   controlWatchdog,
+  deleteFleetPreset,
   getWatchdog,
+  listFleetPresets,
   restartDrainer,
+  saveFleetPreset,
   setWatchdogInterval,
   startDrainer,
   stopDrainer,
@@ -56,6 +60,11 @@ export async function handleOrchestrationApi(pathname: string, req: Request): Pr
   // ── Watchdog control + observe ──────────────────────────────────────────────
   if (pathname.startsWith('/api/orchestration/watchdog')) {
     return handleWatchdog(pathname, req);
+  }
+
+  // ── Named fleet presets (save / load / swap worker-mix configs) ─────────────
+  if (pathname.startsWith('/api/orchestration/fleet-presets')) {
+    return handleFleetPresets(pathname, req);
   }
 
   // GET /api/orchestration/claude-usage → live rate-limit probe + key status.
@@ -285,6 +294,81 @@ async function handleWatchdog(pathname: string, req: Request): Promise<Response>
       return json(await stopInstance(pid));
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'failed to stop instance', 500);
+    }
+  }
+
+  return jsonError(`not found: ${pathname}`, 404);
+}
+
+/** A raw fleet-tier from a request body is well-shaped (authoritative clamping is server-side). */
+function isTierShape(t: unknown): t is FleetTier {
+  return (
+    t != null &&
+    typeof t === 'object' &&
+    typeof (t as FleetTier).modelAlias === 'string' &&
+    typeof (t as FleetTier).slots === 'number' &&
+    typeof (t as FleetTier).thinkingLevel === 'string' &&
+    typeof (t as FleetTier).fastMode === 'boolean'
+  );
+}
+
+/**
+ * Named fleet presets — save a worker-mix under a name, list them, delete one, and
+ * apply (swap) one into `drain.config` in a single click.
+ *
+ *   GET    /api/orchestration/fleet-presets         → FleetPreset[]
+ *   POST   /api/orchestration/fleet-presets         → save { name, tiers, note? } → FleetPreset[]
+ *   DELETE /api/orchestration/fleet-presets/:id      → FleetPreset[]
+ *   POST   /api/orchestration/fleet-presets/:id/apply→ ApplyFleetPresetResult
+ */
+async function handleFleetPresets(pathname: string, req: Request): Promise<Response> {
+  const rest = pathname.slice('/api/orchestration/fleet-presets'.length).replace(/^\/+|\/+$/g, '');
+
+  // Collection: GET (list) / POST (save).
+  if (rest === '') {
+    if (req.method === 'GET') {
+      try {
+        return json(await listFleetPresets());
+      } catch (e) {
+        return jsonError(e instanceof Error ? e.message : 'failed to read fleet presets', 500);
+      }
+    }
+    if (req.method === 'POST') {
+      const body = await readJsonBody<SaveFleetPreset>(req);
+      if (!body || typeof body !== 'object' || typeof body.name !== 'string' || !body.name.trim()) {
+        return jsonError('a preset { name, tiers } is required', 400);
+      }
+      if (!Array.isArray(body.tiers) || body.tiers.length === 0 || !body.tiers.every(isTierShape)) {
+        return jsonError('tiers must be a non-empty array of { modelAlias, slots, thinkingLevel, fastMode }', 400);
+      }
+      try {
+        return json(await saveFleetPreset({ name: body.name, tiers: body.tiers, note: body.note }));
+      } catch (e) {
+        return jsonError(e instanceof Error ? e.message : 'failed to save fleet preset', 500);
+      }
+    }
+    return jsonError('use GET or POST', 405);
+  }
+
+  // Item: DELETE …/:id, or POST …/:id/apply.
+  const applyMatch = rest.match(/^([^/]+)\/apply$/);
+  if (applyMatch) {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    const id = decodeURIComponent(applyMatch[1]);
+    try {
+      return json(await applyFleetPreset(id));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'failed to apply fleet preset';
+      return jsonError(msg, msg.startsWith('unknown fleet preset') ? 404 : 500);
+    }
+  }
+  if (!rest.includes('/')) {
+    if (req.method !== 'DELETE') return jsonError('use DELETE', 405);
+    const id = decodeURIComponent(rest);
+    try {
+      return json(await deleteFleetPreset(id));
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'failed to delete fleet preset', 500);
     }
   }
 

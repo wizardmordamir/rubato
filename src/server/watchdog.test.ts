@@ -6,10 +6,14 @@ import { parseDrainConfig, parseLaunchdPlist } from '../lib/orchestration';
 import { handleOrchestrationApi } from './orchestrationRoutes';
 import {
   applyDrainConfigPatch,
+  applyFleetPreset,
   controlWatchdog,
+  deleteFleetPreset,
   getWatchdog,
+  listFleetPresets,
   patchDrainConfig,
   restartDrainer,
+  saveFleetPreset,
   setWatchdogInterval,
   startDrainer,
   stopDrainer,
@@ -672,5 +676,71 @@ describe('route handler (handleOrchestrationApi)', () => {
       new Request(url('/api/orchestration/logs/..%2f..%2fetc%2fpasswd')),
     );
     expect(res.status).toBe(404);
+  });
+});
+
+describe('fleet presets', () => {
+  const url = (p: string) => `http://localhost${p}`;
+  const post = (p: string, body?: unknown) =>
+    handleOrchestrationApi(
+      p,
+      new Request(url(p), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }),
+    );
+  const tiers = [
+    { modelAlias: 'opus', slots: 1, thinkingLevel: 'high' as const, fastMode: false },
+    { modelAlias: 'sonnet', slots: 2, thinkingLevel: 'low' as const, fastMode: false },
+  ];
+
+  test('fs: save → list → apply (writes fleet into drain.config) → delete', async () => {
+    await writeFile(orch('drain.config'), CONFIG);
+    expect(await listFleetPresets()).toEqual([]);
+
+    const saved = await saveFleetPreset({ name: 'Strong', tiers, note: 'opus-heavy' });
+    expect(saved.map((p) => p.id)).toEqual(['strong']);
+    expect((await listFleetPresets())[0].tiers).toEqual(tiers);
+
+    const applied = await applyFleetPreset('strong');
+    expect(applied.preset.name).toBe('Strong');
+    expect(applied.config.fleetTiers).toEqual(tiers);
+    expect(applied.config.jobs).toBe(3); // sum of slots
+    // …and it actually landed in drain.config on disk.
+    expect(await readFile(orch('drain.config'), 'utf8')).toContain('FLEET_TIERS=2');
+
+    expect(await deleteFleetPreset('strong')).toEqual([]);
+  });
+
+  test('fs: apply an unknown preset id throws', async () => {
+    await writeFile(orch('drain.config'), CONFIG);
+    expect(applyFleetPreset('nope')).rejects.toThrow(/unknown fleet preset/);
+  });
+
+  test('HTTP: GET (empty) → POST save → POST apply → DELETE', async () => {
+    await writeFile(orch('drain.config'), CONFIG);
+
+    const empty = await handleOrchestrationApi('/api/orchestration/fleet-presets', new Request(url('/api/orchestration/fleet-presets')));
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual([]);
+
+    const saved = await post('/api/orchestration/fleet-presets', { name: 'Fast', tiers });
+    expect(saved.status).toBe(200);
+    expect((await saved.json()).map((p: { id: string }) => p.id)).toEqual(['fast']);
+
+    const applied = await post('/api/orchestration/fleet-presets/fast/apply');
+    expect(applied.status).toBe(200);
+    expect((await applied.json()).config.fleetTiers).toHaveLength(2);
+
+    const del = await handleOrchestrationApi(
+      '/api/orchestration/fleet-presets/fast',
+      new Request(url('/api/orchestration/fleet-presets/fast'), { method: 'DELETE' }),
+    );
+    expect(del.status).toBe(200);
+    expect(await del.json()).toEqual([]);
+  });
+
+  test('HTTP: a bad save body → 400; applying a missing id → 404', async () => {
+    await writeFile(orch('drain.config'), CONFIG);
+    expect((await post('/api/orchestration/fleet-presets', { name: '', tiers })).status).toBe(400);
+    expect((await post('/api/orchestration/fleet-presets', { name: 'X', tiers: [] })).status).toBe(400);
+    expect((await post('/api/orchestration/fleet-presets/ghost/apply')).status).toBe(404);
   });
 });
