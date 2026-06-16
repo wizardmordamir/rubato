@@ -12,18 +12,25 @@
 
 import type { Database } from 'bun:sqlite';
 import { addColumnIfMissing } from 'cwip/sqlite';
+import type { AutomationStore } from '../lib/automations';
 import type { RubatoPlugin } from '../plugin/types';
 import { handleAutomationApi, handleSessionApi } from '../server/automationRoutes';
 import { pageByKey, type UiPage } from '../shared/ui';
 
+// Re-export the storage seam so a friend app can build/implement a backend from the
+// one import: `import { automationsPlugin, createFileAutomationStore } from 'rubato/plugins/automations'`.
+export { type AutomationStore, createFileAutomationStore } from '../lib/automations';
+
 /** Configuration for {@link automationsPlugin}. */
 export interface AutomationsPluginOptions {
   /**
-   * Directory for on-disk capture/run artifacts. Reserved for the friend-app
-   * shape (Stage 4+); rubato itself uses its `~/.rubato` default, so leaving this
-   * unset keeps the monolith's behavior unchanged.
+   * Where saved automations are persisted. Defaults to rubato's file store
+   * (`~/.rubato/automations/`); a friend app can inject its own {@link AutomationStore}
+   * (a database, an object store, an in-memory map) to keep automations off local
+   * disk — no rubato change or republish needed. Leaving it unset keeps the
+   * monolith's behavior unchanged.
    */
-  captureDir?: string;
+  storage?: AutomationStore;
 }
 
 /**
@@ -61,15 +68,18 @@ const AUTOMATIONS_PAGE = pageByKey('automations') as UiPage;
  * separately (it's an optional peer dependency of rubato, not bundled).
  */
 export function automationsPlugin(opts: AutomationsPluginOptions = {}): RubatoPlugin {
-  // captureDir is part of the public contract now (factory shape); its wiring into
-  // capture storage lands with the friend-app build (Stage 4+).
-  void opts.captureDir;
+  // Inject the chosen automation store into the CRUD handler (undefined → the
+  // handler's own file-store default). Session routes don't touch storage.
+  const { storage } = opts;
   return {
     id: 'automations',
     label: 'Browser Automation',
     migrateDb: migrateAutomationsDb,
     routes: [
-      { prefix: ['/api/automations', '/api/automation-runs'], handle: handleAutomationApi },
+      {
+        prefix: ['/api/automations', '/api/automation-runs'],
+        handle: (pathname, req) => handleAutomationApi(pathname, req, storage),
+      },
       { prefix: '/api/session/', handle: handleSessionApi },
     ],
     pages: [AUTOMATIONS_PAGE],

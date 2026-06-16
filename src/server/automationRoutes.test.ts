@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { saveAutomation } from '../lib/automations';
+import { type AutomationStore, buildAutomationRecord, saveAutomation, slugify } from '../lib/automations';
 import { writeManifest } from '../lib/captureStore';
+import type { Automation } from '../shared/automation';
 import type { CaptureManifest } from '../shared/capture';
+import { handleAutomationApi } from './automationRoutes';
 import { route } from './router';
 
 const post = (path: string, body: unknown) =>
@@ -140,5 +142,68 @@ describe('automation routes', () => {
     const url = await route(new Request('http://x/api/session/url'));
     expect(url.status).toBe(200);
     expect((await url.json()) as { url: string }).toEqual({ url: '' });
+  });
+});
+
+/**
+ * The CRUD handler reads/writes through an injected {@link AutomationStore} — the
+ * seam a friend app uses to keep automations off local disk (`automationsPlugin({
+ * storage })`). These drive a pure in-memory store, so they touch no filesystem and
+ * prove the injection end to end.
+ */
+describe('handleAutomationApi storage injection', () => {
+  /** Throwaway in-memory store + its backing map so tests can assert what persisted. */
+  function memStore(): AutomationStore & { map: Map<string, Automation> } {
+    const map = new Map<string, Automation>();
+    return {
+      map,
+      list: async () => [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt),
+      get: async (id) => map.get(id) ?? null,
+      save: async (input) => {
+        const record = buildAutomationRecord(input, map.get(input.id || slugify(input.name)) ?? null, 1000);
+        map.set(record.id, record);
+        return record;
+      },
+      delete: async (id) => map.delete(id),
+    };
+  }
+
+  const get = (path: string, store: AutomationStore) =>
+    handleAutomationApi(path, new Request(`http://x${path}`), store);
+  const send = (path: string, method: string, store: AutomationStore, body?: unknown) =>
+    handleAutomationApi(
+      path,
+      new Request(`http://x${path}`, {
+        method,
+        ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}),
+      }),
+      store,
+    );
+
+  test('GET /api/automations lists from the injected store', async () => {
+    const res = await get('/api/automations', memStore());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  test('POST persists to the injected store (not the filesystem)', async () => {
+    const store = memStore();
+    const res = await send('/api/automations', 'POST', store, { name: 'My Flow', steps: [] });
+    expect(res.status).toBe(200);
+    const saved = (await res.json()) as Automation;
+    expect(saved.id).toBe('my-flow');
+    expect(store.map.get('my-flow')?.name).toBe('My Flow');
+  });
+
+  test('GET :id and DELETE :id route through the injected store', async () => {
+    const store = memStore();
+    await store.save({ name: 'Keep Me', steps: [] });
+
+    const got = await get('/api/automations/keep-me', store);
+    expect(((await got.json()) as Automation).name).toBe('Keep Me');
+
+    const del = await send('/api/automations/keep-me', 'DELETE', store);
+    expect(await del.json()).toEqual({ deleted: true });
+    expect(store.map.has('keep-me')).toBe(false);
   });
 });

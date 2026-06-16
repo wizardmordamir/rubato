@@ -9,7 +9,7 @@
  */
 
 import { optionalEnv } from '../api/env';
-import { deleteAutomation, getAutomation, listAutomations, saveAutomation } from '../lib/automations';
+import { type AutomationStore, automationStore as defaultAutomationStore } from '../lib/automations';
 import { collectAutomationVars } from '../lib/automationVars';
 import { readManifest } from '../lib/captureStore';
 import { captureToAutomation } from '../lib/captureToAutomation';
@@ -52,8 +52,19 @@ function missingVariables(automation: Automation, supplied: Record<string, strin
     .map((v) => v.name);
 }
 
-/** /api/automations, /api/automations/:id, /api/automations/run, /api/automation-runs */
-export async function handleAutomationApi(pathname: string, req: Request): Promise<Response> {
+/**
+ * /api/automations, /api/automations/:id, /api/automations/run, /api/automation-runs.
+ *
+ * `store` is the automation persistence backend; it defaults to rubato's file store,
+ * so the monolith (router.ts calls this with two args) is unchanged. A friend app
+ * injects its own backend by wrapping this — `automationsPlugin({ storage })` does
+ * exactly that.
+ */
+export async function handleAutomationApi(
+  pathname: string,
+  req: Request,
+  store: AutomationStore = defaultAutomationStore,
+): Promise<Response> {
   if (pathname === '/api/automation-runs') {
     const automation = new URL(req.url).searchParams.get('automation') ?? undefined;
     return json(listAutomationRuns(automation));
@@ -94,7 +105,7 @@ export async function handleAutomationApi(pathname: string, req: Request): Promi
     switch (action) {
       case 'start': {
         const b = await readJsonBody<{ id?: string; automation?: Automation; speed?: RunSpeed }>(req);
-        const automation = b?.automation ?? (b?.id ? await getAutomation(b.id) : null);
+        const automation = b?.automation ?? (b?.id ? await store.get(b.id) : null);
         if (!automation) return jsonError('automation not found', 404);
         return json(await startStep(automation, b?.speed ?? 'slow'));
       }
@@ -133,7 +144,7 @@ export async function handleAutomationApi(pathname: string, req: Request): Promi
       rows?: Record<string, string>[];
     }>(req);
     if (!b) return jsonError('invalid JSON body', 400);
-    const automation = b.automation ?? (b.id ? await getAutomation(b.id) : null);
+    const automation = b.automation ?? (b.id ? await store.get(b.id) : null);
     if (!automation) return jsonError('automation not found', 404);
     // Re-validate server-side — never trust the client's form to have gated it.
     const missing = missingVariables(automation, b.variables);
@@ -156,11 +167,11 @@ export async function handleAutomationApi(pathname: string, req: Request): Promi
   }
 
   if (pathname === '/api/automations') {
-    if (req.method === 'GET') return json(await listAutomations());
+    if (req.method === 'GET') return json(await store.list());
     if (req.method === 'POST') {
       const b = await readJsonBody<Partial<Automation> & { name?: string; steps?: Automation['steps'] }>(req);
       if (!b?.name || !Array.isArray(b.steps)) return jsonError('name and steps required', 400);
-      return json(await saveAutomation({ ...b, name: b.name, steps: b.steps }));
+      return json(await store.save({ ...b, name: b.name, steps: b.steps }));
     }
     return jsonError('use GET or POST', 405);
   }
@@ -169,7 +180,7 @@ export async function handleAutomationApi(pathname: string, req: Request): Promi
   // variables a run needs and whether each is already set in env (never the value).
   if (pathname.endsWith('/variables')) {
     const varId = pathname.slice('/api/automations/'.length, -'/variables'.length);
-    const a = varId ? await getAutomation(varId) : null;
+    const a = varId ? await store.get(varId) : null;
     if (!a) return jsonError('not found', 404);
     return json({ variables: automationVariables(a) });
   }
@@ -184,7 +195,7 @@ export async function handleAutomationApi(pathname: string, req: Request): Promi
   if (pathname.endsWith('/steps-from-capture')) {
     if (req.method !== 'POST') return jsonError('use POST', 405);
     const fromCaptureId = pathname.slice('/api/automations/'.length, -'/steps-from-capture'.length);
-    const a = fromCaptureId ? await getAutomation(fromCaptureId) : null;
+    const a = fromCaptureId ? await store.get(fromCaptureId) : null;
     if (!a) return jsonError('not found', 404);
     if (!a.capture?.id) return jsonError('this automation has no capture to generate steps from', 400);
     const manifest = await readManifest(a.capture.id);
@@ -193,14 +204,14 @@ export async function handleAutomationApi(pathname: string, req: Request): Promi
     // Nothing replayable in the capture (only start/manual/navigation noise) — leave
     // the automation untouched and let the UI say so rather than blanking its steps.
     if (derived.steps.length === 0) return json({ automation: a, generated: 0 });
-    const automation = await saveAutomation({ ...a, steps: derived.steps, startUrl: a.startUrl || derived.startUrl });
+    const automation = await store.save({ ...a, steps: derived.steps, startUrl: a.startUrl || derived.startUrl });
     return json({ automation, generated: derived.steps.length });
   }
 
   // /api/automations/:id/export — render the automation as a Playwright spec file.
   if (pathname.endsWith('/export')) {
     const exportId = pathname.slice('/api/automations/'.length, -'/export'.length);
-    const a = exportId ? await getAutomation(exportId) : null;
+    const a = exportId ? await store.get(exportId) : null;
     if (!a) return jsonError('not found', 404);
     return new Response(automationToSpec(a), {
       headers: {
@@ -214,11 +225,11 @@ export async function handleAutomationApi(pathname: string, req: Request): Promi
   const id = pathname.slice('/api/automations/'.length);
   if (!id) return jsonError('not found', 404);
   if (req.method === 'GET') {
-    const a = await getAutomation(id);
+    const a = await store.get(id);
     return a ? json(a) : jsonError('not found', 404);
   }
   if (req.method === 'DELETE') {
-    return json({ deleted: await deleteAutomation(id) });
+    return json({ deleted: await store.delete(id) });
   }
   return jsonError('use GET or DELETE', 405);
 }
