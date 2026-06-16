@@ -34,8 +34,9 @@ import { runWithCorrelation } from '../lib/correlation';
 import { detectTechFromPackageJson } from '../lib/detectAppTech';
 import { openInEditor } from '../lib/editor';
 import { findPackageRoot } from '../lib/pkgPaths';
+import type { PluginRouteHandler } from '../plugin/types';
 import type { AskAttachment } from '../shared/types';
-import { resolvePages, type UiConfigPatch, type UiState } from '../shared/ui';
+import { resolvePages, type UiConfig, type UiConfigPatch, type UiPage, type UiState } from '../shared/ui';
 import { handleAdminApi } from './adminRoutes';
 import { getStatus } from './aiDb';
 import { indexApp } from './aiIndex';
@@ -150,6 +151,20 @@ const REPO_ROOT = findPackageRoot(import.meta.dir);
 const UI_DIST = resolve(REPO_ROOT, 'ui/dist');
 
 /**
+ * Per-request wiring injected by {@link startServer} (assembled by `startApp`
+ * from the chosen plugins). All optional — with none, `route()` behaves exactly
+ * like rubato's own monolithic server (built-in routes only, rubato's `ui/dist`).
+ */
+export interface RouteOptions {
+  /** Plugin-owned routes, tried before the built-in chain (first prefix wins). */
+  pluginRoutes?: PluginRouteHandler[];
+  /** Plugin page declarations, merged into `GET /api/ui` so the nav can list them. */
+  pluginPages?: UiPage[];
+  /** Absolute path to the SPA to serve; defaults to rubato's own `ui/dist`. */
+  uiDist?: string;
+}
+
+/**
  * Repo docs viewable in the UI, resolved fresh per request (never copied) from
  * three sources, in order:
  *   1. the canonical root files below (the overview/cheatsheet docs);
@@ -195,10 +210,11 @@ async function listDocs(): Promise<DocSource[]> {
   return out;
 }
 
-/** Serve a file from the built UI, or null if it doesn't exist. */
-async function serveStatic(pathname: string): Promise<Response | null> {
+/** Serve a file from the built UI (`distDir`, default rubato's own `ui/dist`),
+ *  or null if it doesn't exist. A friend app passes its own built SPA dir. */
+async function serveStatic(pathname: string, distDir: string = UI_DIST): Promise<Response | null> {
   const rel = pathname === '/' ? '/index.html' : pathname;
-  const file = Bun.file(resolve(UI_DIST, `.${rel}`));
+  const file = Bun.file(resolve(distDir, `.${rel}`));
   return (await file.exists()) ? new Response(file) : null;
 }
 
@@ -220,11 +236,19 @@ const INLINE_TYPES: Record<string, string> = {
   csv: 'text/csv; charset=utf-8',
 };
 
-async function handleApi(pathname: string, req: Request): Promise<Response> {
+async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}): Promise<Response> {
   // Reject oversized bodies up front (Content-Length is advisory but catches the common case).
   const declared = Number(req.headers.get('content-length') ?? 0);
   if (declared > MAX_BODY_BYTES) {
     return jsonError(`request body too large (max ${MAX_BODY_BYTES} bytes)`, 413);
+  }
+
+  // Plugin-owned routes first: the first handler whose prefix matches wins, then
+  // we fall through to rubato's built-in chain below. Rubato's own boot passes no
+  // plugin routes, so this loop is a no-op for the monolith.
+  for (const handler of opts.pluginRoutes ?? []) {
+    const prefixes = Array.isArray(handler.prefix) ? handler.prefix : [handler.prefix];
+    if (prefixes.some((p) => pathname.startsWith(p))) return handler.handle(pathname, req);
   }
 
   // Admin API (backups + DB viewer), gated by `ui.admin` inside the handler.
@@ -242,7 +266,14 @@ async function handleApi(pathname: string, req: Request): Promise<Response> {
   }
 
   // Web-UI page enablement: GET resolves toggles for the nav; POST persists changes.
+  // A plugin's pages are enabled by default (you included the plugin, so you want
+  // its page) but an explicit `ui.pages.<key>` config toggle still wins. This only
+  // affects a friend app that passes pluginPages; rubato's own boot passes none.
   if (pathname === '/api/ui') {
+    const withPluginPages = (pages: Record<string, boolean>, ui: UiConfig | undefined): Record<string, boolean> => {
+      for (const p of opts.pluginPages ?? []) pages[p.key] = ui?.pages?.[p.key] ?? true;
+      return pages;
+    };
     const cfg = await loadConfig();
     if (req.method === 'POST') {
       let patch: UiConfigPatch;
@@ -252,9 +283,12 @@ async function handleApi(pathname: string, req: Request): Promise<Response> {
         return jsonError('invalid JSON body', 400);
       }
       const ui = await setUiConfig(patch);
-      return json({ pages: resolvePages(ui), admin: ui.admin === true } satisfies UiState);
+      return json({ pages: withPluginPages(resolvePages(ui), ui), admin: ui.admin === true } satisfies UiState);
     }
-    return json({ pages: resolvePages(cfg.ui), admin: cfg.ui?.admin === true } satisfies UiState);
+    return json({
+      pages: withPluginPages(resolvePages(cfg.ui), cfg.ui),
+      admin: cfg.ui?.admin === true,
+    } satisfies UiState);
   }
 
   // Playwright automation builder routes (parameterized; handled before the switch).
@@ -1093,7 +1127,7 @@ async function handleApi(pathname: string, req: Request): Promise<Response> {
   }
 }
 
-export async function route(req: Request): Promise<Response> {
+export async function route(req: Request, opts: RouteOptions = {}): Promise<Response> {
   // One correlation id per request — reuse an inbound x-correlation-id (set by a
   // caller / the edge) or mint one with cwip's shared generator (the same id format
   // the sibling apps' cwip/server correlationId middleware uses). Stamp it on every
@@ -1101,7 +1135,7 @@ export async function route(req: Request): Promise<Response> {
   const correlationId = req.headers.get('x-correlation-id') || makeCorrelationId();
   // Carry the id through the whole async call tree (diagnostics, the log
   // accumulator, captured outbound calls) so a request is traceable by it.
-  const response = await runWithCorrelation(correlationId, () => routeRequest(req));
+  const response = await runWithCorrelation(correlationId, () => routeRequest(req, opts));
   if (!response.headers.has('x-correlation-id')) {
     // Headers stay mutable on a standard Response until it's sent; guard for the
     // rare body type that disallows it rather than failing the whole request.
@@ -1114,14 +1148,14 @@ export async function route(req: Request): Promise<Response> {
   return response;
 }
 
-async function routeRequest(req: Request): Promise<Response> {
+async function routeRequest(req: Request, opts: RouteOptions = {}): Promise<Response> {
   const { pathname } = new URL(req.url);
 
   if (pathname.startsWith('/api/')) {
     // Central error boundary: any unhandled throw from a handler becomes the
     // canonical error envelope (a thrown AppError keeps its own status).
     try {
-      return await handleApi(pathname, req);
+      return await handleApi(pathname, req, opts);
     } catch (err) {
       const status = isAppError(err) ? (err.status ?? 500) : 500;
       return jsonError(err instanceof Error ? err.message : String(err), status);
@@ -1129,9 +1163,9 @@ async function routeRequest(req: Request): Promise<Response> {
   }
 
   // Static UI (built) → SPA fallback → single-file explorer.
-  const asset = await serveStatic(pathname);
+  const asset = await serveStatic(pathname, opts.uiDist);
   if (asset) return asset;
-  const index = await serveStatic('/');
+  const index = await serveStatic('/', opts.uiDist);
   if (index) return index;
   return new Response(UI_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } });
 }

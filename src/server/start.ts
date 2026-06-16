@@ -10,6 +10,8 @@
 
 import type { Server, ServerWebSocket } from 'bun';
 import { type RegisteredScript, registerScripts } from '../lib/scriptRegistry';
+import type { PluginRouteHandler } from '../plugin/types';
+import type { UiPage } from '../shared/ui';
 import { BUILTIN_SCRIPTS } from './builtinScripts';
 import { initDebugCapture } from './debugCapture';
 import { subscribe } from './events';
@@ -26,6 +28,22 @@ export interface StartOptions {
    * calling {@link registerScript} for each before `startServer`.
    */
   scripts?: RegisteredScript[];
+  /**
+   * Plugin-owned server routes, dispatched ahead of rubato's built-in route chain
+   * (the first prefix match wins). Assembled by {@link startApp} from the chosen
+   * plugins; rubato's own boot leaves it unset (its routes are the built-ins).
+   */
+  pluginRoutes?: PluginRouteHandler[];
+  /**
+   * Plugin-contributed UI page declarations, surfaced to the client via
+   * `GET /api/ui` so the nav can include them. Assembled by {@link startApp}.
+   */
+  pluginPages?: UiPage[];
+  /**
+   * Absolute path to the built SPA to serve (`index.html` + assets). Defaults to
+   * rubato's own `ui/dist`; a friend app points it at its own built UI.
+   */
+  uiDist?: string;
 }
 
 export interface ServerHandle {
@@ -59,7 +77,11 @@ export function startServer(options: StartOptions = {}): ServerHandle {
       if (new URL(req.url).pathname === '/ws') {
         return srv.upgrade(req) ? undefined : new Response('expected a websocket', { status: 426 });
       }
-      return route(req);
+      return route(req, {
+        pluginRoutes: options.pluginRoutes,
+        pluginPages: options.pluginPages,
+        uiDist: options.uiDist,
+      });
     },
     websocket: {
       open(ws) {

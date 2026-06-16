@@ -13,9 +13,15 @@
  *
  * Returns a {@link ServerHandle} (with `.url` and `.stop()`) when it boots, so
  * the host can address or shut it down.
+ *
+ * This module is also the public `rubato/server` surface: alongside `on()` it
+ * re-exports {@link startApp} (the plugin-assembly factory) and the plugin types,
+ * so a friend mini-app can `import { startApp } from 'rubato/server'`.
  */
 
+import type { PluginRouteHandler, RubatoPlugin } from './plugin/types';
 import { type ServerHandle, type StartOptions, startServer } from './server/start';
+import { type StartAppOptions, startApp } from './server/startApp';
 
 /** Env var that gates {@link on}. Set to the string `"true"` to enable. */
 export const RUBATO_ON_ENV = 'RUBATO_ON';
@@ -34,4 +40,5 @@ export function on(options: StartOptions = {}): ServerHandle | undefined {
   return startServer(options);
 }
 
-export type { ServerHandle, StartOptions };
+export type { PluginRouteHandler, RubatoPlugin, ServerHandle, StartAppOptions, StartOptions };
+export { startApp };

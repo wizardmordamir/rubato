@@ -17,6 +17,7 @@ import { resolve } from 'node:path';
 import { groupOf, isCategoryKey, type TimingEvent } from 'cwip/orchestration';
 import { addColumnIfMissing, applyRecommendedPragmas } from 'cwip/sqlite';
 import { RUBATO_HOME } from '../lib/config';
+import { migrateAutomationsDb } from '../plugins/automations';
 import type { AutomationRunRecord } from '../shared/automation';
 import type { BoardTask, BoardTaskInput } from '../shared/board';
 import type { CustomPage, CustomPageInput } from '../shared/customPage';
@@ -158,17 +159,10 @@ export function getDb(): Database {
     )
   `);
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS automation_runs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      automation TEXT NOT NULL,
-      status TEXT NOT NULL,
-      steps TEXT NOT NULL,
-      scraped TEXT NOT NULL,
-      started_at INTEGER NOT NULL,
-      duration_ms INTEGER NOT NULL
-    )
-  `);
+  // Automation tables (automation_runs + its additive columns) are owned by the
+  // automations plugin, so the schema travels with the feature. The monolith runs
+  // every plugin's DDL here; a friend app gets it via `startApp` → plugin.migrateDb.
+  migrateAutomationsDb(db);
 
   // Pipeline runs (append-only history). Mirrors automation_runs; `stages` and
   // `vars` are JSON, `dir` is the per-run working directory (browsable in Files).
@@ -493,13 +487,8 @@ export function getDb(): Database {
     addColumnIfMissing(db, table, 'report_path', 'TEXT');
   }
 
-  // automation_runs gains automation_id so a run's on-disk artifacts (named by the
-  // automation's id + startedAt) can be located and deleted for cleanup. Older
-  // rows carry NULL (their artifacts can't be pinpointed, only their DB row).
-  addColumnIfMissing(db, 'automation_runs', 'automation_id', 'TEXT');
-  // correlation_id ties a run to the request that launched it, so its server logs
-  // + captured outbound calls are retrievable (GET /api/debug-capture/logs).
-  addColumnIfMissing(db, 'automation_runs', 'correlation_id', 'TEXT');
+  // (automation_runs' additive columns now live in the automations plugin's
+  // migrateAutomationsDb, called above.)
 
   // app_vulnerabilities gains the `informational` severity (the 5th AppScan tier),
   // the per-issue-type breakdown JSON, and the stored-report file name (for the
