@@ -37,6 +37,32 @@ const HOST_SCRIPT =
     resolve(ROOT, 'dist/browser-host.mjs'),
   ].find(existsSync) ?? resolve(ROOT, 'src/scripts/browser-host.mjs');
 
+/**
+ * The `node` to drive Playwright with. A bun-COMPILED app can bundle a Node binary
+ * so end users install nothing: prefer `RUBATO_NODE`, then a `node` (or
+ * `runtime/node`) beside the executable, then one on PATH. Null if none is found.
+ */
+function resolveNode(): string | null {
+  const fromEnv = process.env.RUBATO_NODE?.trim();
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+  const beside = [
+    resolve(dirname(process.execPath), 'node'),
+    resolve(dirname(process.execPath), 'runtime', 'node'),
+  ].find(existsSync);
+  return beside ?? Bun.which('node');
+}
+
+/**
+ * If a Playwright browser set is bundled beside the binary (a `browsers/` dir),
+ * point Playwright at it — so runs need no system browser and no `playwright
+ * install`. A user-set `PLAYWRIGHT_BROWSERS_PATH` always wins.
+ */
+function applyBundledBrowsers(): void {
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH) return;
+  const beside = resolve(dirname(process.execPath), 'browsers');
+  if (existsSync(beside)) process.env.PLAYWRIGHT_BROWSERS_PATH = beside;
+}
+
 // The host exits with this code when a headed browser is closed by the user (not
 // by us) — see browser-host.mjs. Kept in sync by hand across the stdio boundary.
 const EXIT_BROWSER_CLOSED = 75;
@@ -90,18 +116,22 @@ export class BrowserHost implements BrowserDriver {
   /** Spawn the host and wait until it signals `ready`. */
   async start(): Promise<void> {
     if (this.proc) return this.readyPromise;
-    // Playwright runs under Node, not Bun — fail with an actionable message if it's absent.
-    if (!Bun.which('node')) {
+    // Playwright runs under Node, not Bun — fail with an actionable message if it's
+    // absent. A bundled Node beside the binary (or RUBATO_NODE) satisfies this too.
+    const node = resolveNode();
+    if (!node) {
       throw new Error(
         "Node.js is required to drive the browser (Playwright can't run under Bun). " +
-          'Install Node and make sure `node` is on your PATH.',
+          'Install Node and put it on your PATH, ship a `node` beside the app, or set RUBATO_NODE.',
       );
     }
+    // Use a bundled browser set if one sits beside the binary (zero-install distros).
+    applyBundledBrowsers();
     // 'playwright' is an OPTIONAL peer dep (heavy: bundles browser binaries). The
     // Node host imports it; probe its resolvability the same way Node will (from
     // the host script's dir) so we fail with an actionable message here rather than
     // letting the subprocess die on a raw ERR_MODULE_NOT_FOUND.
-    const probe = Bun.spawnSync(['node', '-e', "require.resolve('playwright')"], {
+    const probe = Bun.spawnSync([node, '-e', "require.resolve('playwright')"], {
       cwd: dirname(HOST_SCRIPT),
       stdout: 'ignore',
       stderr: 'ignore',
@@ -113,7 +143,7 @@ export class BrowserHost implements BrowserDriver {
           'or run `bunx playwright install chromium` for the bundled browser.',
       );
     }
-    this.proc = Bun.spawn(['node', HOST_SCRIPT], { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit' });
+    this.proc = Bun.spawn([node, HOST_SCRIPT], { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit' });
     this.readStdout();
     // If the host dies (crash, or the user closes a headed browser and it takes
     // the process down), settle the ready gate and reject every in-flight command
