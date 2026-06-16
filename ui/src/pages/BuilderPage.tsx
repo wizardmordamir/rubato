@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCopyToClipboard } from "cwip/react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useRegisterBreadcrumbLabel } from "../breadcrumbs";
@@ -61,6 +62,7 @@ export function BuilderPage() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { notify } = useToast();
+  const { copy } = useCopyToClipboard();
   const confirm = useConfirm();
 
   const [draft, setDraft] = useState<Draft>(EMPTY);
@@ -530,8 +532,8 @@ export function BuilderPage() {
                   onClick={async () => {
                     try {
                       const { token } = await exportCaptureText(captureId);
-                      await navigator.clipboard?.writeText(token);
-                      notify("Copied a shareable capture string to the clipboard.", "success");
+                      if (await copy(token)) notify("Copied a shareable capture string to the clipboard.", "success");
+                      else notify("Couldn't copy to clipboard", "error");
                     } catch (err) {
                       notify(err instanceof Error ? err.message : "export failed", "error");
                     }

@@ -16,7 +16,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ notify }}>
       {children}
-      <ToastList toasts={toasts} onDismiss={dismiss} position="bottom-right" />
+      <ToastList toasts={toasts} onDismiss={dismiss} position="top-right" />
     </ToastContext.Provider>
   );
 }

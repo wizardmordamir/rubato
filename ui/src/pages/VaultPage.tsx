@@ -1,4 +1,5 @@
 import { ApiError } from "cwip";
+import { CopyButton as CwipCopyButton } from "cwip/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import {
@@ -16,7 +17,7 @@ import {
 } from "../api";
 import { Alert, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLASS, InfoHint, PageHeading, Tooltip } from "../components";
 import { useConfirm } from "../confirm";
-import { IconCopy, IconEye, IconEyeOff, IconPlus, IconShield, IconTrash } from "../icons";
+import { IconEye, IconEyeOff, IconPlus, IconShield, IconTrash } from "../icons";
 import { Modal } from "../Modal";
 import { useToast } from "../toast";
 
@@ -368,36 +369,24 @@ function SecretValue({ value, label }: { value: string; label: string }) {
       >
         {shown ? <IconEyeOff /> : <IconEye />}
       </button>
-      <button
-        type="button"
-        aria-label={`Copy ${label}`}
-        className="p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-        onClick={() => {
-          navigator.clipboard?.writeText(value);
-          notify("Copied", "success");
-        }}
-      >
-        <IconCopy />
-      </button>
+      <CwipCopyButton
+        text={value}
+        label={`Copy ${label}`}
+        tooltip={`Copy ${label}`}
+        className="p-1"
+        onCopied={() => notify("Copied", "success")}
+      />
     </span>
   );
 }
 
+// Thin adapter: keeps Vault's `{ value }` call sites + the empty guard while the
+// clipboard logic + ✓ confirmation come from cwip's shared CopyButton.
 function CopyButton({ value }: { value: string }) {
   const { notify } = useToast();
   if (!value) return null;
   return (
-    <button
-      type="button"
-      aria-label="Copy"
-      className="p-0.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-      onClick={() => {
-        navigator.clipboard?.writeText(value);
-        notify("Copied", "success");
-      }}
-    >
-      <IconCopy />
-    </button>
+    <CwipCopyButton text={value} tooltip="Copy" className="p-0.5" onCopied={() => notify("Copied", "success")} />
   );
 }
 

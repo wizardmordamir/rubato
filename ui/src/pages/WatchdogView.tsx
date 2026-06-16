@@ -35,7 +35,8 @@ import {
   Switch,
   Tooltip,
 } from "../components";
-import { IconCheck, IconCopy, IconPlay, IconSquare, IconTrash, IconZap } from "../icons";
+import { CopyButton } from "cwip/react";
+import { IconPlay, IconSquare, IconTrash, IconZap } from "../icons";
 import { useToast } from "../toast";
 
 /**
@@ -1661,17 +1662,6 @@ function CommandsSection({ commands }: { commands: WatchdogCommand[] }) {
 
 function CommandRow({ cmd }: { cmd: WatchdogCommand }) {
   const { notify } = useToast();
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(cmd.command).then(
-      () => {
-        setCopied(true);
-        notify("Copied", "success");
-        setTimeout(() => setCopied(false), 1500);
-      },
-      () => notify("Copy failed", "error"),
-    );
-  };
   return (
     <div className={`${CARD_CLASS} p-2.5`}>
       <div className="flex items-start justify-between gap-3">
@@ -1679,14 +1669,16 @@ function CommandRow({ cmd }: { cmd: WatchdogCommand }) {
           <p className="text-sm font-medium">{cmd.label}</p>
           <p className="text-xs text-gray-500">{cmd.description}</p>
         </div>
-        <button
-          type="button"
-          onClick={copy}
-          className="inline-flex shrink-0 items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
+        <CopyButton
+          text={cmd.command}
+          iconSize={13}
+          resetMs={1500}
+          onCopied={() => notify("Copied", "success")}
+          onError={() => notify("Copy failed", "error")}
+          className="border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
         >
-          {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
-          {copied ? "Copied" : "Copy"}
-        </button>
+          Copy
+        </CopyButton>
       </div>
       <pre className="mt-1.5 overflow-x-auto rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-700 dark:bg-gray-950 dark:text-gray-300">
         {cmd.command}
