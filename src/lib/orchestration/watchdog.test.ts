@@ -8,13 +8,17 @@ import {
   changedDrainFields,
   computePending,
   defaultDrainConfig,
+  deriveFleetSlots,
   deriveInstances,
   deriveNextRun,
   deriveProblems,
+  deriveUnservable,
+  effectiveSlots,
   needsRestartFieldChanged,
   nextRunIso,
   parseActiveRun,
   parseDrainConfig,
+  parseFleetConfigString,
   parseFleetPresets,
   parseLaunchdPlist,
   parseWatchdogStatus,
@@ -24,6 +28,7 @@ import {
   serializeDrainConfig,
   serializeFleetPresets,
   setPlistInterval,
+  tiersToCoverUnservable,
   upsertFleetPreset,
   wakeAction,
   workerIdFromWorktree,
@@ -694,5 +699,126 @@ describe('fleet presets', () => {
     list = upsertFleetPreset(list, a2);
     expect(list).toHaveLength(2);
     expect(list.find((p) => p.id === 'fast')?.tiers).toEqual([tiers[0]]);
+  });
+});
+
+describe('AUTO_TIER config round-trip', () => {
+  test('parses, serializes, and patches the toggle', () => {
+    expect(parseDrainConfig('AUTO_TIER=1\n').autoTier).toBe(true);
+    expect(parseDrainConfig('AUTO_TIER=0\n').autoTier).toBe(false);
+    expect(serializeDrainConfig(parseDrainConfig('AUTO_TIER=1\n'))).toContain('AUTO_TIER=1');
+    expect(applyDrainPatch(defaultDrainConfig(), { autoTier: true }).autoTier).toBe(true);
+  });
+});
+
+describe('parseFleetConfigString', () => {
+  test('parses the pipe-joined active-run fleetConfig and clamps', () => {
+    expect(parseFleetConfigString('opus,1,high,0|sonnet,2,off,1')).toEqual([
+      { modelAlias: 'opus', slots: 1, thinkingLevel: 'high', fastMode: false },
+      { modelAlias: 'sonnet', slots: 2, thinkingLevel: 'off', fastMode: true },
+    ]);
+    expect(parseFleetConfigString('')).toEqual([]);
+    expect(parseFleetConfigString(undefined)).toEqual([]);
+  });
+});
+
+describe('effectiveSlots', () => {
+  test('flat config → jobs identical slots', () => {
+    const cfg = { ...defaultDrainConfig(), jobs: 3, model: 'claude-sonnet-4-6' };
+    const specs = effectiveSlots(false, undefined, cfg);
+    expect(specs).toHaveLength(3);
+    expect(specs.map((s) => s.id)).toEqual([1, 2, 3]);
+    expect(specs.every((s) => s.modelAlias === 'sonnet')).toBe(true);
+  });
+
+  test('fleet config → one spec per slot per tier, ids sequential', () => {
+    const cfg = {
+      ...defaultDrainConfig(),
+      fleetTiers: [
+        { modelAlias: 'opus', slots: 1, thinkingLevel: 'high' as const, fastMode: false },
+        { modelAlias: 'sonnet', slots: 2, thinkingLevel: 'off' as const, fastMode: false },
+      ],
+    };
+    const specs = effectiveSlots(false, undefined, cfg);
+    expect(specs.map((s) => `${s.id}:${s.modelAlias}`)).toEqual(['1:opus', '2:sonnet', '3:sonnet']);
+    expect(specs.map((s) => s.tier)).toEqual([0, 1, 1]);
+  });
+
+  test('prefers the live activeRun fleetConfig over saved config', () => {
+    const cfg = { ...defaultDrainConfig(), jobs: 1, model: 'claude-opus-4-8' };
+    const specs = effectiveSlots(true, { pid: 1, fleetConfig: 'sonnet,2,off,0' }, cfg);
+    expect(specs).toHaveLength(2);
+    expect(specs.every((s) => s.modelAlias === 'sonnet')).toBe(true);
+  });
+});
+
+describe('deriveFleetSlots', () => {
+  const specs = [
+    { id: 1, modelAlias: 'opus', modelLabel: 'Opus 4.8', thinkingLevel: 'high' as const, fastMode: false, tier: 0 },
+    { id: 2, modelAlias: 'sonnet', modelLabel: 'Sonnet 4.6', thinkingLevel: 'off' as const, fastMode: false, tier: 1 },
+    { id: 3, modelAlias: 'sonnet', modelLabel: 'Sonnet 4.6', thinkingLevel: 'off' as const, fastMode: false, tier: 1 },
+  ];
+
+  test('working / waiting / missing statuses + model-aware waiting reason', () => {
+    const slots = deriveFleetSlots({
+      running: true,
+      drainPid: 999,
+      specs,
+      workers: [
+        { id: 1, pid: 11, alive: true },
+        { id: 2, pid: 12, alive: true },
+        // slot 3 has no live process → missing
+      ],
+      instances: [{ title: 'build it', line: 5, worker: 1 }],
+      readyTasks: [{ title: 'an opus task', line: 9, model: 'opus' }],
+    });
+    expect(slots.map((s) => s.status)).toEqual(['working', 'waiting', 'missing']);
+    expect(slots[0]).toMatchObject({ task: 'build it', taskLine: 5, drainPid: 999, pid: 11 });
+    // sonnet slot waiting: no ready task targets sonnet (only an opus task) → model-specific reason
+    expect(slots[1].reason).toBe('No task for Sonnet 4.6');
+    expect(slots[2].status).toBe('missing');
+  });
+
+  test('not running → every slot stopped', () => {
+    const slots = deriveFleetSlots({ running: false, specs, workers: [], instances: [], readyTasks: [] });
+    expect(slots.every((s) => s.status === 'stopped')).toBe(true);
+    expect(slots.every((s) => s.drainPid === undefined)).toBe(true);
+  });
+});
+
+describe('deriveUnservable + tiersToCoverUnservable', () => {
+  const fleet = {
+    ...defaultDrainConfig(),
+    fleetTiers: [{ modelAlias: 'sonnet', slots: 2, thinkingLevel: 'off' as const, fastMode: false }],
+  };
+  const ready = [
+    { title: 'untagged', line: 1 },
+    { title: 'sonnet ok', line: 2, model: 'sonnet' },
+    { title: 'needs opus', line: 3, model: 'opus', thinkingLevel: 'high' },
+    { title: 'needs opus too', line: 4, model: 'opus' },
+    { title: 'needs haiku', line: 5, model: 'haiku' },
+  ];
+
+  test('only tagged tasks with a missing model are unservable (model-match rule)', () => {
+    const u = deriveUnservable(ready, fleet);
+    expect(u.count).toBe(3);
+    expect(u.neededModels).toEqual(['haiku', 'opus']);
+    expect(u.tasks.map((t) => t.title)).not.toContain('untagged');
+    expect(u.tasks.map((t) => t.title)).not.toContain('sonnet ok');
+  });
+
+  test('cover adds a 1-slot tier per missing model at the highest requested thinking', () => {
+    const u = deriveUnservable(ready, fleet);
+    const tiers = tiersToCoverUnservable(u, fleet);
+    // existing sonnet tier + new opus + new haiku
+    expect(tiers.map((t) => t.modelAlias).sort()).toEqual(['haiku', 'opus', 'sonnet']);
+    const opus = tiers.find((t) => t.modelAlias === 'opus');
+    expect(opus).toMatchObject({ slots: 1, thinkingLevel: 'high' });
+  });
+
+  test('nothing unservable → no tier change', () => {
+    const u = deriveUnservable([{ title: 'sonnet', line: 1, model: 'sonnet' }], fleet);
+    expect(u.count).toBe(0);
+    expect(tiersToCoverUnservable(u, fleet)).toEqual([]);
   });
 });

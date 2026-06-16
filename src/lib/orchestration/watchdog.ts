@@ -20,24 +20,28 @@ import type {
   DrainConfig,
   DrainConfigPatch,
   FleetPreset,
+  FleetSlot,
   FleetTier,
   LaunchdInfo,
   NeedsRestartField,
   PendingChange,
   Problem,
+  ReadyTask,
   ThinkingLevel,
+  UnservableSummary,
   WatchdogCommand,
   WatchdogStatusLine,
   WatchdogTick,
   WorkerInstance,
+  WorkerProcess,
   WorkflowBoard,
 } from '../../shared/orchestration';
 import {
   FLEET_MODEL_OPTIONS,
   fleetPresetId,
   NEEDS_RESTART_FIELDS,
-  THINKING_LEVELS,
   serializeFleetTiers,
+  THINKING_LEVELS,
 } from '../../shared/orchestration';
 
 /**
@@ -79,6 +83,7 @@ const KNOWN_KEYS = new Set([
   'ADD_DIR',
   'THINKING_LEVEL',
   'FAST_MODE',
+  'AUTO_TIER',
   'RESUME_AT',
 ]);
 
@@ -146,6 +151,9 @@ export function parseDrainConfig(text: string): DrainConfig {
       case 'FAST_MODE':
         cfg.fastMode = truthy(value);
         break;
+      case 'AUTO_TIER':
+        cfg.autoTier = truthy(value);
+        break;
       case 'RESUME_AT': {
         // A UNIX epoch in SECONDS; only a positive integer is a real gate.
         const n = Number.parseInt(value, 10);
@@ -207,6 +215,7 @@ export function serializeDrainConfig(cfg: DrainConfig): string {
   if (cfg.addDir) lines.push(`ADD_DIR=${shq(cfg.addDir)}`);
   if (cfg.thinkingLevel) lines.push(`THINKING_LEVEL=${cfg.thinkingLevel}`);
   if (cfg.fastMode !== undefined) lines.push(`FAST_MODE=${cfg.fastMode ? 1 : 0}`);
+  if (cfg.autoTier !== undefined) lines.push(`AUTO_TIER=${cfg.autoTier ? 1 : 0}`);
   if (cfg.fleetTiers && cfg.fleetTiers.length > 0) {
     lines.push(`FLEET_TIERS=${cfg.fleetTiers.length}`);
     cfg.fleetTiers.forEach((t, i) => {
@@ -232,6 +241,7 @@ export function applyDrainPatch(cfg: DrainConfig, patch: DrainConfigPatch): Drai
   if (patch.addDir !== undefined) next.addDir = patch.addDir || undefined;
   if (patch.thinkingLevel !== undefined) next.thinkingLevel = patch.thinkingLevel;
   if (patch.fastMode !== undefined) next.fastMode = patch.fastMode;
+  if (patch.autoTier !== undefined) next.autoTier = patch.autoTier;
   // resumeAt: a positive epoch sets the gate; 0 / negative / non-finite clears it.
   if (patch.resumeAt !== undefined) {
     next.resumeAt = Number.isFinite(patch.resumeAt) && patch.resumeAt > 0 ? Math.floor(patch.resumeAt) : undefined;
@@ -267,7 +277,11 @@ export function parseFleetPresets(text: string): FleetPreset[] {
   } catch {
     return [];
   }
-  const arr = Array.isArray(raw) ? raw : Array.isArray((raw as { presets?: unknown })?.presets) ? (raw as { presets: unknown[] }).presets : [];
+  const arr = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as { presets?: unknown })?.presets)
+      ? (raw as { presets: unknown[] }).presets
+      : [];
   const out: FleetPreset[] = [];
   const seen = new Set<string>();
   for (const item of arr) {
@@ -301,6 +315,215 @@ export function upsertFleetPreset(presets: FleetPreset[], preset: FleetPreset): 
   next.push(preset);
   next.sort((a, b) => a.name.localeCompare(b.name));
   return next;
+}
+
+// ── fleet slots + coverage (the per-slot worker view + unservable tasks) ──────
+
+/** Human model label for an alias ("opus" → "Opus 4.8"); falls back to the alias. */
+export function modelLabelForAlias(alias: string): string {
+  return FLEET_MODEL_OPTIONS.find((m) => m.alias === alias)?.label ?? alias;
+}
+
+/** Short model alias for a full model id; defaults to 'opus' when unmapped/absent. */
+export function aliasForModelId(id: string | undefined): string {
+  if (!id) return 'opus';
+  return FLEET_MODEL_OPTIONS.find((m) => m.id === id)?.alias ?? 'opus';
+}
+
+/** Pick the highest thinking level among a set (by THINKING_LEVELS order); 'off' when none. */
+function highestThinking(levels: (string | undefined)[]): ThinkingLevel {
+  let best = 0;
+  for (const l of levels) {
+    const i = (THINKING_LEVELS as string[]).indexOf(l ?? '');
+    if (i > best) best = i;
+  }
+  return THINKING_LEVELS[best] as ThinkingLevel;
+}
+
+/** Parse active-run.json's pipe-joined fleetConfig ("opus,1,high,0|sonnet,2,off,0") to tiers. */
+export function parseFleetConfigString(s: string | undefined): FleetTier[] {
+  if (!s) return [];
+  const tiers: FleetTier[] = [];
+  for (const part of s.split('|')) {
+    const [alias, slots, think, fast] = part.split(',');
+    if (!alias?.trim()) continue;
+    tiers.push({
+      modelAlias: alias.trim(),
+      slots: Number.parseInt(slots ?? '1', 10) || 1,
+      thinkingLevel: asThinkingLevel(think ?? '') ?? 'off',
+      fastMode: truthy(fast ?? '0'),
+    });
+  }
+  return sanitizeFleetTiers(tiers);
+}
+
+/** One configured worker slot's intended spec (before the live process is matched in). */
+export interface SlotSpec {
+  id: number;
+  modelAlias: string;
+  modelLabel: string;
+  thinkingLevel: ThinkingLevel;
+  fastMode: boolean;
+  tier: number;
+}
+
+/**
+ * Expand the EFFECTIVE config into one spec per worker slot — preferring what the
+ * live drainer launched with (`activeRun`) over the saved config, so the worker
+ * rows reflect what's actually running. Flat mode → `jobs` identical slots.
+ */
+export function effectiveSlots(running: boolean, activeRun: ActiveRun | undefined, config: DrainConfig): SlotSpec[] {
+  let tiers: FleetTier[] = [];
+  if (running && activeRun) {
+    tiers = parseFleetConfigString(activeRun.fleetConfig);
+    if (tiers.length === 0) {
+      tiers = [
+        {
+          modelAlias: aliasForModelId(activeRun.model),
+          slots: activeRun.jobs && activeRun.jobs > 0 ? activeRun.jobs : 1,
+          thinkingLevel: asThinkingLevel(activeRun.thinkingLevel ?? '') ?? 'off',
+          fastMode: truthy(activeRun.fastMode ?? '0'),
+        },
+      ];
+    }
+  } else if (config.fleetTiers?.length) {
+    tiers = config.fleetTiers;
+  } else {
+    tiers = [
+      {
+        modelAlias: aliasForModelId(config.model),
+        slots: config.jobs,
+        thinkingLevel: config.thinkingLevel ?? 'off',
+        fastMode: config.fastMode ?? false,
+      },
+    ];
+  }
+  const specs: SlotSpec[] = [];
+  let id = 0;
+  tiers.forEach((t, tier) => {
+    for (let i = 0; i < t.slots; i++) {
+      id += 1;
+      specs.push({
+        id,
+        modelAlias: t.modelAlias,
+        modelLabel: modelLabelForAlias(t.modelAlias),
+        thinkingLevel: t.thinkingLevel,
+        fastMode: t.fastMode,
+        tier,
+      });
+    }
+  });
+  return specs;
+}
+
+export interface FleetSlotInput {
+  running: boolean;
+  drainPid?: number;
+  specs: SlotSpec[];
+  workers: WorkerProcess[];
+  instances: WorkerInstance[];
+  readyTasks: ReadyTask[];
+}
+
+/**
+ * Combine each configured {@link SlotSpec} with the live worker process + claimed
+ * task backing it into a color-codable {@link FleetSlot}. Status: `working` (alive +
+ * a task), `waiting` (alive, no task — with a model-aware reason), `missing` (running
+ * but no live process for this slot), `stopped` (drainer down).
+ */
+export function deriveFleetSlots(input: FleetSlotInput): FleetSlot[] {
+  const { running, drainPid, specs, workers, instances, readyTasks } = input;
+  const workerById = new Map(workers.map((w) => [w.id, w]));
+  const instByWorker = new Map<number, WorkerInstance>();
+  for (const inst of instances) if (inst.worker !== undefined) instByWorker.set(inst.worker, inst);
+  // A ready task feeds a slot when it's untagged (any model) or tagged for this model.
+  const modelHasReady = (alias: string) => readyTasks.some((t) => !t.model || t.model === alias);
+
+  return specs.map((s) => {
+    const w = workerById.get(s.id);
+    const inst = instByWorker.get(s.id);
+    const base: FleetSlot = {
+      id: s.id,
+      modelAlias: s.modelAlias,
+      modelLabel: s.modelLabel,
+      thinkingLevel: s.thinkingLevel,
+      fastMode: s.fastMode,
+      tier: s.tier,
+      status: 'stopped',
+      reason: '',
+      drainPid: running ? drainPid : undefined,
+      pid: w?.alive ? w.pid : undefined,
+      endedAt: w?.lastFinishedAt,
+      tasksCompleted: w?.tasksCompleted,
+      lastErrored: w?.lastTaskErrored,
+    };
+    if (!running) return { ...base, status: 'stopped', reason: 'Drainer not running' };
+    if (w?.alive && inst) {
+      return {
+        ...base,
+        status: 'working',
+        reason: 'On a task',
+        task: inst.title,
+        taskLine: inst.line,
+        startedAt: inst.startedAt,
+        elapsedSeconds: inst.elapsedSeconds,
+      };
+    }
+    if (w?.alive) {
+      return {
+        ...base,
+        status: 'waiting',
+        reason: modelHasReady(s.modelAlias) ? 'Between tasks' : `No task for ${s.modelLabel}`,
+      };
+    }
+    return { ...base, status: 'missing', reason: 'Worker not running — wake to relaunch' };
+  });
+}
+
+/** The fleet's set of model aliases (the flat model counts as a one-alias fleet). */
+function fleetAliases(config: DrainConfig): Set<string> {
+  if (config.fleetTiers?.length) return new Set(config.fleetTiers.map((t) => t.modelAlias));
+  return new Set([aliasForModelId(config.model)]);
+}
+
+/**
+ * Which unblocked tasks no current tier can ever claim — the MODEL-MATCH rule: a
+ * task tagged `(model:X)` needs a tier of alias X; untagged tasks any tier serves.
+ * Thinking level is only clamped, never a blocker, so it doesn't make a task unservable.
+ */
+export function deriveUnservable(readyTasks: ReadyTask[], config: DrainConfig): UnservableSummary {
+  const aliases = fleetAliases(config);
+  const tasks = readyTasks.filter((t) => t.model && !aliases.has(t.model));
+  const neededModels = [...new Set(tasks.map((t) => t.model as string))].sort();
+  return { tasks, count: tasks.length, neededModels, autoTier: Boolean(config.autoTier) };
+}
+
+/**
+ * The fleet tiers that would COVER every unservable task — the current tiers plus a
+ * 1-slot tier per missing model (at the highest thinking level its tasks request).
+ * Returns `[]` when nothing is unservable (no change needed).
+ */
+export function tiersToCoverUnservable(unservable: UnservableSummary, config: DrainConfig): FleetTier[] {
+  if (unservable.count === 0) return [];
+  const existing: FleetTier[] = config.fleetTiers?.length
+    ? [...config.fleetTiers]
+    : [
+        {
+          modelAlias: aliasForModelId(config.model),
+          slots: config.jobs,
+          thinkingLevel: config.thinkingLevel ?? 'off',
+          fastMode: config.fastMode ?? false,
+        },
+      ];
+  const have = new Set(existing.map((t) => t.modelAlias));
+  const additions: FleetTier[] = [];
+  for (const model of unservable.neededModels) {
+    if (have.has(model)) continue;
+    const think = highestThinking(unservable.tasks.filter((t) => t.model === model).map((t) => t.thinkingLevel));
+    additions.push({ modelAlias: model, slots: 1, thinkingLevel: think, fastMode: false });
+    have.add(model);
+  }
+  return additions.length ? [...existing, ...additions] : [];
 }
 
 // ── active-run.json (what the RUNNING drainer launched with) ──────────────────
@@ -439,7 +662,12 @@ export function computePending(cfg: DrainConfig, run: ActiveRun | undefined): Pe
       const runningFleet = run.fleetConfig ?? '';
       // Only report pending when at least one side is in fleet mode.
       if ((savedFleet || runningFleet) && savedFleet !== runningFleet) {
-        out.push({ key: 'fleetTiers', label: NEEDS_RESTART_LABELS.fleetTiers, running: runningFleet || '(flat)', saved: savedFleet || '(flat)' });
+        out.push({
+          key: 'fleetTiers',
+          label: NEEDS_RESTART_LABELS.fleetTiers,
+          running: runningFleet || '(flat)',
+          saved: savedFleet || '(flat)',
+        });
       }
       continue;
     }
@@ -451,7 +679,12 @@ export function computePending(cfg: DrainConfig, run: ActiveRun | undefined): Pe
     if (field === 'startDir' && run.startDir === undefined) continue;
     if (field === 'addDir' && run.addDir === undefined) continue;
     // In fleet mode, skip the flat-mode fields since they're superseded by fleet tiers.
-    if (cfg.fleetTiers && cfg.fleetTiers.length > 0 && (field === 'jobs' || field === 'model' || field === 'thinkingLevel' || field === 'fastMode')) continue;
+    if (
+      cfg.fleetTiers &&
+      cfg.fleetTiers.length > 0 &&
+      (field === 'jobs' || field === 'model' || field === 'thinkingLevel' || field === 'fastMode')
+    )
+      continue;
     const saved = savedDisplay(cfg, field);
     const running = runningDisplay(run, field);
     if (saved !== running) out.push({ key: field, label: NEEDS_RESTART_LABELS[field], running, saved });
@@ -636,6 +869,8 @@ export interface ProblemInput {
   workerErrors: { file: string; excerpt: string }[];
   /** Live worker processes right now (per-worker PID files that are alive). */
   liveWorkers?: number;
+  /** Fleet-coverage summary — drives the "tasks no tier can run" problem. */
+  unservable?: UnservableSummary;
 }
 
 /**
@@ -646,15 +881,34 @@ export interface ProblemInput {
  * than the configured fan-out, with queued work the missing workers could take).
  */
 export function deriveProblems(input: ProblemInput): Problem[] {
-  const { board, config, running, instances, workerErrors } = input;
+  const { board, config, running, instances, workerErrors, unservable } = input;
   const liveWorkers = input.liveWorkers ?? 0;
   const problems: Problem[] = [];
 
   for (const t of board.groups.blocked) {
-    problems.push({ kind: 'blocked', title: t.title, detail: t.meta.reason, severity: 'warn' });
+    problems.push({
+      kind: 'blocked',
+      title: t.title,
+      detail: t.meta.reason,
+      severity: 'warn',
+      category: 'Blocked',
+      fields: [
+        { label: 'Task', value: t.title },
+        ...(t.meta.reason ? [{ label: 'Reason', value: t.meta.reason }] : []),
+      ],
+      fix: { action: 'none', label: 'Needs you' },
+    });
   }
   for (const e of workerErrors) {
-    problems.push({ kind: 'worker-error', title: e.file, detail: e.excerpt, severity: 'error' });
+    problems.push({
+      kind: 'worker-error',
+      title: e.file,
+      detail: e.excerpt,
+      severity: 'error',
+      category: 'Worker',
+      fields: [{ label: 'Log', value: e.file }],
+      fix: { action: 'restart', label: 'Restart drainer' },
+    });
   }
   const ready = board.counts.ready;
   if (ready > 0 && !config.enabled) {
@@ -663,6 +917,9 @@ export function deriveProblems(input: ProblemInput): Problem[] {
       title: `${ready} ready task(s) but the watchdog is paused`,
       detail: 'ENABLED=0 — the watchdog will not auto-start a drainer. Resume it to drain the queue.',
       severity: 'warn',
+      category: 'Paused',
+      fields: [{ label: 'Ready', value: String(ready) }],
+      fix: { action: 'enable', label: 'Enable watchdog' },
     });
   }
   if (ready > 0 && config.enabled && !running) {
@@ -671,6 +928,9 @@ export function deriveProblems(input: ProblemInput): Problem[] {
       title: `${ready} ready task(s) and no drainer running`,
       detail: 'The watchdog should start one on its next tick; start one now if you want it immediately.',
       severity: 'warn',
+      category: 'Idle',
+      fields: [{ label: 'Ready', value: String(ready) }],
+      fix: { action: 'start', label: 'Start drainer now', auto: true },
     });
   }
   // A drainer is up but running short-handed: fewer live workers than the
@@ -688,6 +948,31 @@ export function deriveProblems(input: ProblemInput): Problem[] {
       detail:
         'The drainer is running with fewer workers than configured — some exited, or you raised the job count after it started (a running drainer can’t add workers to itself). Use “Wake workers” to relaunch it at the configured count; any in-flight task resumes in its worktree.',
       severity: 'warn',
+      category: 'Capacity',
+      fields: [
+        { label: 'Live', value: `${liveWorkers}/${config.jobs}` },
+        { label: 'Missing', value: String(missing) },
+        { label: 'Queued', value: String(ready) },
+      ],
+      fix: { action: 'wake', label: 'Wake workers' },
+    });
+  }
+  if (unservable && unservable.count > 0) {
+    problems.push({
+      kind: 'unservable-tasks',
+      title: `${unservable.count} ready task(s) no tier can run`,
+      detail: `These tasks are tagged for a model no fleet tier provides (${unservable.neededModels.join(
+        ', ',
+      )}), so no worker can ever claim them. Add a tier for each needed model — or turn on auto-tier to grow the fleet automatically.`,
+      severity: 'warn',
+      category: 'Coverage',
+      fields: [
+        { label: 'Tasks', value: String(unservable.count) },
+        { label: 'Needs', value: unservable.neededModels.map(modelLabelForAlias).join(' + ') },
+      ],
+      fix: unservable.autoTier
+        ? { action: 'add-tier', label: 'Auto-tier on', auto: true }
+        : { action: 'add-tier', label: 'Add capable tier(s)' },
     });
   }
   if (!running) {
@@ -698,6 +983,12 @@ export function deriveProblems(input: ProblemInput): Problem[] {
           title: `Claimed >1h ago, no live runner: ${inst.title}`,
           detail: 'The instance that claimed this may have died — review the task and re-open it ([~]→[ ]) if so.',
           severity: 'warn',
+          category: 'Stale',
+          fields: [
+            { label: 'Task', value: inst.title },
+            { label: 'Age', value: '>1h' },
+          ],
+          fix: { action: 'none', label: 'Review task' },
         });
       }
     }

@@ -510,7 +510,9 @@ export const COMMANDS: CommandDef[] = [
     description: 'Open an SSH connection to a configured prod server (see servers.ssh in config).',
     kind: 'plain',
     capture: false, // interactive TTY; must keep the real terminal
-    args: [{ name: 'server', description: 'server label or number (omit when only one is configured)', example: 'prod' }],
+    args: [
+      { name: 'server', description: 'server label or number (omit when only one is configured)', example: 'prod' },
+    ],
     examples: [{ args: '', note: 'auto-connect if one server; menu if multiple' }, { args: 'prod' }],
   },
   {

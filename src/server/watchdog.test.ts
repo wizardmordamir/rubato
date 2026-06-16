@@ -12,6 +12,7 @@ import {
   getWatchdog,
   listFleetPresets,
   patchDrainConfig,
+  reconcileFleet,
   restartDrainer,
   saveFleetPreset,
   setWatchdogInterval,
@@ -684,7 +685,11 @@ describe('fleet presets', () => {
   const post = (p: string, body?: unknown) =>
     handleOrchestrationApi(
       p,
-      new Request(url(p), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }),
+      new Request(url(p), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      }),
     );
   const tiers = [
     { modelAlias: 'opus', slots: 1, thinkingLevel: 'high' as const, fastMode: false },
@@ -717,7 +722,10 @@ describe('fleet presets', () => {
   test('HTTP: GET (empty) → POST save → POST apply → DELETE', async () => {
     await writeFile(orch('drain.config'), CONFIG);
 
-    const empty = await handleOrchestrationApi('/api/orchestration/fleet-presets', new Request(url('/api/orchestration/fleet-presets')));
+    const empty = await handleOrchestrationApi(
+      '/api/orchestration/fleet-presets',
+      new Request(url('/api/orchestration/fleet-presets')),
+    );
     expect(empty.status).toBe(200);
     expect(await empty.json()).toEqual([]);
 
@@ -742,5 +750,62 @@ describe('fleet presets', () => {
     expect((await post('/api/orchestration/fleet-presets', { name: '', tiers })).status).toBe(400);
     expect((await post('/api/orchestration/fleet-presets', { name: 'X', tiers: [] })).status).toBe(400);
     expect((await post('/api/orchestration/fleet-presets/ghost/apply')).status).toBe(404);
+  });
+});
+
+describe('fleet coverage / reconcile', () => {
+  const SONNET_FLEET = 'ENABLED=1\nFLEET_TIERS=1\nFLEET_0=sonnet,2,off,0\n';
+  const url = (p: string) => `http://localhost${p}`;
+  const post = (p: string, body?: unknown) =>
+    handleOrchestrationApi(
+      p,
+      new Request(url(p), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      }),
+    );
+
+  test('reconcileFleet adds a 1-slot tier for an unservable model (at its thinking level)', async () => {
+    await writeFile(orch('drain.config'), SONNET_FLEET);
+    await writeFile(join(dir, 'TASKS.md'), '## [ ] (model:opus) (think:high) hard task\n## [ ] (model:sonnet) easy\n');
+    const res = await reconcileFleet();
+    expect(res.models).toEqual(['opus']);
+    expect(res.added).toHaveLength(1);
+    expect(res.added[0]).toMatchObject({ modelAlias: 'opus', slots: 1, thinkingLevel: 'high' });
+    const cfg = parseDrainConfig(await readFile(orch('drain.config'), 'utf8'));
+    expect(cfg.fleetTiers?.map((t) => t.modelAlias).sort()).toEqual(['opus', 'sonnet']);
+  });
+
+  test('reconcileFleet is a no-op when every task is servable', async () => {
+    await writeFile(orch('drain.config'), SONNET_FLEET);
+    await writeFile(join(dir, 'TASKS.md'), '## [ ] (model:sonnet) easy\n## [ ] untagged anyone\n');
+    expect((await reconcileFleet()).added).toEqual([]);
+  });
+
+  test('getWatchdog surfaces per-slot rows + the unservable summary + a coverage problem', async () => {
+    await writeFile(orch('drain.config'), SONNET_FLEET);
+    await writeFile(join(dir, 'TASKS.md'), '## [ ] (model:opus) hard\n## [ ] (model:sonnet) easy\n');
+    const snap = await getWatchdog();
+    expect(snap.slots).toHaveLength(2); // two sonnet slots, always rendered
+    expect(snap.slots.every((s) => s.modelAlias === 'sonnet')).toBe(true);
+    expect(snap.unservable.count).toBe(1);
+    expect(snap.unservable.neededModels).toEqual(['opus']);
+    expect(snap.problems.some((p) => p.kind === 'unservable-tasks')).toBe(true);
+  });
+
+  test('POST watchdog/config { autoTier:true } persists AUTO_TIER=1', async () => {
+    await writeFile(orch('drain.config'), 'ENABLED=1\n');
+    const res = await post('/api/orchestration/watchdog/config', { autoTier: true });
+    expect(res.status).toBe(200);
+    expect(await readFile(orch('drain.config'), 'utf8')).toContain('AUTO_TIER=1');
+  });
+
+  test('POST /api/orchestration/fleet/reconcile route covers the needed model', async () => {
+    await writeFile(orch('drain.config'), 'ENABLED=1\nFLEET_TIERS=1\nFLEET_0=sonnet,1,off,0\n');
+    await writeFile(join(dir, 'TASKS.md'), '## [ ] (model:haiku) tiny\n');
+    const res = await post('/api/orchestration/fleet/reconcile');
+    expect(res.status).toBe(200);
+    expect((await res.json()).models).toEqual(['haiku']);
   });
 });

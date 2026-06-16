@@ -1,6 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DRAIN_MODEL_OPTIONS, FLEET_MODEL_OPTIONS, type FleetTier, formatDuration, formatUsd, THINKING_LEVELS } from "@shared/orchestration";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  DRAIN_MODEL_OPTIONS,
+  FLEET_MODEL_OPTIONS,
+  type FleetSlot,
+  type FleetTier,
+  formatDuration,
+  formatUsd,
+  type Problem,
+  THINKING_LEVELS,
+  type UnservableSummary,
+  type WorkerSlotStatus,
+} from "@shared/orchestration";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyFleetPreset,
   controlWatchdogAgent,
@@ -13,6 +24,7 @@ import {
   type FleetPreset,
   patchDrainConfig,
   type PendingChange,
+  reconcileFleet,
   restartDrainer,
   saveFleetPreset,
   setWatchdogInterval,
@@ -24,10 +36,8 @@ import {
   type WatchdogCommand,
   type WatchdogSnapshot,
   type WorkerInstance,
-  type WorkerProcess,
 } from "../api";
 import {
-  Alert,
   Badge,
   BTN_DANGER_CLASS,
   BTN_GHOST_CLASS,
@@ -70,6 +80,19 @@ export function WatchdogView() {
     qc.invalidateQueries({ queryKey: ["orchestration"] });
   };
 
+  // Auto-tier: when the toggle is on and tasks exist that no tier can claim, grow
+  // the fleet to cover them (one reconcile per distinct needed-model set, so it
+  // fires once, not every poll). This is what makes the "auto-fixing" badge real.
+  const reconcile = useMutation({ mutationFn: reconcileFleet, onSuccess: () => invalidate() });
+  const autoSig = data?.unservable.autoTier && data.unservable.count > 0 ? data.unservable.neededModels.join(",") : "";
+  const lastAutoSig = useRef("");
+  useEffect(() => {
+    if (autoSig && autoSig !== lastAutoSig.current && !reconcile.isPending) {
+      lastAutoSig.current = autoSig;
+      reconcile.mutate();
+    }
+  }, [autoSig, reconcile]);
+
   if (isLoading) return <p className="text-gray-400">loading…</p>;
   if (isError || !data)
     return (
@@ -85,7 +108,7 @@ export function WatchdogView() {
       <ScheduleCard snap={data} nowMs={nowMs} onChange={invalidate} />
       <KnobsCard snap={data} onChange={invalidate} />
       <InstancesSection snap={data} nowMs={nowMs} onChange={invalidate} />
-      {data.problems.length > 0 && <ProblemsSection snap={data} />}
+      {data.problems.length > 0 && <ProblemsSection snap={data} onChange={invalidate} />}
       <ReadyQueue snap={data} />
       <LogsSection snap={data} />
       <FilesSection snap={data} />
@@ -992,6 +1015,19 @@ function KnobsCard({ snap, onChange }: { snap: WatchdogSnapshot; onChange: () =>
         </div>
       )}
 
+      {/* Auto-tier coverage — grow the fleet to cover any task no tier can claim */}
+      <div className="border-t border-gray-200 pt-4 dark:border-gray-700">
+        <Field
+          label="Auto-tier coverage"
+          hint="When on, the fleet auto-grows to cover any unblocked task no current tier can claim — adding 1 worker of the needed model (at the task's thinking level) and restarting. Queue any difficulty and trust something will take it."
+        >
+          <div className="flex items-center gap-2 pt-1">
+            <Switch on={!!snap.config.autoTier} disabled={patch.isPending} onChange={(v) => patch.mutate({ autoTier: v })} label="Auto-tier" />
+            <span className="text-sm text-gray-500">{snap.config.autoTier ? "on" : "off"}</span>
+          </div>
+        </Field>
+      </div>
+
       {/* Saved fleets — name a worker-mix and swap to it in one click */}
       <FleetPresetsPanel snap={snap} onChange={onChange} currentTiers={currentTiers} busy={patch.isPending} />
 
@@ -1258,145 +1294,121 @@ function InstancesSection({ snap, nowMs, onChange }: { snap: WatchdogSnapshot; n
         </div>
       )}
 
-      {snap.workers.length > 0 && (
-        <WorkerProcesses snap={snap} nowMs={nowMs} onStop={(pid) => stop.mutate(pid)} stopPending={stop.isPending} activeRun={snap.activeRun} />
+      {snap.slots.length > 0 && (
+        <SlotsSection snap={snap} nowMs={nowMs} onStop={(pid) => stop.mutate(pid)} stopPending={stop.isPending} />
       )}
     </section>
   );
 }
 
+/** Per-status presentation for a worker slot (dot color, label, text + border tint). */
+const SLOT_STATUS: Record<WorkerSlotStatus, { label: string; dot: string; text: string; border: string }> = {
+  working: { label: "Working", dot: "bg-green-500", text: "text-green-700 dark:text-green-400", border: "border-green-300 dark:border-green-800/70" },
+  waiting: { label: "Waiting", dot: "bg-amber-400", text: "text-amber-700 dark:text-amber-400", border: "border-amber-200 dark:border-amber-900/70" },
+  missing: { label: "Missing", dot: "bg-red-500", text: "text-red-700 dark:text-red-400", border: "border-red-300 dark:border-red-900/70" },
+  stopped: { label: "Stopped", dot: "bg-gray-400", text: "text-gray-500 dark:text-gray-400", border: "border-gray-200 dark:border-gray-700" },
+};
+
+/** A tiny inline labelled stat ("STARTED 4:01pm") for a scannable, paragraph-free row. */
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="whitespace-nowrap text-xs text-gray-400">
+      <span className="uppercase tracking-wide">{label}</span>{" "}
+      <span className="tabular-nums text-gray-600 dark:text-gray-300">{value}</span>
+    </span>
+  );
+}
+
 /**
- * The "Worker processes" block — a one-line live/working summary (so the gap
- * between live workers and workers actually on a task is obvious at a glance), a
- * diagnostic note when workers sit unlinked while work is queued, then one
- * expandable row per worker.
+ * Worker slots — ONE row per CONFIGURED slot (3 configured → 3 rows), so a
+ * short-handed drainer is obvious at a glance. Each row is color-coded by status
+ * (green working / amber waiting / red missing / gray stopped) and shows, in
+ * scannable fields, what the slot is doing and why — not a paragraph.
  */
-function WorkerProcesses({
+function SlotsSection({
   snap,
   nowMs,
   onStop,
   stopPending,
-  activeRun,
 }: {
   snap: WatchdogSnapshot;
   nowMs: number;
   onStop: (pid: number) => void;
   stopPending: boolean;
-  activeRun?: ActiveRun;
 }) {
-  const live = snap.workers.filter((w) => w.alive);
-  const working = live.filter((w) => snap.instances.some((i) => i.worker === w.id)).length;
-  const unlinked = live.length - working;
-  // One-off-slug tasks (descriptive worktree, no `_drain-w<n>`) can't be tied to a
-  // worker row — call them out so an "unlinked" worker reads as "maybe on one of
-  // these" rather than "idle". This is the usual reason for live > working.
-  const oneOffTasks = snap.instances.filter((i) => i.worker === undefined).length;
-
+  const slots = snap.slots;
+  const working = slots.filter((s) => s.status === "working").length;
+  const live = slots.filter((s) => s.status === "working" || s.status === "waiting").length;
   return (
     <div className="mt-3">
       <h4 className="mb-2 flex flex-wrap items-baseline gap-x-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
-        Worker processes
+        Workers
         <span className="font-normal normal-case tracking-normal text-gray-400">
-          {live.length} live · {working} on a task
-          {unlinked > 0 ? ` · ${unlinked} unlinked` : ""}
+          {working} working · {live} live · {slots.length} configured
         </span>
       </h4>
-      {unlinked > 0 && snap.counts.ready > 0 && (
-        <Alert tone="warning" size="sm" className="mb-2">
-          {unlinked} live worker{unlinked === 1 ? "" : "s"} not linked to a claimed task while {snap.counts.ready}{" "}
-          {snap.counts.ready === 1 ? "task is" : "tasks are"} ready.{" "}
-          {oneOffTasks > 0
-            ? `${oneOffTasks} in-progress task${oneOffTasks === 1 ? " is" : "s are"} on a one-off-slug worktree (shown above, can't link to a slot) — likely what they're doing. `
-            : ""}
-          A worker also reads as unlinked during its pre-claim phase (planning before it stamps a “[~]”). Expand a row
-          to see when it last finished and whether its last run errored.
-        </Alert>
-      )}
       <div className="space-y-1.5">
-        {snap.workers.map((w) => (
-          <WorkerRow
-            key={w.pid}
-            worker={w}
-            instance={snap.instances.find((i) => i.worker === w.id)}
-            readyCount={snap.counts.ready}
-            nowMs={nowMs}
-            onStop={() => onStop(w.pid)}
-            stopPending={stopPending}
-            activeRun={activeRun}
-          />
+        {slots.map((s) => (
+          <SlotRow key={s.id} slot={s} nowMs={nowMs} onStop={onStop} stopPending={stopPending} />
         ))}
       </div>
     </div>
   );
 }
 
-// ── per-worker activity status (working / starting / idle / …) ─────────────────
-
-type WorkerStatus = "working" | "starting" | "retrying" | "idle" | "draining" | "exited";
-
-const STATUS_CHIP: Record<WorkerStatus, string> = {
-  working: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200",
-  starting: "bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-200",
-  retrying: "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200",
-  idle: "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200",
-  draining: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
-  exited: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
-};
-
-/** A worker is "freshly finished" (so an unlinked one is between tasks, not stuck). */
-const WORKER_RECENT_FINISH_SECONDS = 120;
-
-/** Seconds since a worker's last task finished, if known. */
-function idleSeconds(w: WorkerProcess, nowMs: number): number | undefined {
-  if (!w.lastFinishedAt) return undefined;
-  const t = Date.parse(w.lastFinishedAt);
-  return Number.isNaN(t) ? undefined : Math.max(0, Math.round((nowMs - t) / 1000));
-}
-
-/**
- * Classify what a worker is doing right now, from whether a claimed task links to
- * its slot plus its run history. The interesting case is alive-but-unlinked: fresh
- * after a finish (or no tasks yet) reads as "starting" (normal pre-claim), a recent
- * error reads as "retrying" (likely in failure backoff), and a stale finish while
- * work is queued reads as "idle" (worth a look). Drives the row's status chip + hint.
- */
-function workerActivity(
-  w: WorkerProcess,
-  instance: WorkerInstance | undefined,
-  readyCount: number,
-  nowMs: number,
-): { status: WorkerStatus; label: string; hint: string } {
-  if (!w.alive) return { status: "exited", label: "exited", hint: "Process is no longer running." };
-  if (instance) return { status: "working", label: "working", hint: `Working on “${instance.title}”.` };
-  const idle = idleSeconds(w, nowMs);
-  if (w.lastTaskErrored)
-    return {
-      status: "retrying",
-      label: "retrying",
-      hint: "Its last run reported an error — the drainer backs off (a short sleep that grows with consecutive failures) before retrying, so it may pause here. Check its .err output below.",
-    };
-  if (!w.tasksCompleted || (idle !== undefined && idle < WORKER_RECENT_FINISH_SECONDS))
-    return {
-      status: "starting",
-      label: "starting",
-      hint: "Between tasks — its next run is in the pre-claim phase (reading the board / planning) and hasn’t stamped a “[~]” claim yet. This is normal; it links to a task once it claims one.",
-    };
-  if (readyCount > 0)
-    return {
-      status: "idle",
-      label: "idle",
-      hint: "Alive but not linked to a claimed task while work is queued — it may be on a one-off-slug task (shown above), in a long pre-claim phase, or stuck. Check its run log / .err output.",
-    };
-  return {
-    status: "draining",
-    label: "no ready tasks",
-    hint: "Alive with no claimed task and nothing ready — it will exit once the queue is empty.",
-  };
-}
-
-/** Format a millisecond duration via the shared seconds formatter. */
-function fmtMs(ms: number | undefined): string {
-  return formatDuration(ms === undefined ? undefined : Math.round(ms / 1000));
+/** One configured-slot row: status dot + model + what/why + timing fields + Stop. */
+function SlotRow({
+  slot,
+  nowMs,
+  onStop,
+  stopPending,
+}: {
+  slot: FleetSlot;
+  nowMs: number;
+  onStop: (pid: number) => void;
+  stopPending: boolean;
+}) {
+  const st = SLOT_STATUS[slot.status];
+  const elapsed = slot.status === "working" ? elapsedFrom(slot.startedAt, nowMs, slot.elapsedSeconds) : undefined;
+  return (
+    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border ${st.border} bg-white px-3 py-2 dark:bg-gray-900`}>
+      <span className="flex items-center gap-1.5 text-sm font-medium">
+        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${slot.lastErrored && slot.status !== "working" ? "bg-red-500" : st.dot}`} />
+        Worker {slot.id}
+      </span>
+      <span className="whitespace-nowrap text-xs text-gray-500">
+        {slot.modelLabel} · {slot.thinkingLevel}
+        {slot.fastMode ? " · fast" : ""}
+      </span>
+      <span className={`text-xs font-semibold uppercase ${st.text}`}>{st.label}</span>
+      {/* what + why — one scannable line, never a paragraph */}
+      <span className="min-w-0 flex-1 truncate text-sm text-gray-600 dark:text-gray-300">
+        {slot.status === "working" ? (
+          <>
+            <span className="text-gray-400">Task:</span> {slot.task}
+          </>
+        ) : (
+          slot.reason
+        )}
+      </span>
+      {/* timing fields */}
+      {elapsed !== undefined && <MiniStat label="dur" value={formatDuration(elapsed)} />}
+      {slot.startedAt && slot.status === "working" && <MiniStat label="started" value={fmtTime(slot.startedAt)} />}
+      {slot.status !== "working" && slot.endedAt && <MiniStat label="ended" value={fmtTime(slot.endedAt)} />}
+      {slot.tasksCompleted ? (
+        <span className={`whitespace-nowrap text-xs ${slot.lastErrored ? "text-red-500" : "text-gray-400"}`}>
+          ✓{slot.tasksCompleted}
+          {slot.lastErrored ? " · last errored" : ""}
+        </span>
+      ) : null}
+      {slot.drainPid && <span className="whitespace-nowrap text-xs text-gray-400">drain {slot.drainPid}</span>}
+      {slot.pid && (
+        <button type="button" className={BTN_GHOST_CLASS} disabled={stopPending} onClick={() => onStop(slot.pid as number)} aria-label={`Stop worker ${slot.id}`}>
+          <IconSquare />
+        </button>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -1478,203 +1490,116 @@ function InstanceCard({
   );
 }
 
-/**
- * One worker-process row — click it to expand what it's working on (the matched
- * in-progress task), how long it's been on that task, its uptime, and how many
- * tasks it has finished this session. The Stop button is kept inline.
- */
-function WorkerRow({
-  worker: w,
-  instance,
-  readyCount,
-  nowMs,
-  onStop,
-  stopPending,
-  activeRun,
-}: {
-  worker: WorkerProcess;
-  instance?: WorkerInstance;
-  readyCount: number;
-  nowMs: number;
-  onStop: () => void;
-  stopPending: boolean;
-  activeRun?: ActiveRun;
-}) {
-  const [open, setOpen] = useState(false);
-  const uptime = typeof w.elapsedSeconds === "number" ? formatDuration(elapsedFrom(w.startedAt, nowMs, w.elapsedSeconds)) : undefined;
-  const activity = workerActivity(w, instance, readyCount, nowMs);
-  const idle = idleSeconds(w, nowMs);
-  // Derive when the last task STARTED (finished − duration) so the row can show its
-  // full window even though only the finish time + duration are reported.
-  const lastStartedAt =
-    w.lastFinishedAt && w.lastDurationMs !== undefined
-      ? new Date(Date.parse(w.lastFinishedAt) - w.lastDurationMs).toISOString()
-      : undefined;
-  return (
-    <div className={`${CARD_CLASS} p-2.5 text-sm`}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tooltip content={open ? "Hide worker details" : "Show what this worker is doing"}>
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-left"
-          aria-expanded={open}
-        >
-          <Badge tone={w.alive ? "success" : "neutral"}>worker {w.id || "?"}</Badge>
-          <span
-            className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STATUS_CHIP[activity.status]}`}
-            title={activity.hint}
-          >
-            {activity.label}
-          </span>
-          <span className="font-mono text-gray-500">PID {w.pid}</span>
-          {activeRun?.model && (
-            <span className="font-mono text-xs text-gray-400">{activeRun.model}</span>
-          )}
-          {activeRun?.thinkingLevel && activeRun.thinkingLevel !== "" && activeRun.thinkingLevel !== "off" && (
-            <span className="text-xs text-gray-400">think: {activeRun.thinkingLevel}</span>
-          )}
-          {typeof w.tasksCompleted === "number" && (
-            <span className="text-xs text-gray-400">{w.tasksCompleted} done</span>
-          )}
-          {w.avgDurationMs !== undefined && <span className="text-xs text-gray-400">avg {fmtMs(w.avgDurationMs)}</span>}
-          {w.errorCount ? <span className="text-xs text-red-500 dark:text-red-400">{w.errorCount} err</span> : null}
-          {uptime && <span className="text-xs text-gray-400">up {uptime}</span>}
-          {instance ? (
-            <span className="min-w-0 truncate text-xs text-accent">▸ {instance.title}</span>
-          ) : (
-            w.alive && idle !== undefined && <span className="text-xs text-gray-400">idle {formatDuration(idle)}</span>
-          )}
-        </button>
-        </Tooltip>
-        {w.alive && (
-          <button
-            type="button"
-            className={`${BTN_GHOST_CLASS} shrink-0 text-red-600 dark:text-red-400`}
-            disabled={stopPending}
-            onClick={onStop}
-          >
-            <IconTrash size={13} /> Stop
-          </button>
-        )}
-      </div>
-      {open && (
-        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-t border-gray-100 pt-2 text-xs text-gray-500 dark:border-gray-800">
-          <dt className="text-gray-400">Status</dt>
-          <dd className="min-w-0">{activity.hint}</dd>
-          <dt className="text-gray-400">Working on</dt>
-          <dd className="min-w-0">
-            {instance ? (
-              instance.title
-            ) : (
-              <span className="text-gray-400">— no claimed task is linked to this worker (its worktree isn't a `_drain-w{w.id}` slot)</span>
-            )}
-          </dd>
-          {instance?.startedAt && (
-            <>
-              <dt className="text-gray-400">Current task started</dt>
-              <dd>
-                {fmtTime(instance.startedAt)}
-                <span className="text-gray-400"> · {formatDuration(elapsedFrom(instance.startedAt, nowMs, instance.elapsedSeconds))} ago</span>
-              </dd>
-            </>
-          )}
-          {lastStartedAt && (
-            <>
-              <dt className="text-gray-400">Last task started</dt>
-              <dd>{fmtTime(lastStartedAt)}</dd>
-            </>
-          )}
-          {w.lastFinishedAt && (
-            <>
-              <dt className="text-gray-400">Last task finished</dt>
-              <dd>
-                {fmtTime(w.lastFinishedAt)}
-                {idle !== undefined && <span className="text-gray-400"> · {formatDuration(idle)} ago</span>}
-              </dd>
-            </>
-          )}
-          {w.lastDurationMs !== undefined && (
-            <>
-              <dt className="text-gray-400">Last task duration</dt>
-              <dd>
-                {fmtMs(w.lastDurationMs)}
-                {w.lastTaskErrored && <span className="text-red-500 dark:text-red-400"> · errored</span>}
-              </dd>
-            </>
-          )}
-          {w.avgDurationMs !== undefined && (
-            <>
-              <dt className="text-gray-400">Avg task duration</dt>
-              <dd>{fmtMs(w.avgDurationMs)}</dd>
-            </>
-          )}
-          {uptime && (
-            <>
-              <dt className="text-gray-400">Worker uptime</dt>
-              <dd>{uptime}</dd>
-            </>
-          )}
-          {typeof w.tasksCompleted === "number" && (
-            <>
-              <dt className="text-gray-400">Tasks done this session</dt>
-              <dd>
-                {w.tasksCompleted}
-                {w.errorCount ? <span className="text-red-500 dark:text-red-400"> · {w.errorCount} errored</span> : null}
-              </dd>
-            </>
-          )}
-          {w.totalCostUsd !== undefined && (
-            <>
-              <dt className="text-gray-400">Session cost</dt>
-              <dd>{formatUsd(w.totalCostUsd)}</dd>
-            </>
-          )}
-          {activeRun?.model && (
-            <>
-              <dt className="text-gray-400">Model</dt>
-              <dd className="font-mono">{activeRun.model}</dd>
-            </>
-          )}
-          {activeRun?.thinkingLevel !== undefined && activeRun.thinkingLevel !== "" && (
-            <>
-              <dt className="text-gray-400">Thinking level</dt>
-              <dd className="font-mono">{activeRun.thinkingLevel || "off"}</dd>
-            </>
-          )}
-          {w.logFile && (
-            <>
-              <dt className="text-gray-400">Run log</dt>
-              <dd className="min-w-0 truncate font-mono">{w.logFile}</dd>
-            </>
-          )}
-        </dl>
-      )}
-    </div>
-  );
-}
 
 // ── problems ──────────────────────────────────────────────────────────────────
 
-function ProblemsSection({ snap }: { snap: WatchdogSnapshot }) {
+/** Category-chip tone per problem category. */
+const CATEGORY_TONE: Record<string, "error" | "warn" | "neutral" | "accent" | "success"> = {
+  Worker: "error",
+  Capacity: "warn",
+  Coverage: "warn",
+  Blocked: "neutral",
+  Paused: "warn",
+  Idle: "neutral",
+  Stale: "warn",
+};
+
+/**
+ * Problems & questions — one compact, scannable row per item: a category chip,
+ * a one-line title, structured field values (not a paragraph), a one-click Fix
+ * (or an "auto-fixing" note when the system self-heals), and a "Details" toggle
+ * that reveals the full explanation only when asked.
+ */
+function ProblemsSection({ snap, onChange }: { snap: WatchdogSnapshot; onChange: () => void }) {
   return (
     <section>
       <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
         Problems &amp; questions <span className="text-gray-400">({snap.problems.length})</span>
       </h3>
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         {snap.problems.map((p, i) => (
-          <Alert
-            key={`${p.kind}-${i}`}
-            tone={p.severity === "error" ? "error" : "warning"}
-            title={p.title}
-            actions={<Badge tone={p.severity === "error" ? "error" : "neutral"}>{p.kind}</Badge>}
-          >
-            {p.detail ? <p className="whitespace-pre-wrap text-xs text-gray-500">{p.detail}</p> : undefined}
-          </Alert>
+          <ProblemRow key={`${p.kind}-${i}`} problem={p} unservable={snap.unservable} onChange={onChange} />
         ))}
       </div>
     </section>
+  );
+}
+
+function ProblemRow({ problem: p, unservable, onChange }: { problem: Problem; unservable: UnservableSummary; onChange: () => void }) {
+  const { notify } = useToast();
+  const [open, setOpen] = useState(false);
+  const fix = useMutation({
+    mutationFn: async () => {
+      switch (p.fix?.action) {
+        case "wake":
+          return wakeWorkers();
+        case "enable":
+          return patchDrainConfig({ enabled: true });
+        case "start":
+          return startDrainer();
+        case "restart":
+          return restartDrainer("graceful");
+        case "add-tier":
+          return reconcileFleet();
+        default:
+          return null;
+      }
+    },
+    onSuccess: () => {
+      notify("Fix applied", "success");
+      onChange();
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "fix failed", "error"),
+  });
+  const tone = CATEGORY_TONE[p.category ?? ""] ?? (p.severity === "error" ? "error" : "warn");
+  const showFix = p.fix && p.fix.action !== "none" && !p.fix.auto;
+  const isUnservable = p.kind === "unservable-tasks";
+  return (
+    <div
+      className={`rounded-lg border px-3 py-2 ${
+        p.severity === "error" ? "border-red-200 dark:border-red-900/60" : "border-amber-200 dark:border-amber-900/60"
+      }`}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Badge tone={tone}>{p.category ?? p.kind}</Badge>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.title}</span>
+        {p.fields?.map((f) => (
+          <MiniStat key={f.label} label={f.label} value={f.value} />
+        ))}
+        {p.fix?.auto && <span className="whitespace-nowrap text-xs text-gray-400">auto-fixing…</span>}
+        {showFix && (
+          <button type="button" className={BTN_PRIMARY_CLASS} disabled={fix.isPending} onClick={() => fix.mutate()}>
+            {fix.isPending && <Spinner />}
+            {p.fix?.label}
+          </button>
+        )}
+        {(p.detail || isUnservable) && (
+          <button
+            type="button"
+            className="whitespace-nowrap text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            onClick={() => setOpen((o) => !o)}
+          >
+            {open ? "Less" : "Details"}
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="mt-2 space-y-1 border-t border-gray-100 pt-2 dark:border-gray-800">
+          {p.detail && <p className="whitespace-pre-wrap text-xs text-gray-500">{p.detail}</p>}
+          {isUnservable && unservable.tasks.length > 0 && (
+            <ul className="space-y-0.5 text-xs">
+              {unservable.tasks.map((t) => (
+                <li key={t.line} className="flex items-center gap-2">
+                  {t.model && <Badge tone="neutral">{t.model}</Badge>}
+                  <span className="min-w-0 flex-1 truncate text-gray-600 dark:text-gray-300">{t.title}</span>
+                  <span className="whitespace-nowrap text-gray-400">line {t.line}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
