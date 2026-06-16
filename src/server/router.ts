@@ -168,10 +168,10 @@ export interface RouteOptions {
 }
 
 /**
- * Runtime branding injected into the served `index.html`. Lets a friend app re-skin
- * rubato's prebuilt SPA — no rebuild — by overriding the accent design token (the
- * whole brand surface derives from it) and the browser tab title. The in-app
- * wordmark is baked into the prebuilt bundle; change that via your own SPA build.
+ * Runtime branding injected into the served `index.html`. Lets a friend app fully
+ * white-label rubato's prebuilt SPA — no rebuild — by overriding the accent design
+ * token (the whole brand surface derives from it), the browser tab title, AND the
+ * in-app wordmark (sidebar/header), which the chrome reads from an injected meta tag.
  */
 export interface UiBranding {
   /** Brand accent as a CSS color (hex/rgb/hsl/named); derives hover + soft + dark. */
@@ -180,7 +180,8 @@ export interface UiBranding {
   accentHover?: string;
   /** Explicit soft-background shade (default: a translucent `accent`). */
   accentSoft?: string;
-  /** Browser tab title (the `<title>`). */
+  /** Brand name — sets the browser tab `<title>` AND the in-app wordmark (the
+   *  sidebar/header text), so the UI says your app's name instead of "rubato". */
   brand?: string;
 }
 
@@ -275,8 +276,14 @@ export function injectBranding(html: string, ui: UiBranding): string {
     out = out.includes('</head>') ? out.replace('</head>', `${style}</head>`) : `${style}${out}`;
   }
   if (ui.brand) {
-    const title = `<title>${escapeHtml(ui.brand)}</title>`;
+    const brand = escapeHtml(ui.brand);
+    // The tab title…
+    const title = `<title>${brand}</title>`;
     out = /<title>[\s\S]*?<\/title>/i.test(out) ? out.replace(/<title>[\s\S]*?<\/title>/i, title) : out;
+    // …and the in-app wordmark: a <meta> the prebuilt chrome reads (see ui appBrand),
+    // so the sidebar/header say the friend app's name, not "rubato" — no SPA rebuild.
+    const meta = `<meta name="app-brand" content="${brand}">`;
+    out = out.includes('</head>') ? out.replace('</head>', `${meta}</head>`) : `${meta}${out}`;
   }
   return out;
 }

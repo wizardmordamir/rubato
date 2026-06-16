@@ -10,6 +10,7 @@ import type { UiPage } from "@shared/ui";
 import { ScrollToTopButton } from "cwip/react";
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
+import { appBrand } from "../brand";
 import { AppBreadcrumbs } from "../breadcrumbs";
 import { Tooltip } from "../components";
 import { HeaderSearch } from "../components/HeaderSearch";
@@ -36,7 +37,7 @@ export interface AppShellProps {
   children: ReactNode;
 }
 
-export function AppShell({ accent, label = "rubato", pages, children }: AppShellProps) {
+export function AppShell({ accent, label = appBrand(), pages, children }: AppShellProps) {
   const live = useLive();
 
   // Mobile nav drawer: hidden off-canvas below `md`, always-on static at `md+`.
@@ -70,7 +71,7 @@ export function AppShell({ accent, label = "rubato", pages, children }: AppShell
           onClick={closeNav}
         />
       )}
-      <SideNav navOpen={navOpen} onClose={closeNav} pages={pages} />
+      <SideNav navOpen={navOpen} onClose={closeNav} pages={pages} brand={label} />
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top bar: the global content-search box (always shown) plus the mobile-only
             hamburger + brand + live dot (the sidebar carries those on desktop). */}

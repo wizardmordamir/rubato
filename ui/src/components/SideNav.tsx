@@ -12,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { type NavEntry, type NavPrefsActions, SideNav as CwipSideNav } from "cwip/react";
 import { Link, useLocation } from "react-router-dom";
 import { fetchUi } from "../api";
+import { appBrand } from "../brand";
 import { Tooltip } from "../components";
 import { IconFileText, IconSliders, IconX } from "../icons";
 import { resolveSidebarEntry } from "../navMeta";
@@ -38,12 +39,15 @@ export function SideNav({
   navOpen,
   onClose,
   pages,
+  brand = appBrand(),
 }: {
   navOpen: boolean;
   onClose: () => void;
   /** Friend-app override: when given, these page keys are the enabled set (and
    *  admin is hidden) instead of the server-reported `/api/ui` enablement. */
   pages?: UiPage[];
+  /** Brand wordmark (default: the runtime brand — see `appBrand`). */
+  brand?: string;
 }) {
   const live = useLive();
   const location = useLocation();
@@ -109,7 +113,7 @@ export function SideNav({
     >
       <div className="mb-1 flex items-center justify-between">
         <h1 className={`text-lg font-bold tracking-tight ${collapsed ? "md:hidden" : ""}`}>
-          <span className="text-accent">rubato</span>
+          <span className="text-accent">{brand}</span>
         </h1>
         <button type="button" aria-label="Close navigation" className="icon-btn md:hidden" onClick={onClose}>
           <IconX size={24} />

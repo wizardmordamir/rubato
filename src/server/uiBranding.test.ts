@@ -24,6 +24,10 @@ describe('injectBranding', () => {
     expect(injectBranding(HTML, { brand: 'QA Studio' })).not.toContain('<title>rubato</title>');
   });
 
+  test('emits the app-brand meta so the in-app wordmark re-brands too', () => {
+    expect(injectBranding(HTML, { brand: 'FlowSmith' })).toContain('<meta name="app-brand" content="FlowSmith">');
+  });
+
   test('honors explicit hover/soft overrides', () => {
     const out = injectBranding(HTML, { accent: '#000', accentHover: '#111', accentSoft: '#eee' });
     expect(out).toContain('--accent-hover:#111');
