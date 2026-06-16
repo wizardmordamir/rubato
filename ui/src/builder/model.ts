@@ -102,10 +102,23 @@ export interface BuilderCtx {
 
 export const BuilderContext = createContext<BuilderCtx | null>(null);
 
+/**
+ * No-session fallback. Inside rubato's builder a real {@link BuilderCtx} is always
+ * provided; when an exported step editor (e.g. {@link "../pages/Automations/components"})
+ * is composed standalone in a friend app WITHOUT a `<BuilderContext.Provider>`, the
+ * live-browser affordances degrade to no-ops (no pick, no selector test) so plain
+ * step editing still renders and works. Provide your own context to wire pick/test.
+ */
+const STANDALONE_BUILDER: BuilderCtx = {
+  launched: false,
+  recording: false,
+  picking: false,
+  pickInto: () => {},
+  test: async () => ({ matchCount: 0, visible: false }),
+};
+
 export function useBuilder(): BuilderCtx {
-  const ctx = useContext(BuilderContext);
-  if (!ctx) throw new Error("useBuilder must be used within the builder");
-  return ctx;
+  return useContext(BuilderContext) ?? STANDALONE_BUILDER;
 }
 
 export const LEAF_ACTIONS = ACTIONS.filter((a) => a.value !== "if").map((a) => a.value as LeafAction);

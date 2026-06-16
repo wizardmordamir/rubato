@@ -36,6 +36,7 @@ export default defineConfig({
       entry: {
         shell: resolve(here, "src/shell/index.ts"),
         automations: resolve(here, "src/pages/Automations/index.ts"),
+        "automations-components": resolve(here, "src/pages/Automations/components.ts"),
         excel: resolve(here, "src/pages/Excel/index.ts"),
         board: resolve(here, "src/pages/Board/index.ts"),
         links: resolve(here, "src/pages/Links/index.ts"),

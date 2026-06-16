@@ -44,6 +44,10 @@
       "types": "./ui/dist-lib/ui/src/pages/Automations/index.d.ts",
       "import": "./ui/dist-lib/automations.js"
     },
+    "./ui/automations/components": {
+      "types": "./ui/dist-lib/ui/src/pages/Automations/components.d.ts",
+      "import": "./ui/dist-lib/automations-components.js"
+    },
     "./ui/excel": {
       "types": "./ui/dist-lib/ui/src/pages/Excel/index.d.ts",
       "import": "./ui/dist-lib/excel.js"

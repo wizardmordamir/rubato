@@ -29,5 +29,10 @@
   },
   // vite-env.d.ts supplies `import.meta.env` (vite/client) + the __RUBATO_DEV_WS_URL__
   // define global that useLive.ts (reached via the shell) relies on.
-  "include": ["src/shell/index.ts", "src/pages/Automations/index.ts", "src/vite-env.d.ts"]
+  "include": [
+    "src/shell/index.ts",
+    "src/pages/Automations/index.ts",
+    "src/pages/Automations/components.ts",
+    "src/vite-env.d.ts"
+  ]
 }
