@@ -417,7 +417,7 @@ function FilesView() {
   const saveBtn = (
     <Tooltip
       multiline
-      content="Writes your edits straight to this file on disk at its real path (e.g. ~/.claude/CLAUDE.md, TASKS.md, loop.md). The editable set is a fixed server allowlist; creates the file if it doesn't exist yet."
+      content="Writes your edits straight to this file on disk at its real path (e.g. agent instructions, TASKS.md, loop.md). The editable set is a fixed server allowlist; creates the file if it doesn't exist yet."
     >
       <button
         type="button"

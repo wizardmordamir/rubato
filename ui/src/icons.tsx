@@ -56,7 +56,7 @@ export const IconPlus = (p: IconProps) => (
   </Svg>
 );
 
-// A document/notes glyph — used for the global CLAUDE.md editor link.
+// A document/notes glyph — used for the System Files editor link.
 export const IconFileText = (p: IconProps) => (
   <Svg {...p}>
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />

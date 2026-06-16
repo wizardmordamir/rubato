@@ -7,7 +7,7 @@ LOGGER_LEVEL=debug
 # from the repo root and follows symlinks (e.g. the gitignored ___linked/*
 # reference repos), running their entire test suites.
 root = "src"
-# Isolate RUBATO_HOME (+ Claude config dir) to throwaway temp dirs before any
+# Isolate RUBATO_HOME (+ agent config dir) to throwaway temp dirs before any
 # module loads, so the suite can never read or write real user state.
 preload = ["./src/test/setup.ts"]
 coverage = true

@@ -82,25 +82,25 @@
     "absolutePath": "<HOME>/code/workspaces/___Agent_Workspace/TASKS.md"
   },
   {
-    "name": "claudeDir",
-    "aliases": ["claudedir", "dotclaude", "claudehome"],
+    "name": "agentDir",
+    "aliases": ["agentdir", "agenthome", "dotclaude"],
     "absolutePath": "<HOME>/.claude",
     "group": null,
     "pinned": true
   },
   {
-    "name": "claudeCommands",
-    "aliases": ["commands", "slashcommands", "claudecommands"],
+    "name": "agentCommands",
+    "aliases": ["commands", "slashcommands", "agentcommands"],
     "absolutePath": "<HOME>/.claude/commands"
   },
   {
-    "name": "claudeMd",
-    "aliases": ["claudemd", "globalclaude"],
+    "name": "agentConfig",
+    "aliases": ["agentconfig", "globalconfig"],
     "absolutePath": "<HOME>/.claude/CLAUDE.md"
   },
   {
-    "name": "loopMd",
-    "aliases": ["loop", "loopmd"],
+    "name": "agentLoop",
+    "aliases": ["loop", "agentloop"],
     "absolutePath": "<HOME>/.claude/loop.md"
   }
 ]

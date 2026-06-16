@@ -177,9 +177,6 @@ export function App() {
               ]}
               {excelOn && <Route key="xa-detail" path="/excel-automations/:id" element={<AutomationBuilderPage />} />}
               {adminOn && <Route path="/admin" element={<AdminPage />} />}
-              {/* Back-compat: the old footer link to the global CLAUDE.md editor now
-                  lives in the Docs hub's System Files page. */}
-              <Route path="/claude-md" element={<Navigate to="/docs/system?file=claude" replace />} />
               {/* Unknown or disabled page → the first enabled page (or Config) —
                   but NOT while the toggles are still loading, or a deep link to a
                   toggled-on page would bounce to home before `ui` resolves. */}

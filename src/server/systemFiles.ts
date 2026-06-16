@@ -1,14 +1,14 @@
 /**
  * Read/write a small *allowlist* of editable "system files" so the rubato UI's
- * Docs hub (System Files page) can view and edit them: the user's global Claude
- * Code instructions (`~/.claude/CLAUDE.md`), their shell rc/profile files, and
+ * Docs hub (System Files page) can view and edit them: the user's global agent
+ * instructions (`~/.claude/CLAUDE.md`), their shell rc/profile files, and
  * their git config.
  *
- * Security model (the same one the single-file CLAUDE.md editor used, generalized):
- * every editable path is a fixed, server-*derived* path keyed by a stable `key` —
- * the UI only ever sends a `key` (and, for writes, the new content), NEVER a path.
- * An unknown key resolves to nothing, so there is no path-traversal surface and the
- * only files this module can touch are the ones listed in `SYSTEM_FILES`.
+ * Security model: every editable path is a fixed, server-*derived* path keyed by
+ * a stable `key` — the UI only ever sends a `key` (and, for writes, the new
+ * content), NEVER a path. An unknown key resolves to nothing, so there is no
+ * path-traversal surface and the only files this module can touch are the ones
+ * listed in `SYSTEM_FILES`.
  */
 
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -23,7 +23,7 @@ export type { SystemFileDoc, SystemFileInfo } from '../shared/types';
 const MAX_BYTES = 1_000_000;
 
 /**
- * The fixed path of the user's *global* Claude Code instructions:
+ * The fixed path of the user's *global* agent instructions file (`CLAUDE.md`):
  * `$CLAUDE_CONFIG_DIR/CLAUDE.md`, else `~/.claude/CLAUDE.md`. Exported because the
  * config dir can be relocated (and tests isolate it via `CLAUDE_CONFIG_DIR`).
  */
@@ -48,12 +48,12 @@ interface SystemFileSpec {
 }
 
 /**
- * The editable files, in display order. CLAUDE.md (the cross-project Claude Code
- * memory) leads; then the common shell + git dotfiles. Add an entry here to make a
- * new file editable — never accept a path from the client.
+ * The editable files, in display order. The agent instructions file leads; then
+ * the common shell + git dotfiles. Add an entry here to make a new file editable —
+ * never accept a path from the client.
  */
 const SYSTEM_FILES: SystemFileSpec[] = [
-  { key: 'claude', label: 'Global CLAUDE.md', resolvePath: globalClaudePath, markdown: true },
+  { key: 'claude', label: 'Agent Instructions', resolvePath: globalClaudePath, markdown: true },
   { key: 'zshrc', label: '~/.zshrc', resolvePath: () => home('.zshrc') },
   { key: 'zprofile', label: '~/.zprofile', resolvePath: () => home('.zprofile') },
   { key: 'bashrc', label: '~/.bashrc', resolvePath: () => home('.bashrc') },

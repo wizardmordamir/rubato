@@ -68,9 +68,9 @@ export async function runAutomationOverFile(
 
   // Honor a requested worksheet by dropping the others (the engine acts on the first).
   if (io.sheet) {
-    const keep = wb.worksheets.find((w) => w.name === io.sheet);
+    const keep = wb.worksheets.find((w: { name: string }) => w.name === io.sheet);
     if (!keep) throw new Error(`sheet not found: ${io.sheet}`);
-    for (const w of [...wb.worksheets]) if (w.id !== keep.id) wb.removeWorksheet(w.id);
+    for (const w of [...wb.worksheets] as Array<{ id: number }>) if (w.id !== keep.id) wb.removeWorksheet(w.id);
   }
 
   const mask: HiddenMask = {};
