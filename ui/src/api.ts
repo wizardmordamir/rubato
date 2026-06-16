@@ -1411,25 +1411,32 @@ export async function deletePlan(id: string): Promise<void> {
 // ── Orchestration (unattended task-queue workflow dashboard) ─────────────────
 
 import type {
+  ApplyFleetPresetResult,
   ConfigPatchResult,
   DrainConfigPatch,
+  FleetPreset,
   LogTail,
   OrchestrationFileDoc,
   OrchestrationFileInfo,
   OrchestrationOverview,
   RestartResult,
+  SaveFleetPreset,
   WatchdogAgentResult,
   WatchdogSnapshot,
 } from "@shared/orchestration";
 
 export type {
   ActiveRun,
+  ApplyFleetPresetResult,
   ConfigPatchResult,
   DrainConfig,
   DrainConfigPatch,
   DrainModelOption,
   DrainSettingClass,
   FileLocation,
+  FleetPreset,
+  FleetTier,
+  SaveFleetPreset,
   HistoryEntry,
   LaunchdInfo,
   LogFileInfo,
@@ -1541,6 +1548,23 @@ export const stopInstance = (pid: number) =>
 /** Tail an allowlisted log file (watchdog logs or a runs-dir file). */
 export const fetchLogTail = (key: string, lines = 200) =>
   getJson<LogTail>(`/api/orchestration/logs/${encodeURIComponent(key)}?lines=${lines}`);
+
+// ── Named fleet presets (save / load / swap worker-mix configs) ──────────────
+
+/** The saved named fleet presets ("Strong", "Fast", "Slow", …). */
+export const fetchFleetPresets = () => getJson<FleetPreset[]>("/api/orchestration/fleet-presets");
+/** Create or overwrite a named fleet preset; returns the updated list. */
+export const saveFleetPreset = (input: SaveFleetPreset) =>
+  postJson<FleetPreset[]>("/api/orchestration/fleet-presets", input);
+/** Delete a named fleet preset by id; returns the remaining list. */
+export async function deleteFleetPreset(id: string): Promise<FleetPreset[]> {
+  const res = await fetch(`/api/orchestration/fleet-presets/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete failed → ${res.status}`);
+  return res.json() as Promise<FleetPreset[]>;
+}
+/** Apply (swap to) a named fleet preset — writes its tiers into drain.config (auto-restarts when armed). */
+export const applyFleetPreset = (id: string) =>
+  postJson<ApplyFleetPresetResult>(`/api/orchestration/fleet-presets/${encodeURIComponent(id)}/apply`, {});
 
 // ── Orchestration Processing (per-category timing analytics) ─────────────────
 

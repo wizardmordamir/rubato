@@ -2,14 +2,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DRAIN_MODEL_OPTIONS, FLEET_MODEL_OPTIONS, type FleetTier, formatDuration, formatUsd, THINKING_LEVELS } from "@shared/orchestration";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
+  applyFleetPreset,
   controlWatchdogAgent,
   type ActiveRun,
+  deleteFleetPreset,
   type DrainConfigPatch,
+  fetchFleetPresets,
   fetchLogTail,
   fetchWatchdog,
+  type FleetPreset,
   patchDrainConfig,
   type PendingChange,
   restartDrainer,
+  saveFleetPreset,
   setWatchdogInterval,
   startDrainer,
   stopDrainer,
@@ -784,6 +789,20 @@ function KnobsCard({ snap, onChange }: { snap: WatchdogSnapshot; onChange: () =>
   };
   const switchToFlat = () => patch.mutate({ fleetTiers: null });
 
+  // The worker-mix to capture when "Save current as a fleet": the live fleet tiers in
+  // fleet mode, otherwise the flat knobs distilled into a single equivalent tier.
+  const flatAlias = FLEET_MODEL_OPTIONS.find((m) => m.id === (snap.config.model ?? "claude-opus-4-8"))?.alias ?? "opus";
+  const currentTiers: FleetTier[] = isFleetMode
+    ? fleetDraft
+    : [
+        {
+          modelAlias: flatAlias,
+          slots: snap.config.jobs,
+          thinkingLevel: snap.config.thinkingLevel ?? "off",
+          fastMode: snap.config.fastMode ?? false,
+        },
+      ];
+
   return (
     <div className={`${CARD_CLASS} space-y-5 p-4`}>
       <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Tuning</h3>
@@ -973,6 +992,9 @@ function KnobsCard({ snap, onChange }: { snap: WatchdogSnapshot; onChange: () =>
         </div>
       )}
 
+      {/* Saved fleets — name a worker-mix and swap to it in one click */}
+      <FleetPresetsPanel snap={snap} onChange={onChange} currentTiers={currentTiers} busy={patch.isPending} />
+
       {/* Watchdog interval — always shown */}
       <div className="border-t border-gray-200 pt-4 dark:border-gray-700">
         <Field label="Watchdog interval (s)" hint="How often the launchd watchdog ticks (StartInterval). Applied + reloaded immediately.">
@@ -1007,6 +1029,160 @@ function KnobsCard({ snap, onChange }: { snap: WatchdogSnapshot; onChange: () =>
             ))}
           </div>
         </Field>
+      </div>
+    </div>
+  );
+}
+
+/** A compact tier summary like "1× Opus · 2× Sonnet". */
+function summarizeTiers(tiers: FleetTier[]): string {
+  return tiers
+    .map((t) => `${t.slots}× ${FLEET_MODEL_OPTIONS.find((m) => m.alias === t.modelAlias)?.label ?? t.modelAlias}`)
+    .join(" · ");
+}
+
+/** A stable key for tier equality — used to flag which saved fleet is currently live. */
+function tiersKey(tiers: FleetTier[]): string {
+  return tiers.map((t) => `${t.modelAlias},${t.slots},${t.thinkingLevel},${t.fastMode ? 1 : 0}`).join("|");
+}
+
+/**
+ * Saved fleets: name a worker-mix (e.g. "Strong", "Fast", "Slow") and swap to it in
+ * one click. "Save current" captures the mix shown in the Tuning editor above; "Apply"
+ * writes a preset's tiers into drain.config (auto-restarting to take effect when armed).
+ */
+function FleetPresetsPanel({
+  snap,
+  onChange,
+  currentTiers,
+  busy,
+}: {
+  snap: WatchdogSnapshot;
+  onChange: () => void;
+  currentTiers: FleetTier[];
+  busy: boolean;
+}) {
+  const { notify } = useToast();
+  const qc = useQueryClient();
+  const { data: presets = [], isLoading } = useQuery({ queryKey: ["fleet-presets"], queryFn: fetchFleetPresets });
+  const [name, setName] = useState("");
+
+  const setList = (list: FleetPreset[]) => qc.setQueryData(["fleet-presets"], list);
+
+  const save = useMutation({
+    mutationFn: () => saveFleetPreset({ name: name.trim(), tiers: currentTiers }),
+    onSuccess: (list) => {
+      setList(list);
+      setName("");
+      notify("Fleet saved", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "save failed", "error"),
+  });
+  const apply = useMutation({
+    mutationFn: (id: string) => applyFleetPreset(id),
+    onSuccess: (r) => {
+      notify(
+        r.autoRestart?.stopRequested ? `Applied "${r.preset.name}" — restarting to take effect` : `Applied "${r.preset.name}"`,
+        "success",
+      );
+      onChange();
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "apply failed", "error"),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteFleetPreset(id),
+    onSuccess: (list) => {
+      setList(list);
+      notify("Fleet deleted", "info");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "delete failed", "error"),
+  });
+
+  const activeKey = snap.config.fleetTiers?.length ? tiersKey(snap.config.fleetTiers) : null;
+  const canSave = name.trim().length > 0 && currentTiers.length > 0 && !save.isPending;
+
+  return (
+    <div className="space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Saved fleets</span>
+        <span className="text-xs text-gray-500">
+          {presets.length} saved
+        </span>
+      </div>
+      <p className="text-xs text-gray-500 dark:text-gray-400">
+        Name a worker-mix (e.g. <em>Strong</em>, <em>Fast</em>, <em>Slow</em>) and swap to it in one click. Applying a fleet writes its
+        tiers into the drainer config — auto-restarting to take effect when that's armed.
+      </p>
+
+      {isLoading ? (
+        <p className="text-xs text-gray-400">loading…</p>
+      ) : presets.length === 0 ? (
+        <p className="text-xs text-gray-400">No saved fleets yet — set the tiers above, then save the current mix below.</p>
+      ) : (
+        <div className="space-y-2">
+          {presets.map((p) => {
+            const isActive = activeKey !== null && tiersKey(p.tiers) === activeKey;
+            const total = p.tiers.reduce((s, t) => s + t.slots, 0);
+            return (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-2 rounded border border-gray-200 px-3 py-2 dark:border-gray-700"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm font-medium text-gray-800 dark:text-gray-200">{p.name}</span>
+                    {isActive && <Badge tone="success">active</Badge>}
+                  </div>
+                  <div className="truncate text-xs text-gray-500">
+                    {summarizeTiers(p.tiers)} · {total} worker{total !== 1 ? "s" : ""}
+                  </div>
+                  {p.note && <div className="truncate text-xs text-gray-400">{p.note}</div>}
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    className={BTN_PRIMARY_CLASS}
+                    disabled={isActive || apply.isPending || busy}
+                    onClick={() => apply.mutate(p.id)}
+                  >
+                    {apply.isPending && apply.variables === p.id && <Spinner />}
+                    {isActive ? "Applied" : "Apply"}
+                  </button>
+                  <Tooltip content="Delete this saved fleet">
+                    <button
+                      type="button"
+                      className={BTN_GHOST_CLASS}
+                      disabled={remove.isPending}
+                      onClick={() => remove.mutate(p.id)}
+                      aria-label={`Delete ${p.name}`}
+                    >
+                      <IconTrash />
+                    </button>
+                  </Tooltip>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={name}
+          placeholder="Name this fleet (e.g. Strong)"
+          className={`${FIELD_CLASS} flex-1`}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && canSave) save.mutate();
+          }}
+        />
+        <Tooltip content={`Save the mix shown above — ${summarizeTiers(currentTiers)}`} multiline>
+          <button type="button" className={BTN_PRIMARY_CLASS} disabled={!canSave} onClick={() => save.mutate()}>
+            {save.isPending && <Spinner />}
+            {save.isPending ? "Saving…" : "Save current"}
+          </button>
+        </Tooltip>
       </div>
     </div>
   );

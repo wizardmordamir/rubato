@@ -15,12 +15,16 @@ import {
   nextRunIso,
   parseActiveRun,
   parseDrainConfig,
+  parseFleetPresets,
   parseLaunchdPlist,
   parseWatchdogStatus,
   parseWatchdogTick,
   repoFromText,
+  sanitizeFleetTiers,
   serializeDrainConfig,
+  serializeFleetPresets,
   setPlistInterval,
+  upsertFleetPreset,
   wakeAction,
   workerIdFromWorktree,
 } from './watchdog';
@@ -634,5 +638,61 @@ describe('buildWatchdogCommands', () => {
     expect(cmds.find((c) => c.id === 'wd-stop')?.command).toContain('/LA/com.curt.agent-drain-watchdog.plist');
     // Every command is non-empty + uniquely id'd.
     expect(new Set(cmds.map((c) => c.id)).size).toBe(cmds.length);
+  });
+});
+
+describe('sanitizeFleetTiers', () => {
+  test('drops unknown aliases, clamps slots 1–8, coerces thinking + fast', () => {
+    const out = sanitizeFleetTiers([
+      { modelAlias: 'opus', slots: 0, thinkingLevel: 'high', fastMode: true },
+      { modelAlias: 'sonnet', slots: 99, thinkingLevel: 'bogus' as never, fastMode: 0 as never },
+      { modelAlias: 'nope', slots: 2, thinkingLevel: 'low', fastMode: false },
+    ]);
+    expect(out).toEqual([
+      { modelAlias: 'opus', slots: 1, thinkingLevel: 'high', fastMode: true },
+      { modelAlias: 'sonnet', slots: 8, thinkingLevel: 'off', fastMode: false },
+    ]);
+  });
+});
+
+describe('fleet presets', () => {
+  const tiers = [
+    { modelAlias: 'opus', slots: 1, thinkingLevel: 'high' as const, fastMode: false },
+    { modelAlias: 'sonnet', slots: 2, thinkingLevel: 'low' as const, fastMode: false },
+  ];
+
+  test('parse → serialize → parse round-trips and re-derives ids from names', () => {
+    const presets = parseFleetPresets(serializeFleetPresets([{ id: 'ignored', name: 'Strong Mix', tiers }]));
+    expect(presets).toHaveLength(1);
+    expect(presets[0].id).toBe('strong-mix'); // id is always a slug of the name
+    expect(presets[0].name).toBe('Strong Mix');
+    expect(presets[0].tiers).toEqual(tiers);
+  });
+
+  test('parse tolerates garbage / drops invalid entries', () => {
+    expect(parseFleetPresets('not json')).toEqual([]);
+    expect(parseFleetPresets('{}')).toEqual([]);
+    // no name, no valid tier, and a duplicate-name → all dropped/deduped
+    const text = JSON.stringify([
+      { name: '', tiers },
+      { name: 'A', tiers: [{ modelAlias: 'nope', slots: 1, thinkingLevel: 'off', fastMode: false }] },
+      { name: 'Keep', tiers },
+      { name: 'keep', tiers }, // same slug as "Keep" → first wins
+    ]);
+    const out = parseFleetPresets(text);
+    expect(out.map((p) => p.name)).toEqual(['Keep']);
+  });
+
+  test('upsert overwrites by id (name slug) and keeps the list name-sorted', () => {
+    const a = { id: 'fast', name: 'Fast', tiers };
+    const b = { id: 'strong', name: 'Strong', tiers };
+    let list = upsertFleetPreset([], b);
+    list = upsertFleetPreset(list, a);
+    expect(list.map((p) => p.name)).toEqual(['Fast', 'Strong']); // sorted
+    // re-saving "Fast" with new tiers replaces, doesn't duplicate
+    const a2 = { id: 'fast', name: 'Fast', tiers: [tiers[0]] };
+    list = upsertFleetPreset(list, a2);
+    expect(list).toHaveLength(2);
+    expect(list.find((p) => p.id === 'fast')?.tiers).toEqual([tiers[0]]);
   });
 });

@@ -30,30 +30,38 @@ import {
   deriveNextRun,
   deriveProblems,
   emptyTaskBoard,
+  fleetPresetId,
   needsRestartFieldChanged,
   parseActiveRun,
   parseDrainConfig,
+  parseFleetPresets,
   parseLaunchdPlist,
   parseRunsJsonl,
   parseTaskBoard,
   parseWatchdogStatus,
   parseWatchdogTick,
+  sanitizeFleetTiers,
   serializeDrainConfig,
+  serializeFleetPresets,
   setPlistInterval,
   summarizeRunEntries,
+  upsertFleetPreset,
   wakeAction,
 } from '../lib/orchestration';
 import type {
   ActiveRun,
+  ApplyFleetPresetResult,
   ConfigPatchResult,
   DrainConfig,
   DrainConfigPatch,
   FileLocation,
+  FleetPreset,
   LaunchdInfo,
   LogFileInfo,
   LogTail,
   Problem,
   RestartResult,
+  SaveFleetPreset,
   WatchdogAgentResult,
   WatchdogSnapshot,
   WatchdogTick,
@@ -75,6 +83,8 @@ export interface WatchdogPaths {
   notesDir: string;
   orchestrationDir: string;
   config: string;
+  /** `fleet-presets.json` — named, reusable fleet configs the UI can swap between. */
+  fleetPresets: string;
   lock: string;
   status: string;
   /** `watchdog.tick.json` — the last tick's start/end/duration/result the script stamps. */
@@ -105,6 +115,7 @@ export async function watchdogPaths(): Promise<WatchdogPaths> {
     notesDir: dir,
     orchestrationDir: orch,
     config: join(orch, 'drain.config'),
+    fleetPresets: join(orch, 'fleet-presets.json'),
     lock: join(orch, '.drain.lock'),
     status: join(orch, 'watchdog.status'),
     tick: join(orch, 'watchdog.tick.json'),
@@ -477,6 +488,54 @@ async function atomicWrite(path: string, content: string): Promise<void> {
   const tmp = `${path}.tmp.${process.pid}`;
   await writeFile(tmp, content, 'utf8');
   await rename(tmp, path);
+}
+
+// ── named fleet presets (fleet-presets.json) ─────────────────────────────────
+
+/** Read the saved named fleet presets (tolerates a missing/garbage file → `[]`). */
+export async function listFleetPresets(): Promise<FleetPreset[]> {
+  const p = await watchdogPaths();
+  const text = await readMaybe(p.fleetPresets);
+  return text ? parseFleetPresets(text) : [];
+}
+
+/**
+ * Create or overwrite a named fleet preset (keyed by a slug of its name), then
+ * persist the list atomically. Rejects an empty name or a config with no valid
+ * tier. Returns the updated, name-sorted list.
+ */
+export async function saveFleetPreset(input: SaveFleetPreset): Promise<FleetPreset[]> {
+  const p = await watchdogPaths();
+  const name = (input?.name ?? '').trim();
+  if (!name) throw new Error('a preset name is required');
+  const tiers = sanitizeFleetTiers(Array.isArray(input?.tiers) ? input.tiers : []);
+  if (tiers.length === 0) throw new Error('a preset needs at least one valid tier');
+  const note = typeof input?.note === 'string' && input.note.trim() ? input.note.trim() : undefined;
+  const preset: FleetPreset = { id: fleetPresetId(name), name, tiers, note, updatedAt: Date.now() };
+  const next = upsertFleetPreset(await listFleetPresets(), preset);
+  await atomicWrite(p.fleetPresets, serializeFleetPresets(next));
+  return next;
+}
+
+/** Delete a named fleet preset by id; returns the remaining list. */
+export async function deleteFleetPreset(id: string): Promise<FleetPreset[]> {
+  const p = await watchdogPaths();
+  const next = (await listFleetPresets()).filter((preset) => preset.id !== id);
+  await atomicWrite(p.fleetPresets, serializeFleetPresets(next));
+  return next;
+}
+
+/**
+ * Apply a named preset: load its tiers into `drain.config` via the standard
+ * {@link applyDrainConfigPatch} (atomic write + auto-restart when armed and a
+ * drainer is live), so swapping a fleet behaves exactly like editing the tiers by
+ * hand — just in one click. Throws if the id is unknown.
+ */
+export async function applyFleetPreset(id: string): Promise<ApplyFleetPresetResult> {
+  const preset = (await listFleetPresets()).find((pre) => pre.id === id);
+  if (!preset) throw new Error(`unknown fleet preset: ${id}`);
+  const result = await applyDrainConfigPatch({ fleetTiers: preset.tiers });
+  return { ...result, preset };
 }
 
 // ── control: the launchd tick interval (the headline "update interval" ask) ───

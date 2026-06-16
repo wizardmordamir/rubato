@@ -19,6 +19,7 @@ import type {
   ActiveRun,
   DrainConfig,
   DrainConfigPatch,
+  FleetPreset,
   FleetTier,
   LaunchdInfo,
   NeedsRestartField,
@@ -31,7 +32,33 @@ import type {
   WorkerInstance,
   WorkflowBoard,
 } from '../../shared/orchestration';
-import { FLEET_MODEL_OPTIONS, NEEDS_RESTART_FIELDS, THINKING_LEVELS, serializeFleetTiers } from '../../shared/orchestration';
+import {
+  FLEET_MODEL_OPTIONS,
+  fleetPresetId,
+  NEEDS_RESTART_FIELDS,
+  THINKING_LEVELS,
+  serializeFleetTiers,
+} from '../../shared/orchestration';
+
+/**
+ * Validate + clamp an arbitrary list of fleet tiers into well-formed {@link FleetTier}s:
+ * drop tiers with an unknown model alias, clamp slots to 1–8, coerce the thinking level
+ * to a known value, and normalize `fastMode` to a boolean. The single source of truth for
+ * what a valid tier is — shared by {@link applyDrainPatch} and the fleet-preset store.
+ */
+export function sanitizeFleetTiers(tiers: readonly FleetTier[]): FleetTier[] {
+  const validAliases = new Set(FLEET_MODEL_OPTIONS.map((m) => m.alias));
+  return tiers
+    .filter((t) => t?.modelAlias && validAliases.has(t.modelAlias))
+    .map((t) => ({
+      modelAlias: t.modelAlias,
+      slots: Math.max(1, Math.min(8, Math.floor(t.slots) || 1)),
+      thinkingLevel: (THINKING_LEVELS as string[]).includes(t.thinkingLevel)
+        ? t.thinkingLevel
+        : ('off' as ThinkingLevel),
+      fastMode: Boolean(t.fastMode),
+    }));
+}
 
 // ── drain.config (KEY=value shell assignments) ────────────────────────────────
 
@@ -217,19 +244,62 @@ export function applyDrainPatch(cfg: DrainConfig, patch: DrainConfigPatch): Drai
     if (!patch.fleetTiers || patch.fleetTiers.length === 0) {
       next.fleetTiers = undefined;
     } else {
-      const validAliases = new Set(FLEET_MODEL_OPTIONS.map((m) => m.alias));
-      const tiers = patch.fleetTiers
-        .filter((t) => t.modelAlias && validAliases.has(t.modelAlias))
-        .map((t) => ({
-          modelAlias: t.modelAlias,
-          slots: Math.max(1, Math.min(8, Math.floor(t.slots) || 1)),
-          thinkingLevel: (THINKING_LEVELS as string[]).includes(t.thinkingLevel) ? t.thinkingLevel : ('off' as ThinkingLevel),
-          fastMode: Boolean(t.fastMode),
-        }));
+      const tiers = sanitizeFleetTiers(patch.fleetTiers);
       next.fleetTiers = tiers.length > 0 ? tiers : undefined;
       if (next.fleetTiers) next.jobs = next.fleetTiers.reduce((s, t) => s + t.slots, 0);
     }
   }
+  return next;
+}
+
+// ── fleet presets (named, reusable fleet configs, stored as fleet-presets.json) ─
+
+/**
+ * Parse `orchestration/fleet-presets.json` into a clean {@link FleetPreset} list:
+ * tolerate a missing/garbage file (→ `[]`), drop entries without a usable name or
+ * any valid tier, and re-derive each id from its name so the file stays the single
+ * source of truth. Pure (no fs) so it's unit-tested directly.
+ */
+export function parseFleetPresets(text: string): FleetPreset[] {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  const arr = Array.isArray(raw) ? raw : Array.isArray((raw as { presets?: unknown })?.presets) ? (raw as { presets: unknown[] }).presets : [];
+  const out: FleetPreset[] = [];
+  const seen = new Set<string>();
+  for (const item of arr) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const name = typeof rec.name === 'string' ? rec.name.trim() : '';
+    if (!name) continue;
+    const tiers = sanitizeFleetTiers(Array.isArray(rec.tiers) ? (rec.tiers as FleetTier[]) : []);
+    if (tiers.length === 0) continue;
+    const id = fleetPresetId(name);
+    if (seen.has(id)) continue; // first write wins on a duplicate name
+    seen.add(id);
+    const note = typeof rec.note === 'string' && rec.note.trim() ? rec.note.trim() : undefined;
+    const updatedAt = typeof rec.updatedAt === 'number' && Number.isFinite(rec.updatedAt) ? rec.updatedAt : undefined;
+    out.push({ id, name, tiers, note, updatedAt });
+  }
+  return out;
+}
+
+/** Serialize a {@link FleetPreset} list back to pretty `fleet-presets.json` text. */
+export function serializeFleetPresets(presets: FleetPreset[]): string {
+  return `${JSON.stringify(presets, null, 2)}\n`;
+}
+
+/**
+ * Upsert a preset into a list by id (a slug of its name), so saving the same name
+ * overwrites it. Returns a new, name-sorted list (immutable).
+ */
+export function upsertFleetPreset(presets: FleetPreset[], preset: FleetPreset): FleetPreset[] {
+  const next = presets.filter((p) => p.id !== preset.id);
+  next.push(preset);
+  next.sort((a, b) => a.name.localeCompare(b.name));
   return next;
 }
 
