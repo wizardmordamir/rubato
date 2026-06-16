@@ -17,9 +17,17 @@ import type { RubatoPlugin } from '../plugin/types';
 import { handleAutomationApi, handleSessionApi } from '../server/automationRoutes';
 import { pageByKey, type UiPage } from '../shared/ui';
 
-// Re-export the storage seam so a friend app can build/implement a backend from the
-// one import: `import { automationsPlugin, createFileAutomationStore } from 'rubato/plugins/automations'`.
-export { type AutomationStore, createFileAutomationStore } from '../lib/automations';
+// Re-export the whole storage seam so a friend app builds a backend from one import:
+// the interface + input type, the file-store default, and the shared save helpers
+// (buildAutomationRecord/slugify) so a custom store reuses rubato's id/timestamp/
+// capture-merge semantics instead of re-deriving — and can't drift from them.
+export {
+  type AutomationInput,
+  type AutomationStore,
+  buildAutomationRecord,
+  createFileAutomationStore,
+  slugify,
+} from '../lib/automations';
 
 /** Configuration for {@link automationsPlugin}. */
 export interface AutomationsPluginOptions {
