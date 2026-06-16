@@ -162,6 +162,26 @@ export interface RouteOptions {
   pluginPages?: UiPage[];
   /** Absolute path to the SPA to serve; defaults to rubato's own `ui/dist`. */
   uiDist?: string;
+  /** Runtime branding for the served SPA — re-theme/re-title the *prebuilt* UI
+   *  without rebuilding it (a friend app passing its own accent + tab title). */
+  ui?: UiBranding;
+}
+
+/**
+ * Runtime branding injected into the served `index.html`. Lets a friend app re-skin
+ * rubato's prebuilt SPA — no rebuild — by overriding the accent design token (the
+ * whole brand surface derives from it) and the browser tab title. The in-app
+ * wordmark is baked into the prebuilt bundle; change that via your own SPA build.
+ */
+export interface UiBranding {
+  /** Brand accent as a CSS color (hex/rgb/hsl/named); derives hover + soft + dark. */
+  accent?: string;
+  /** Explicit hover shade (default: a darkened `accent` via color-mix). */
+  accentHover?: string;
+  /** Explicit soft-background shade (default: a translucent `accent`). */
+  accentSoft?: string;
+  /** Browser tab title (the `<title>`). */
+  brand?: string;
 }
 
 /**
@@ -216,6 +236,59 @@ async function serveStatic(pathname: string, distDir: string = UI_DIST): Promise
   const rel = pathname === '/' ? '/index.html' : pathname;
   const file = Bun.file(resolve(distDir, `.${rel}`));
   return (await file.exists()) ? new Response(file) : null;
+}
+
+/** Keep an injected CSS color value from breaking out of the `<style>` block. */
+function safeColor(c: string): string {
+  return /^[#a-zA-Z0-9(),.%\s-]+$/.test(c) ? c : '';
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string);
+}
+
+/** True if branding actually changes anything (so an empty `ui` is a no-op). */
+function hasBranding(ui?: UiBranding): ui is UiBranding {
+  return !!ui && (!!ui.accent || !!ui.brand);
+}
+
+/**
+ * Inject runtime branding into the prebuilt `index.html`: a `<style>` overriding the
+ * `--accent` design tokens (the whole brand surface derives from them; hover/soft/
+ * dark shades come from the one accent via `color-mix`) and, optionally, the tab
+ * `<title>`. A no-op string transform — the prebuilt assets are untouched.
+ */
+export function injectBranding(html: string, ui: UiBranding): string {
+  let out = html;
+  const accent = ui.accent ? safeColor(ui.accent) : '';
+  if (accent) {
+    const hover = (ui.accentHover && safeColor(ui.accentHover)) || `color-mix(in srgb, ${accent} 85%, black)`;
+    const soft = (ui.accentSoft && safeColor(ui.accentSoft)) || `color-mix(in srgb, ${accent} 14%, transparent)`;
+    const dark = `color-mix(in srgb, ${accent} 72%, white)`;
+    const style =
+      `<style data-rubato-theme>` +
+      `:root{--accent:${accent};--accent-hover:${hover};--accent-soft:${soft};}` +
+      `.dark{--accent:${dark};--accent-hover:${accent};--accent-soft:color-mix(in srgb, ${accent} 28%, black);}` +
+      `</style>`;
+    // Inject at the END of <head> so it wins over the linked theme CSS (equal
+    // specificity → later rule applies).
+    out = out.includes('</head>') ? out.replace('</head>', `${style}</head>`) : `${style}${out}`;
+  }
+  if (ui.brand) {
+    const title = `<title>${escapeHtml(ui.brand)}</title>`;
+    out = /<title>[\s\S]*?<\/title>/i.test(out) ? out.replace(/<title>[\s\S]*?<\/title>/i, title) : out;
+  }
+  return out;
+}
+
+/** Serve the SPA's `index.html`, applying runtime branding when configured. */
+async function serveIndex(distDir: string = UI_DIST, ui?: UiBranding): Promise<Response | null> {
+  const file = Bun.file(resolve(distDir, 'index.html'));
+  if (!(await file.exists())) return null;
+  if (!hasBranding(ui)) return new Response(file);
+  return new Response(injectBranding(await file.text(), ui), {
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+  });
 }
 
 /** Hard ceiling on a request body, so a runaway/huge POST can't OOM the loopback server. */
@@ -478,7 +551,11 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
     if (req.method !== 'POST') return jsonError('use POST', 405);
     const { openSshInTerminal } = await import('./sshServers');
     let body: { index?: unknown } = {};
-    try { body = (await req.json()) as typeof body; } catch { /* no body */ }
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      /* no body */
+    }
     const idx = typeof body.index === 'number' ? body.index : 0;
     const cfg = await loadConfig();
     const servers = cfg.servers?.ssh ?? [];
@@ -1196,10 +1273,14 @@ async function routeRequest(req: Request, opts: RouteOptions = {}): Promise<Resp
     }
   }
 
-  // Static UI (built) → SPA fallback → single-file explorer.
-  const asset = await serveStatic(pathname, opts.uiDist);
-  if (asset) return asset;
-  const index = await serveStatic('/', opts.uiDist);
+  // Static UI (built) → SPA fallback → single-file explorer. The index (`/` and the
+  // SPA fallback) goes through serveIndex so runtime branding can be injected; other
+  // assets are served as-is.
+  if (pathname !== '/') {
+    const asset = await serveStatic(pathname, opts.uiDist);
+    if (asset) return asset;
+  }
+  const index = await serveIndex(opts.uiDist, opts.ui);
   if (index) return index;
   return new Response(UI_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } });
 }

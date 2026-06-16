@@ -40,5 +40,6 @@ export function on(options: StartOptions = {}): ServerHandle | undefined {
   return startServer(options);
 }
 
+export type { UiBranding } from './server/router';
 export type { PluginRouteHandler, RubatoPlugin, ServerHandle, StartAppOptions, StartOptions };
 export { startApp };

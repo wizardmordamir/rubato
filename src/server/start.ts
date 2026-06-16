@@ -15,7 +15,7 @@ import type { UiPage } from '../shared/ui';
 import { BUILTIN_SCRIPTS } from './builtinScripts';
 import { initDebugCapture } from './debugCapture';
 import { subscribe } from './events';
-import { route } from './router';
+import { route, type UiBranding } from './router';
 
 export interface StartOptions {
   /** Port to bind (default 4747, or `RUBATO_PORT`). */
@@ -44,6 +44,12 @@ export interface StartOptions {
    * rubato's own `ui/dist`; a friend app points it at its own built UI.
    */
   uiDist?: string;
+  /**
+   * Runtime branding for the served SPA — re-theme (accent) and re-title the
+   * *prebuilt* UI without rebuilding it. A friend app passes its own accent color
+   * so the same shipped `ui/dist` renders in its brand colors.
+   */
+  ui?: UiBranding;
 }
 
 export interface ServerHandle {
@@ -81,6 +87,7 @@ export function startServer(options: StartOptions = {}): ServerHandle {
         pluginRoutes: options.pluginRoutes,
         pluginPages: options.pluginPages,
         uiDist: options.uiDist,
+        ui: options.ui,
       });
     },
     websocket: {
