@@ -26,6 +26,7 @@
 import type { DrainConfigPatch, ThinkingLevel } from '../shared/orchestration';
 import { DRAIN_MODEL_IDS, THINKING_LEVELS } from '../shared/orchestration';
 import type { TimingQuery } from './db';
+import { getClaudeRateLimits } from './claudeUsage';
 import { json, jsonError, readJsonBody } from './http';
 import { getOverview, listFiles, readFileDoc, writeFileDoc } from './orchestration';
 import { clearStoredTimings, getEntryCategoryStats, getTimingOverview, ingestTimings } from './orchestrationTimings';
@@ -55,6 +56,16 @@ export async function handleOrchestrationApi(pathname: string, req: Request): Pr
   // ── Watchdog control + observe ──────────────────────────────────────────────
   if (pathname.startsWith('/api/orchestration/watchdog')) {
     return handleWatchdog(pathname, req);
+  }
+
+  // GET /api/orchestration/claude-usage → live rate-limit probe + key status.
+  if (pathname === '/api/orchestration/claude-usage') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    try {
+      return json(await getClaudeRateLimits());
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'failed to fetch claude usage', 500);
+    }
   }
 
   // ── Orchestration Processing (per-category timing analytics) ────────────────
