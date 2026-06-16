@@ -13,11 +13,18 @@
 import type { Database } from 'bun:sqlite';
 import { addColumnIfMissing } from 'cwip/sqlite';
 import type { AutomationStore } from '../lib/automations';
+import type { CaptureStore } from '../lib/captureStore';
 import type { RubatoPlugin } from '../plugin/types';
 import { handleAutomationApi, handleSessionApi } from '../server/automationRoutes';
+import { setSessionCaptureStore } from '../server/browserSession';
+import { handleCaptureApi } from '../server/captureRoutes';
 import type { RunStore } from '../server/runStore';
 import { pageByKey, type UiPage } from '../shared/ui';
 
+// Cross-platform, binary-safe data-dir helper so a friend app can place its store
+// files in a sensible per-user location (`~/.<name>`, env-overridable) without
+// hand-rolling OS paths — important for apps shipped as compiled binaries.
+export { appDataDir } from '../lib/appData';
 // Re-export the whole storage seam so a friend app builds a backend from one import:
 // the interface + input type, the file-store default, and the shared save helpers
 // (buildAutomationRecord/slugify) so a custom store reuses rubato's id/timestamp/
@@ -29,6 +36,7 @@ export {
   createFileAutomationStore,
   slugify,
 } from '../lib/automations';
+export { type CaptureStore, createFileCaptureStore } from '../lib/captureStore';
 export { createSqliteRunStore, type RunStore } from '../server/runStore';
 
 /** Configuration for {@link automationsPlugin}. */
@@ -47,6 +55,15 @@ export interface AutomationsPluginOptions {
    * own backend. (Run *artifacts* on disk are separate.) Unset → unchanged.
    */
   runStore?: RunStore;
+  /**
+   * Where capture sessions (manifests + HTML/screenshot artifacts + bundles) are
+   * persisted. Defaults to rubato's file store under `RUBATO_HOME`. A friend app
+   * usually just relocates the directory —
+   * `createFileCaptureStore(resolve(appDataDir("my-app"), "captures"))` — but can
+   * inject any {@link CaptureStore}. Mounting this plugin also serves the
+   * `/api/capture/*` routes (which rubato's monolith owns directly).
+   */
+  captureStore?: CaptureStore;
 }
 
 /**
@@ -84,9 +101,12 @@ const AUTOMATIONS_PAGE = pageByKey('automations') as UiPage;
  * separately (it's an optional peer dependency of rubato, not bundled).
  */
 export function automationsPlugin(opts: AutomationsPluginOptions = {}): RubatoPlugin {
-  // Inject the chosen backends into the CRUD handler (each undefined → the
-  // handler's own default). Session routes don't touch storage.
-  const stores = { automations: opts.storage, runs: opts.runStore };
+  // Inject the chosen backends into the handlers (each undefined → the handler's own
+  // default). The live build session is a singleton, so its capture writes are
+  // pointed at the store via a setter rather than a per-request arg.
+  const { storage, runStore, captureStore } = opts;
+  if (captureStore) setSessionCaptureStore(captureStore);
+  const stores = { automations: storage, runs: runStore, captures: captureStore };
   return {
     id: 'automations',
     label: 'Browser Automation',
@@ -97,6 +117,12 @@ export function automationsPlugin(opts: AutomationsPluginOptions = {}): RubatoPl
         handle: (pathname, req) => handleAutomationApi(pathname, req, stores),
       },
       { prefix: '/api/session/', handle: handleSessionApi },
+      // Capture library/import/export — owned by the monolith's router directly, so
+      // a friend app only gets these by mounting this plugin.
+      {
+        prefix: '/api/capture',
+        handle: (pathname, req) => handleCaptureApi(pathname, req, { captures: captureStore, automations: storage }),
+      },
     ],
     pages: [AUTOMATIONS_PAGE],
   };

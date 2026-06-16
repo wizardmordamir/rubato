@@ -9,8 +9,8 @@
  * routes, and page — nothing else.
  *
  * Plugins are **factory functions** returning a {@link RubatoPlugin}
- * (`automationsPlugin({ captureDir })`), not plain objects, so each plugin can
- * accept configuration without a separate wiring step. This module is types-only
+ * (`automationsPlugin({ storage, runStore, captureStore })`), not plain objects, so
+ * each plugin can accept configuration without a separate wiring step. This module is types-only
  * (no runtime imports beyond the `bun:sqlite` Database type), so it's cheap to
  * import from both the server and a plugin module.
  */

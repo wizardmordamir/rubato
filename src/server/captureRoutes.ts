@@ -15,18 +15,8 @@
  *   DELETE /api/capture/:id                       → { deleted }
  */
 
-import { saveAutomation } from '../lib/automations';
-import {
-  bundleBytes,
-  bundleText,
-  deleteCapture,
-  importBundle,
-  importBundleText,
-  listCaptures,
-  readCaptureArtifact,
-  readManifest,
-  updateCaptureMeta,
-} from '../lib/captureStore';
+import { type AutomationStore, automationStore as defaultAutomationStore } from '../lib/automations';
+import { type CaptureStore, captureStore as defaultCaptureStore } from '../lib/captureStore';
 import { captureToAutomation } from '../lib/captureToAutomation';
 import type { RunSpeed } from '../shared/pacing';
 import { json, jsonError, readJsonBody } from './http';
@@ -39,7 +29,13 @@ const CONTENT_TYPE: Record<string, string> = {
   webp: 'image/webp',
 };
 
-export async function handleCaptureApi(pathname: string, req: Request): Promise<Response> {
+export async function handleCaptureApi(
+  pathname: string,
+  req: Request,
+  stores: { captures?: CaptureStore; automations?: AutomationStore } = {},
+): Promise<Response> {
+  const store = stores.captures ?? defaultCaptureStore;
+  const automations = stores.automations ?? defaultAutomationStore;
   // The live capture session is now part of the unified build session
   // (server/browserSession.ts, driven from the Browser builder). This handler keeps
   // only the artifact backend: list / read / draft / export / import / convert.
@@ -50,7 +46,7 @@ export async function handleCaptureApi(pathname: string, req: Request): Promise<
     const b = await readJsonBody<{ token?: string; seed?: string }>(req);
     if (!b?.token?.trim()) return jsonError('token (the bundle string) required', 400);
     try {
-      return json(await importBundleText(b.token, b.seed));
+      return json(await store.importBundleText(b.token, b.seed));
     } catch (err) {
       return jsonError(err instanceof Error ? err.message : String(err), 400);
     }
@@ -62,7 +58,7 @@ export async function handleCaptureApi(pathname: string, req: Request): Promise<
     try {
       const bytes = new Uint8Array(await req.arrayBuffer());
       if (bytes.length === 0) return jsonError('empty body — POST the bundle bytes', 400);
-      return json(await importBundle(bytes));
+      return json(await store.importBundle(bytes));
     } catch (err) {
       return jsonError(err instanceof Error ? err.message : String(err), 400);
     }
@@ -71,7 +67,7 @@ export async function handleCaptureApi(pathname: string, req: Request): Promise<
   // ── stored sessions ──
   if (pathname === '/api/capture') {
     if (req.method !== 'GET') return jsonError('use GET', 405);
-    return json(await listCaptures());
+    return json(await store.list());
   }
 
   if (pathname.startsWith('/api/capture/')) {
@@ -82,13 +78,13 @@ export async function handleCaptureApi(pathname: string, req: Request): Promise<
       if (req.method !== 'POST') return jsonError('use POST', 405);
       const id = decodeURIComponent(rest.slice(0, -'/export-text'.length));
       const b = await readJsonBody<{ seed?: string }>(req);
-      const token = await bundleText(id, b?.seed);
+      const token = await store.bundleText(id, b?.seed);
       return token ? json({ token }) : jsonError('capture not found', 404);
     }
 
     if (rest.endsWith('/export')) {
       const id = decodeURIComponent(rest.slice(0, -'/export'.length));
-      const bytes = await bundleBytes(id);
+      const bytes = await store.bundleBytes(id);
       if (!bytes) return jsonError('capture not found', 404);
       // Bun accepts a Uint8Array body at runtime; the DOM lib's BodyInit is stricter.
       return new Response(bytes as unknown as BodyInit, {
@@ -106,7 +102,7 @@ export async function handleCaptureApi(pathname: string, req: Request): Promise<
     if (rest.endsWith('/draft')) {
       if (req.method !== 'GET') return jsonError('use GET', 405);
       const id = decodeURIComponent(rest.slice(0, -'/draft'.length));
-      const manifest = await readManifest(id);
+      const manifest = await store.readManifest(id);
       if (!manifest) return jsonError('capture not found', 404);
       const draft = captureToAutomation(manifest);
       return json({
@@ -127,17 +123,17 @@ export async function handleCaptureApi(pathname: string, req: Request): Promise<
     if (rest.endsWith('/automation')) {
       if (req.method !== 'POST') return jsonError('use POST', 405);
       const id = decodeURIComponent(rest.slice(0, -'/automation'.length));
-      const manifest = await readManifest(id);
+      const manifest = await store.readManifest(id);
       if (!manifest) return jsonError('capture not found', 404);
       const b = await readJsonBody<{ name?: string; smartWaits?: RunSpeed }>(req);
-      const automation = await saveAutomation(captureToAutomation(manifest, b?.name, b?.smartWaits ?? 'off'));
+      const automation = await automations.save(captureToAutomation(manifest, b?.name, b?.smartWaits ?? 'off'));
       return json(automation);
     }
 
     if (rest.endsWith('/artifact')) {
       const id = decodeURIComponent(rest.slice(0, -'/artifact'.length));
       const path = new URL(req.url).searchParams.get('path') ?? '';
-      const buf = await readCaptureArtifact(id, path);
+      const buf = await store.readArtifact(id, path);
       if (!buf) return jsonError('artifact not found', 404);
       const ext = path.split('.').pop()?.toLowerCase() ?? '';
       const headers: Record<string, string> = {
@@ -150,15 +146,15 @@ export async function handleCaptureApi(pathname: string, req: Request): Promise<
     }
 
     const id = decodeURIComponent(rest);
-    if (req.method === 'DELETE') return json({ deleted: await deleteCapture(id) });
+    if (req.method === 'DELETE') return json({ deleted: await store.delete(id) });
     if (req.method === 'GET') {
-      const manifest = await readManifest(id);
+      const manifest = await store.readManifest(id);
       return manifest ? json(manifest) : jsonError('capture not found', 404);
     }
     // Edit a stored session's label / description.
     if (req.method === 'PATCH') {
       const b = await readJsonBody<{ label?: string; note?: string }>(req);
-      const summary = await updateCaptureMeta(id, b ?? {});
+      const summary = await store.updateMeta(id, b ?? {});
       return summary ? json(summary) : jsonError('capture not found', 404);
     }
     return jsonError('use GET, PATCH or DELETE', 405);

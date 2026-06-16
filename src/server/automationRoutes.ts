@@ -11,7 +11,7 @@
 import { optionalEnv } from '../api/env';
 import { type AutomationStore, automationStore as defaultAutomationStore } from '../lib/automations';
 import { collectAutomationVars } from '../lib/automationVars';
-import { readManifest } from '../lib/captureStore';
+import { type CaptureStore, captureStore as defaultCaptureStore } from '../lib/captureStore';
 import { captureToAutomation } from '../lib/captureToAutomation';
 import { automationToSpec } from '../lib/exportSpec';
 import { deleteManyRunArtifacts, deleteRunArtifacts } from '../lib/runArtifacts';
@@ -63,10 +63,11 @@ function missingVariables(automation: Automation, supplied: Record<string, strin
 export async function handleAutomationApi(
   pathname: string,
   req: Request,
-  stores: { automations?: AutomationStore; runs?: RunStore } = {},
+  stores: { automations?: AutomationStore; runs?: RunStore; captures?: CaptureStore } = {},
 ): Promise<Response> {
   const store = stores.automations ?? defaultAutomationStore;
   const runs = stores.runs ?? defaultRunStore;
+  const captures = stores.captures ?? defaultCaptureStore;
   if (pathname === '/api/automation-runs') {
     const automation = new URL(req.url).searchParams.get('automation') ?? undefined;
     return json(await runs.list(automation));
@@ -201,7 +202,7 @@ export async function handleAutomationApi(
     const a = fromCaptureId ? await store.get(fromCaptureId) : null;
     if (!a) return jsonError('not found', 404);
     if (!a.capture?.id) return jsonError('this automation has no capture to generate steps from', 400);
-    const manifest = await readManifest(a.capture.id);
+    const manifest = await captures.readManifest(a.capture.id);
     if (!manifest) return jsonError('capture not found', 404);
     const derived = captureToAutomation(manifest);
     // Nothing replayable in the capture (only start/manual/navigation noise) — leave

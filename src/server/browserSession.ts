@@ -16,12 +16,23 @@
  * run never disturbs the build session.
  */
 
-import { persistCaptureMoment, writeManifest } from '../lib/captureStore';
+import { type CaptureStore, captureStore as defaultCaptureStore } from '../lib/captureStore';
 import { normalizeUrl } from '../lib/url';
 import type { HostEvent, SessionStatus, Target } from '../shared/automation';
 import type { CaptureManifest } from '../shared/capture';
 import { BrowserHost } from './browserHost';
 import { emit } from './events';
+
+// The capture backend for this session's persisted moments. Defaults to rubato's
+// file store; a friend app points it at its own via `setSessionCaptureStore` (the
+// automations plugin does this when given a `captureStore`). One session, so a
+// module-level store is fine.
+let captures: CaptureStore = defaultCaptureStore;
+
+/** Point the live build session's capture writes at a custom {@link CaptureStore}. */
+export function setSessionCaptureStore(store: CaptureStore): void {
+  captures = store;
+}
 
 let session: BrowserHost | null = null;
 // The capture track for the current session, created lazily the first time capture
@@ -52,7 +63,7 @@ function bridge(e: HostEvent): void {
       // capture track's start URL.
       if (manifest && !manifest.startUrl && isRealUrl(e.url)) {
         manifest.startUrl = e.url;
-        void writeManifest(manifest).catch(() => {});
+        void captures.writeManifest(manifest).catch(() => {});
       }
       break;
     case 'capture-event': {
@@ -60,10 +71,10 @@ function bridge(e: HostEvent): void {
       const m = manifest;
       // Persist each moment as it arrives (bounded memory; survives a crash).
       chain = chain.then(async () => {
-        const rec = await persistCaptureMoment(m.id, e.entry, e.html, e.screenshot).catch(() => null);
+        const rec = await captures.persistMoment(m.id, e.entry, e.html, e.screenshot).catch(() => null);
         if (!rec) return;
         m.records.push(rec);
-        await writeManifest(m).catch(() => {});
+        await captures.writeManifest(m).catch(() => {});
         emit({ type: 'session:captured', id: m.id, count: m.records.length, kind: rec.kind, url: rec.url });
       });
       break;
@@ -92,7 +103,7 @@ async function finalizeManifest(): Promise<void> {
   await chain.catch(() => {});
   if (manifest && !manifest.stoppedAt) {
     manifest.stoppedAt = Date.now();
-    await writeManifest(manifest).catch(() => {});
+    await captures.writeManifest(manifest).catch(() => {});
   }
 }
 
@@ -144,7 +155,7 @@ export async function sessionSetCapture(on: boolean): Promise<SessionStatus> {
       startedAt: Date.now(),
       records: [],
     };
-    await writeManifest(manifest);
+    await captures.writeManifest(manifest);
   }
   await host.setCapture(on); // on → also ensures recording mode in the host
   capturing = on;
