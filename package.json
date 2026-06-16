@@ -30,6 +30,11 @@
     "./orchestration": "./dist/orchestration.js",
     "./server": "./dist/server.js",
     "./plugins/automations": "./dist/plugins__automations.js",
+    "./plugins/excel": "./dist/plugins__excel.js",
+    "./plugins/board": "./dist/plugins__board.js",
+    "./plugins/links": "./dist/plugins__links.js",
+    "./plugins/vault": "./dist/plugins__vault.js",
+    "./plugins/index": "./dist/plugins__index.js",
     "./styles.css": "./styles.css",
     "./ui/shell": {
       "types": "./ui/dist-lib/ui/src/shell/index.d.ts",
@@ -38,6 +43,22 @@
     "./ui/automations": {
       "types": "./ui/dist-lib/ui/src/pages/Automations/index.d.ts",
       "import": "./ui/dist-lib/automations.js"
+    },
+    "./ui/excel": {
+      "types": "./ui/dist-lib/ui/src/pages/Excel/index.d.ts",
+      "import": "./ui/dist-lib/excel.js"
+    },
+    "./ui/board": {
+      "types": "./ui/dist-lib/ui/src/pages/Board/index.d.ts",
+      "import": "./ui/dist-lib/board.js"
+    },
+    "./ui/links": {
+      "types": "./ui/dist-lib/ui/src/pages/Links/index.d.ts",
+      "import": "./ui/dist-lib/links.js"
+    },
+    "./ui/vault": {
+      "types": "./ui/dist-lib/ui/src/pages/Vault/index.d.ts",
+      "import": "./ui/dist-lib/vault.js"
     },
     "./package.json": "./package.json"
   },

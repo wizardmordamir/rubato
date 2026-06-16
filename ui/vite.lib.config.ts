@@ -6,9 +6,10 @@ import { defineConfig } from "vite";
 const here = dirname(fileURLToPath(import.meta.url));
 
 // Library build of rubato's reusable UI surface, consumed by "friend" apps via the
-// `rubato/ui/shell` + `rubato/ui/automations` package exports (plugin-system Stage
-// 4). Separate from vite.config.ts (the app/SPA build) so the app build is
-// untouched. Two entries → ui/dist-lib/shell.js + ui/dist-lib/automations.js.
+// `rubato/ui/shell` + `rubato/ui/automations` + `rubato/ui/excel` +
+// `rubato/ui/board` + `rubato/ui/links` + `rubato/ui/vault` package exports
+// (plugin-system Stage 4–7). Separate from vite.config.ts (the app/SPA build) so
+// the app build is untouched.
 //
 // Externalised: the context-bearing singletons (react, react-dom, react-router-dom,
 // @tanstack/*) AND cwip — friend apps install these themselves, and bundling them
@@ -35,6 +36,10 @@ export default defineConfig({
       entry: {
         shell: resolve(here, "src/shell/index.ts"),
         automations: resolve(here, "src/pages/Automations/index.ts"),
+        excel: resolve(here, "src/pages/Excel/index.ts"),
+        board: resolve(here, "src/pages/Board/index.ts"),
+        links: resolve(here, "src/pages/Links/index.ts"),
+        vault: resolve(here, "src/pages/Vault/index.ts"),
       },
       formats: ["es"],
       fileName: (_format, entryName) => `${entryName}.js`,

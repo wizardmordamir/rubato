@@ -34,13 +34,17 @@ export const LIB_ENTRIES: Record<string, string> = {
   // pulls in the server/db/UI; kept out of the library barrel so importing
   // `rubato` (or any other library subpath) stays server/UI/Playwright-free.
   server: "src/on.ts",
-  // The automations plugin — a friend mini-app assembles it via
-  // `import { automationsPlugin } from 'rubato/plugins/automations'`. It's
-  // server-coupled (wraps the automation route handlers + DDL), so like `server`
-  // it's exempt from the "no server import" library-hygiene guard. The slash in
-  // the name maps to the `./plugins/automations` export key; the built bundle
-  // flattens it to a single dist file (see scripts/build.ts).
+  // Plugin modules — friend mini-apps assemble them via
+  // `import { automationsPlugin } from 'rubato/plugins/automations'` etc. All are
+  // server-coupled (wrap route handlers + DDL), so like `server` they're exempt from
+  // the "no server import" library-hygiene guard. Slash names map to `./plugins/*`
+  // export keys; the built bundles flatten the slash to `__` in the dist filename.
   "plugins/automations": "src/plugins/automations.ts",
+  "plugins/excel": "src/plugins/excel.ts",
+  "plugins/board": "src/plugins/board.ts",
+  "plugins/links": "src/plugins/links.ts",
+  "plugins/vault": "src/plugins/vault.ts",
+  "plugins/index": "src/plugins/index.ts",
 };
 
 /**
@@ -50,4 +54,12 @@ export const LIB_ENTRIES: Record<string, string> = {
  * asserts against.
  */
 export const SERVER_ENTRY = "server";
-export const SERVER_COUPLED_ENTRIES = new Set([SERVER_ENTRY, "plugins/automations"]);
+export const SERVER_COUPLED_ENTRIES = new Set([
+  SERVER_ENTRY,
+  "plugins/automations",
+  "plugins/excel",
+  "plugins/board",
+  "plugins/links",
+  "plugins/vault",
+  "plugins/index",
+]);
