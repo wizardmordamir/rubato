@@ -30,6 +30,10 @@ export {
   slugify,
 } from '../lib/automations';
 export { createSqliteRunStore, type RunStore } from '../server/runStore';
+// Cross-platform, binary-safe data-dir helper so a friend app can place its store
+// files in a sensible per-user location (`~/.<name>`, env-overridable) without
+// hand-rolling OS paths — important for apps shipped as compiled binaries.
+export { appDataDir } from '../lib/appData';
 
 /** Configuration for {@link automationsPlugin}. */
 export interface AutomationsPluginOptions {
