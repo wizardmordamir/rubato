@@ -7,7 +7,7 @@
 // sidebar no longer carries its own search box. The mobile drawer + hamburger live
 // in App.tsx.
 
-import { type NavGroup, NAV_HUBS, pagesInGroup, SIDEBAR } from "@shared/ui";
+import { type NavGroup, NAV_HUBS, pagesInGroup, SIDEBAR, type UiPage } from "@shared/ui";
 import { useQuery } from "@tanstack/react-query";
 import { type NavEntry, type NavPrefsActions, SideNav as CwipSideNav } from "cwip/react";
 import { Link, useLocation } from "react-router-dom";
@@ -34,15 +34,25 @@ function matchPath(pathname: string, path: string): boolean {
 // rubato's active highlight uses the accent token (over cwip's neutral-gray default).
 const ITEM_CLASSNAMES = { active: () => "bg-accent-soft text-accent" } as const;
 
-export function SideNav({ navOpen, onClose }: { navOpen: boolean; onClose: () => void }) {
+export function SideNav({
+  navOpen,
+  onClose,
+  pages,
+}: {
+  navOpen: boolean;
+  onClose: () => void;
+  /** Friend-app override: when given, these page keys are the enabled set (and
+   *  admin is hidden) instead of the server-reported `/api/ui` enablement. */
+  pages?: UiPage[];
+}) {
   const live = useLive();
   const location = useLocation();
   const { prefs, setCollapsed, setOrder, setHidden, setColor } = useNavPrefs();
   const collapsed = prefs.collapsed;
 
   const { data: ui } = useQuery({ queryKey: ["ui"], queryFn: fetchUi });
-  const enabled = ui?.pages ?? {};
-  const adminOn = ui?.admin === true;
+  const enabled = pages ? Object.fromEntries(pages.map((p) => [p.key, true])) : (ui?.pages ?? {});
+  const adminOn = !pages && ui?.admin === true;
 
   // A hub is active on its own landing page or on any of its member pages.
   const isActive = (id: string, kind: "page" | "hub", path: string): boolean => {

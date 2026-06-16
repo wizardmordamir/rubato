@@ -29,11 +29,21 @@
     "./request": "./dist/request.js",
     "./orchestration": "./dist/orchestration.js",
     "./server": "./dist/server.js",
+    "./ui/shell": {
+      "types": "./ui/dist-lib/ui/src/shell/index.d.ts",
+      "import": "./ui/dist-lib/shell.js"
+    },
+    "./ui/automations": {
+      "types": "./ui/dist-lib/ui/src/pages/Automations/index.d.ts",
+      "import": "./ui/dist-lib/automations.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
-    "ui/dist"
+    "ui/dist",
+    "ui/dist-lib",
+    "src/shared"
   ],
   "engines": {
     "bun": ">=1.0.0"
@@ -57,7 +67,8 @@
     "serve": "bun --hot run src/scripts/serve.ts",
     "dev": "bun run scripts/dev.ts",
     "web:dev": "cd ui && bun run dev",
-    "web:build": "bun scripts/buildCache check ui || (cd ui && bun install && bun run build && cd .. && bun scripts/buildCache save ui)",
+    "web:build": "bun scripts/buildCache check ui || (cd ui && bun install && bun run build && bun run build:lib && cd .. && bun scripts/buildCache save ui)",
+    "build:lib": "cd ui && bun run build:lib",
     "clean": "bun scripts/withTimeout 3000 rm -rf dist ui/dist && bun scripts/buildCache clean",
     "build": "bun run scripts/build.ts",
     "prepublishOnly": "bun run tsc && bun run test && bun run web:build && bun run build"

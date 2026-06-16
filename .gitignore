@@ -9,6 +9,7 @@ node_modules
 sqlite/
 binaries/
 ui/dist
+ui/dist-lib
 dist/
 .build-tmp/
 *.tgz

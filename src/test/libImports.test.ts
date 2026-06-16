@@ -78,7 +78,11 @@ describe('library import hygiene', () => {
   test('package.json exports stays in sync with the entry map', async () => {
     const pkg = (await Bun.file(resolve(ROOT, 'package.json')).json()) as { exports: Record<string, string> };
     const expected = new Set(Object.keys(LIB_ENTRIES).map((n) => (n === 'index' ? '.' : `./${n}`)));
-    const actual = new Set(Object.keys(pkg.exports).filter((k) => k !== './package.json'));
+    // `./ui/*` entries are built by the separate Vite UI lib build (ui/dist-lib),
+    // not from LIB_ENTRIES, so they're excluded from this dist-entry drift check.
+    const actual = new Set(
+      Object.keys(pkg.exports).filter((k) => k !== './package.json' && !k.startsWith('./ui/')),
+    );
     expect(actual).toEqual(expected);
   });
 });

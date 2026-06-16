@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "bun --bun vite",
     "build": "bun --bun vite build",
+    "build:lib": "bun --bun vite build -c vite.lib.config.ts && tsc -p tsconfig.lib.json",
     "preview": "bun --bun vite preview",
     "tsc": "tsc --noEmit"
   },

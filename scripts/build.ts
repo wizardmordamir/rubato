@@ -40,7 +40,11 @@ async function assertExportsInSync(): Promise<void> {
   const expected = new Set(
     Object.keys(LIB_ENTRIES).map((n) => (n === "index" ? "." : `./${n}`)),
   );
-  const actual = new Set(Object.keys(pkg.exports).filter((k) => k !== "./package.json"));
+  // `./ui/*` entries are produced by the separate Vite lib build (ui/dist-lib),
+  // not by LIB_ENTRIES/this dist build, so they're outside this drift check.
+  const actual = new Set(
+    Object.keys(pkg.exports).filter((k) => k !== "./package.json" && !k.startsWith("./ui/")),
+  );
   const missing = [...expected].filter((k) => !actual.has(k));
   const extra = [...actual].filter((k) => !expected.has(k));
   if (missing.length || extra.length) {

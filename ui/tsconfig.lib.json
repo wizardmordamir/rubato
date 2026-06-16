@@ -1,0 +1,33 @@
+{
+  // Declaration emit for the embeddable UI library (plugin-system Stage 4). The
+  // Vite lib build (vite.lib.config.ts) emits the JS; this emits matching `.d.ts`
+  // into the same dist-lib tree for the two public entries. No `rootDir` is set:
+  // the graph reaches rubato's `../src/shared/*` (via the @shared alias), which
+  // sits above ui/src, so tsc infers the repo root as the common root and mirrors
+  // the layout under dist-lib (dist-lib/ui/src/... + dist-lib/src/shared/...). The
+  // package.json "types" conditions point at the inferred entry paths.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist-lib",
+    "allowImportingTsExtensions": false,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    // Dedupe React's types to ui's single copy. cwip is bun-linked and ships its
+    // own node_modules/@types/react; without this, types re-exported from cwip
+    // (e.g. confirm.tsx's ConfirmProvider) reference cwip's copy and tsc refuses
+    // to emit a portable declaration (TS2742).
+    "paths": {
+      "@shared/*": ["../src/shared/*"],
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"]
+    }
+  },
+  // vite-env.d.ts supplies `import.meta.env` (vite/client) + the __RUBATO_DEV_WS_URL__
+  // define global that useLive.ts (reached via the shell) relies on.
+  "include": ["src/shell/index.ts", "src/pages/Automations/index.ts", "src/vite-env.d.ts"]
+}
