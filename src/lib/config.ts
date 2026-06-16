@@ -98,6 +98,29 @@ export interface RubatoConfig {
   auth?: AuthConfig;
   /** Settings for the unattended task-queue workflows (Orchestration page). */
   orchestration?: OrchestrationConfig;
+  /** Named SSH server connections for quick prod-server access (localhost only). */
+  servers?: ServersConfig;
+}
+
+/** SSH connection config for a named remote server. */
+export interface SshServerConfig {
+  /** Display label shown in the UI (defaults to host). */
+  label?: string;
+  /** SSH host (e.g. "myapp.example.com" or "192.168.1.10"). */
+  host: string;
+  /** SSH user (defaults to current OS user). */
+  user?: string;
+  /** SSH port (default 22). */
+  port?: number;
+  /** Path to private key (e.g. "~/.ssh/id_ed25519"). */
+  keyPath?: string;
+  /** Additional SSH flags (e.g. ["-o", "StrictHostKeyChecking=no"]). */
+  extraArgs?: string[];
+}
+
+/** Named server connection profiles. */
+export interface ServersConfig {
+  ssh?: SshServerConfig[];
 }
 
 /**
@@ -197,6 +220,8 @@ export async function loadConfig(): Promise<RubatoConfig> {
       // config.json — e.g. a stale `automations.scriptsDir` — is dropped on load
       // and never re-written back by a later saveConfig.
       automations: raw.automations?.timeout != null ? { timeout: raw.automations.timeout } : undefined,
+      orchestration: raw.orchestration,
+      servers: raw.servers,
     };
     configCache = { mtimeMs: st.mtimeMs, size: st.size, value };
     return { ...value };

@@ -1593,3 +1593,23 @@ export const fetchEntryTimings = (start: string, end: string, repo?: string): Pr
 // Re-exported so the page can name them without re-importing from cwip directly.
 export type { OrchCategoryStat, TimingRow as OrchTimingRow, TimingSource as OrchTimingSource };
 export type { TimingSummary as OrchTimingSummary, TimingTrendPoint as OrchTimingTrendPoint };
+
+// ─── SSH servers (localhost-only Admin panel) ─────────────────────────────────
+
+export interface SshServerSummary {
+  index: number;
+  label: string;
+  command: string;
+}
+
+export interface SshOpenResult {
+  method: string;
+  command: string;
+}
+
+/** List configured SSH servers with their prebuilt connection commands. */
+export const fetchSshServers = () => getJson<SshServerSummary[]>("/api/servers/ssh");
+
+/** Open an SSH session in a native terminal for the server at `index`. */
+export const openSshInTerminal = (index: number) =>
+  postJson<SshOpenResult>("/api/servers/ssh/open", { index });

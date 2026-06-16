@@ -465,6 +465,34 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
     }
   }
 
+  // GET  /api/servers/ssh → list configured SSH servers + their commands (localhost only).
+  // POST /api/servers/ssh/open { index? } → open an SSH session in a native terminal.
+  if (pathname === '/api/servers/ssh') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    const { buildSshCommand, serverLabel } = await import('./sshServers');
+    const cfg = await loadConfig();
+    const servers = cfg.servers?.ssh ?? [];
+    return json(servers.map((s, i) => ({ index: i, label: serverLabel(s), command: buildSshCommand(s) })));
+  }
+  if (pathname === '/api/servers/ssh/open') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    const { openSshInTerminal } = await import('./sshServers');
+    let body: { index?: unknown } = {};
+    try { body = (await req.json()) as typeof body; } catch { /* no body */ }
+    const idx = typeof body.index === 'number' ? body.index : 0;
+    const cfg = await loadConfig();
+    const servers = cfg.servers?.ssh ?? [];
+    if (servers.length === 0) return jsonError('No SSH servers configured in servers.ssh', 404);
+    const server = servers[idx];
+    if (!server) return jsonError(`No server at index ${idx}`, 404);
+    try {
+      const result = await openSshInTerminal(server);
+      return json(result);
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'failed to open terminal', 500);
+    }
+  }
+
   // GET /api/files → list script-output files; GET /api/files/content?path= → one file's text.
   if (pathname === '/api/files') {
     return json(await listOutputFiles());

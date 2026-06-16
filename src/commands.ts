@@ -505,6 +505,15 @@ export const COMMANDS: CommandDef[] = [
     examples: [{ args: '--dry-run' }, { args: 'services --yes' }],
   },
   {
+    name: 'prod-ssh',
+    script: 'src/scripts/prod-ssh.ts',
+    description: 'Open an SSH connection to a configured prod server (see servers.ssh in config).',
+    kind: 'plain',
+    capture: false, // interactive TTY; must keep the real terminal
+    args: [{ name: 'server', description: 'server label or number (omit when only one is configured)', example: 'prod' }],
+    examples: [{ args: '', note: 'auto-connect if one server; menu if multiple' }, { args: 'prod' }],
+  },
+  {
     name: 'rubato-serve',
     script: 'src/scripts/serve.ts',
     description: 'Start the local web explorer (apps/commands/config) + read API.',
@@ -671,6 +680,7 @@ const COMMAND_TAGS: Record<string, string[]> = {
   'delete-branches': ['git'],
   tag: ['git'],
   startprs: ['git'],
+  'prod-ssh': ['ssh', 'prod'],
 };
 
 /** The default tags for a command name (undefined when none), for the Commands UI. */

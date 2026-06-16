@@ -4,13 +4,15 @@ import { BackupsPanel } from "./admin/BackupsPanel";
 import { BackupViewerPanel } from "./admin/BackupViewerPanel";
 import { DbViewerPanel } from "./admin/DbViewerPanel";
 import { DiagnosticsPanel } from "./admin/DiagnosticsPanel";
+import { SshPanel } from "./admin/SshPanel";
 import { SystemHealthPanel } from "./admin/SystemHealthPanel";
 
 // Page enablement now lives in Settings → Pages (discoverable, ungated). Admin keeps
-// the operational panels: health, diagnostics, backups, and the DB viewers.
+// the operational panels: health, diagnostics, backups, DB viewers, and SSH shortcuts.
 const TABS = [
   { key: "system-health", label: "System Health", render: () => <SystemHealthPanel /> },
   { key: "diagnostics", label: "Diagnostics", render: () => <DiagnosticsPanel /> },
+  { key: "ssh", label: "SSH", render: () => <SshPanel /> },
   { key: "backups", label: "Backups", render: () => <BackupsPanel /> },
   { key: "backup-viewer", label: "Backup Viewer", render: () => <BackupViewerPanel /> },
   { key: "db", label: "DB Viewer", render: () => <DbViewerPanel /> },
