@@ -5,7 +5,9 @@ LOGGER_LEVEL=debug
 [test]
 # Only discover this repo's own tests. Without a fixed root, `bun test` scans
 # from the repo root and follows symlinks (e.g. the gitignored ___linked/*
-# reference repos), running their entire test suites.
+# reference repos), running their entire test suites including cwip, whose
+# peer-dep tests (hyperformula/exceljs/unpdf) would resolve from cwip's
+# node_modules via createRequire(import.meta.url) — not from rubato's.
 root = "src"
 # Isolate RUBATO_HOME (+ agent config dir) to throwaway temp dirs before any
 # module loads, so the suite can never read or write real user state.

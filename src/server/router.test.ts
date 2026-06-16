@@ -1,8 +1,26 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { COMMANDS } from '../commands';
+import { findPackageRoot } from '../lib/pkgPaths';
 import { route } from './router';
 
 describe('server router', () => {
+  // OVERVIEW.md is gitignored (user-generated), so it won't exist in clean worktrees.
+  // Create a fixture before the docs tests and remove it after.
+  const ROOT = findPackageRoot(import.meta.dir);
+  const OVERVIEW_PATH = resolve(ROOT, 'OVERVIEW.md');
+  let createdOverview = false;
+  beforeAll(() => {
+    if (!existsSync(OVERVIEW_PATH)) {
+      writeFileSync(OVERVIEW_PATH, '# Overview\nTest fixture.');
+      createdOverview = true;
+    }
+  });
+  afterAll(() => {
+    if (createdOverview) rmSync(OVERVIEW_PATH, { force: true });
+  });
+
   test('GET / serves the HTML UI', async () => {
     const res = await route(new Request('http://x/'));
     expect(res.headers.get('content-type')).toContain('text/html');
