@@ -1613,3 +1613,11 @@ export const fetchSshServers = () => getJson<SshServerSummary[]>("/api/servers/s
 /** Open an SSH session in a native terminal for the server at `index`. */
 export const openSshInTerminal = (index: number) =>
   postJson<SshOpenResult>("/api/servers/ssh/open", { index });
+
+// ── Claude usage / rate-limits ────────────────────────────────────────────────
+
+export type { ClaudeRateLimitInfo } from "@shared/orchestration";
+import type { ClaudeRateLimitInfo } from "@shared/orchestration";
+
+/** Probe the Anthropic API (via rubato server) for current rate-limit headers. */
+export const fetchClaudeUsage = () => getJson<ClaudeRateLimitInfo>("/api/orchestration/claude-usage");
