@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DRAIN_MODEL_OPTIONS, formatDuration, formatUsd, THINKING_LEVELS } from "@shared/orchestration";
+import { DRAIN_MODEL_OPTIONS, FLEET_MODEL_OPTIONS, type FleetTier, formatDuration, formatUsd, THINKING_LEVELS } from "@shared/orchestration";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   controlWatchdogAgent,
@@ -625,15 +625,116 @@ function nextActionLabel(snap: WatchdogSnapshot, nowMs: number): { text: string;
   return { text: "—", tone: "text-gray-400" };
 }
 
-// ── tunable knobs (jobs / thinking / fast / interval) ─────────────────────────
+// ── tunable knobs — flat mode (single model) or fleet mode (per-model tiers) ─────
+
+/** Dot color for a model alias — keeps the fleet table visually scannable. */
+function modelDotClass(alias: string): string {
+  switch (alias) {
+    case "opus":
+    case "opus-1m":
+      return "bg-purple-500";
+    case "sonnet":
+      return "bg-blue-500";
+    case "haiku":
+      return "bg-green-500";
+    case "fable":
+      return "bg-pink-500";
+    default:
+      return "bg-gray-400";
+  }
+}
+
+/** One editable fleet tier row. */
+function FleetTierRow({
+  tier,
+  onChange,
+  onRemove,
+  disabled,
+}: {
+  tier: FleetTier;
+  onChange: (t: FleetTier) => void;
+  onRemove: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(0,2fr)_auto_minmax(0,1fr)_auto_auto] items-center gap-2">
+      {/* Model */}
+      <div className="flex items-center gap-1.5">
+        <span className={`inline-block h-2 w-2 flex-shrink-0 rounded-full ${modelDotClass(tier.modelAlias)}`} />
+        <select
+          className={`${FIELD_CLASS} flex-1 text-sm`}
+          value={tier.modelAlias}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...tier, modelAlias: e.target.value })}
+        >
+          {FLEET_MODEL_OPTIONS.map((m) => (
+            <option key={m.alias} value={m.alias}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {/* Slots stepper */}
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          className={BTN_GHOST_CLASS}
+          disabled={disabled || tier.slots <= 1}
+          onClick={() => onChange({ ...tier, slots: Math.max(1, tier.slots - 1) })}
+        >
+          −
+        </button>
+        <span className="w-6 text-center text-sm font-bold tabular-nums">{tier.slots}</span>
+        <button
+          type="button"
+          className={BTN_GHOST_CLASS}
+          disabled={disabled || tier.slots >= 8}
+          onClick={() => onChange({ ...tier, slots: Math.min(8, tier.slots + 1) })}
+        >
+          +
+        </button>
+      </div>
+      {/* Thinking cap */}
+      <Tooltip content="Max thinking level for this tier. Tasks asking for more are capped here." multiline>
+        <select
+          className={`${FIELD_CLASS} text-sm`}
+          value={tier.thinkingLevel}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...tier, thinkingLevel: e.target.value as FleetTier["thinkingLevel"] })}
+        >
+          {THINKING_LEVELS.map((l) => (
+            <option key={l} value={l}>
+              {l}
+            </option>
+          ))}
+        </select>
+      </Tooltip>
+      {/* Fast mode toggle */}
+      <Tooltip content="/fast mode for this tier's workers" multiline>
+        <div className="flex items-center gap-1">
+          <Switch on={tier.fastMode} disabled={disabled} onChange={(v) => onChange({ ...tier, fastMode: v })} label="Fast" />
+          <span className="text-xs text-gray-500">{tier.fastMode ? "fast" : ""}</span>
+        </div>
+      </Tooltip>
+      {/* Remove */}
+      <button
+        type="button"
+        className="rounded p-1 text-gray-400 hover:text-red-500 disabled:opacity-40"
+        disabled={disabled}
+        title="Remove tier"
+        onClick={onRemove}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
 
 function KnobsCard({ snap, onChange }: { snap: WatchdogSnapshot; onChange: () => void }) {
   const { notify } = useToast();
   const patch = useMutation({
     mutationFn: (p: DrainConfigPatch) => patchDrainConfig(p),
     onSuccess: (r) => {
-      // When AUTO_RESTART is on + a drain is live, a needs-restart change kicks
-      // off a graceful restart — say so instead of a bare "Saved".
       if (r.autoRestart?.stopRequested) notify("Saved — auto-restarting to apply", "success");
       else notify("Saved", "success");
       onChange();
@@ -641,19 +742,26 @@ function KnobsCard({ snap, onChange }: { snap: WatchdogSnapshot; onChange: () =>
     onError: (e) => notify(e instanceof Error ? e.message : "save failed", "error"),
   });
 
-  // Map each pending (saved≠running) needs-restart setting by its key so a Field
-  // can show a "● pending — restart to apply" marker beside the changed control.
   const pendingByKey = useMemo(
     () => new Map<string, PendingChange>(snap.pending.map((p) => [p.key, p])),
     [snap.pending],
   );
 
-  // The MODEL select: default to the drainer's built-in default; if the saved
-  // model is a custom id outside the dropdown set, keep it selectable.
+  const isFleetMode = Boolean(snap.config.fleetTiers?.length);
+
+  // Fleet draft state (only used in fleet mode).
+  const [fleetDraft, setFleetDraft] = useState<FleetTier[]>(snap.config.fleetTiers ?? []);
+  useEffect(() => setFleetDraft(snap.config.fleetTiers ?? []), [snap.config.fleetTiers]);
+  const fleetDirty = JSON.stringify(fleetDraft) !== JSON.stringify(snap.config.fleetTiers ?? []);
+  const fleetTotal = fleetDraft.reduce((s, t) => s + t.slots, 0);
+
+  // Flat mode — single-model knobs.
   const modelValue = snap.config.model ?? "claude-opus-4-8";
   const modelOptions = DRAIN_MODEL_OPTIONS.some((m) => m.id === modelValue)
     ? DRAIN_MODEL_OPTIONS
     : [...DRAIN_MODEL_OPTIONS, { id: modelValue, label: modelValue }];
+  const jobs = snap.config.jobs;
+  const setJobs = (n: number) => patch.mutate({ jobs: Math.max(1, Math.min(8, n)) });
 
   const [interval, setIntervalInput] = useState(String(snap.launchd.intervalSeconds ?? 60));
   useEffect(() => setIntervalInput(String(snap.launchd.intervalSeconds ?? 60)), [snap.launchd.intervalSeconds]);
@@ -666,83 +774,206 @@ function KnobsCard({ snap, onChange }: { snap: WatchdogSnapshot; onChange: () =>
     onError: (e) => notify(e instanceof Error ? e.message : "failed", "error"),
   });
 
-  const jobs = snap.config.jobs;
-  const setJobs = (n: number) => patch.mutate({ jobs: Math.max(1, Math.min(8, n)) });
+  const switchToFleet = () => {
+    // Migrate current flat settings to a single fleet tier.
+    const alias = FLEET_MODEL_OPTIONS.find((m) => m.id === (snap.config.model ?? "claude-opus-4-8"))?.alias ?? "opus";
+    patch.mutate({
+      fleetTiers: [{ modelAlias: alias, slots: snap.config.jobs, thinkingLevel: snap.config.thinkingLevel ?? "off", fastMode: snap.config.fastMode ?? false }],
+    });
+  };
+  const switchToFlat = () => patch.mutate({ fleetTiers: null });
 
   return (
-    <div className={`${CARD_CLASS} space-y-4 p-4`}>
+    <div className={`${CARD_CLASS} space-y-5 p-4`}>
       <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Tuning</h3>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Max instances */}
-        <Field
-          label="Max instances (jobs)"
-          hint="Concurrent task-workers the next drain fans out to. ~2–4 is the practical laptop ceiling. Fixed at launch — changing it needs a restart to apply."
-          pending={pendingByKey.get("jobs")}
-        >
-          <div className="flex items-center gap-2">
-            <button type="button" className={BTN_GHOST_CLASS} disabled={patch.isPending || jobs <= 1} onClick={() => setJobs(jobs - 1)}>
-              −
-            </button>
-            <span className="w-8 text-center text-lg font-bold tabular-nums">{jobs}</span>
-            <button type="button" className={BTN_GHOST_CLASS} disabled={patch.isPending || jobs >= 8} onClick={() => setJobs(jobs + 1)}>
-              +
-            </button>
+
+      {isFleetMode ? (
+        /* ── Fleet mode ── */
+        <div className="space-y-3">
+          {/* Fleet header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Fleet</span>
+              {pendingByKey.get("fleetTiers") && (
+                <Tooltip
+                  content={`Fleet config changed since the running drainer launched. Restart to apply.`}
+                  multiline
+                >
+                  <span className="text-xs font-medium text-amber-600 dark:text-amber-400">● pending — restart to apply</span>
+                </Tooltip>
+              )}
+            </div>
+            <span className="text-xs text-gray-500">{fleetTotal} worker{fleetTotal !== 1 ? "s" : ""} total</span>
           </div>
-        </Field>
 
-        {/* Model */}
-        <Field
-          label="Model"
-          hint="Default worker model for the next drain (per-task (model:) markers in TASKS.md override it). Opus = deepest, Sonnet/Haiku = cheaper/faster. Fixed at launch — changing it needs a restart to apply."
-          pending={pendingByKey.get("model")}
-        >
-          <select
-            className={FIELD_CLASS}
-            value={modelValue}
-            disabled={patch.isPending}
-            onChange={(e) => patch.mutate({ model: e.target.value })}
-          >
-            {modelOptions.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        {/* Thinking level */}
-        <Field
-          label="Thinking level"
-          hint="Extended-thinking budget per run (maps to MAX_THINKING_TOKENS). Higher = deeper but slower/pricier. Fixed at launch — changing it needs a restart to apply."
-          pending={pendingByKey.get("thinkingLevel")}
-        >
-          <select
-            className={FIELD_CLASS}
-            value={snap.config.thinkingLevel ?? "off"}
-            disabled={patch.isPending}
-            onChange={(e) => patch.mutate({ thinkingLevel: e.target.value as ThinkingLevel })}
-          >
-            {THINKING_LEVELS.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        {/* Fast mode */}
-        <Field
-          label="Fast mode (/fast)"
-          hint="Request Claude's faster-output Opus mode (~2.5× faster) for each run — applied by the drainer on its next launch. It's a paid research preview (higher cost, billed from usage credits), so leave it off unless a run is speed-sensitive. Fixed at launch — changing it needs a restart to apply."
-          pending={pendingByKey.get("fastMode")}
-        >
-          <div className="flex items-center gap-2 pt-1">
-            <Switch on={!!snap.config.fastMode} disabled={patch.isPending} onChange={(v) => patch.mutate({ fastMode: v })} label="Fast mode" />
-            <span className="text-sm text-gray-500">{snap.config.fastMode ? "on" : "off"}</span>
+          {/* Column headers */}
+          <div className="grid grid-cols-[minmax(0,2fr)_auto_minmax(0,1fr)_auto_auto] gap-2 border-b border-gray-200 pb-1 dark:border-gray-700">
+            <span className="text-xs text-gray-500">Model</span>
+            <span className="text-xs text-gray-500">Slots</span>
+            <span className="text-xs text-gray-500">Thinking cap</span>
+            <span className="text-xs text-gray-500">Fast</span>
+            <span />
           </div>
-        </Field>
 
-        {/* Interval */}
+          {/* Tier rows */}
+          <div className="space-y-2">
+            {fleetDraft.map((tier, i) => (
+              <FleetTierRow
+                key={i}
+                tier={tier}
+                disabled={patch.isPending}
+                onChange={(updated) => setFleetDraft(fleetDraft.map((t, j) => (j === i ? updated : t)))}
+                onRemove={() => setFleetDraft(fleetDraft.filter((_, j) => j !== i))}
+              />
+            ))}
+          </div>
+
+          {/* Add tier */}
+          <button
+            type="button"
+            className="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 disabled:opacity-40"
+            disabled={patch.isPending || fleetDraft.length >= 8}
+            onClick={() =>
+              setFleetDraft([
+                ...fleetDraft,
+                { modelAlias: "sonnet", slots: 1, thinkingLevel: "off", fastMode: false },
+              ])
+            }
+          >
+            + Add tier
+          </button>
+
+          {/* Apply button (shown when draft differs from saved) */}
+          {fleetDirty && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className={BTN_PRIMARY_CLASS}
+                disabled={patch.isPending || fleetDraft.length === 0}
+                onClick={() => patch.mutate({ fleetTiers: fleetDraft })}
+              >
+                {patch.isPending && <Spinner />}
+                {patch.isPending ? "Saving…" : "Apply fleet"}
+              </button>
+              <button
+                type="button"
+                className={BTN_GHOST_CLASS}
+                disabled={patch.isPending}
+                onClick={() => setFleetDraft(snap.config.fleetTiers ?? [])}
+              >
+                Discard
+              </button>
+            </div>
+          )}
+
+          {/* Help + mode toggle */}
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Each tier spawns its own workers. Workers claim tasks tagged{" "}
+            <code className="rounded bg-gray-100 px-1 dark:bg-gray-800">(model:X)</code> matching their model, or any untagged task.
+            The thinking cap is the max budget — tasks asking for more are clamped.
+          </p>
+          <button
+            type="button"
+            className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            disabled={patch.isPending}
+            onClick={switchToFlat}
+          >
+            ← Back to flat mode
+          </button>
+        </div>
+      ) : (
+        /* ── Flat mode ── */
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {/* Max instances */}
+            <Field
+              label="Max instances (jobs)"
+              hint="Concurrent task-workers the next drain fans out to. ~2–4 is the practical laptop ceiling. Fixed at launch — changing it needs a restart to apply."
+              pending={pendingByKey.get("jobs")}
+            >
+              <div className="flex items-center gap-2">
+                <button type="button" className={BTN_GHOST_CLASS} disabled={patch.isPending || jobs <= 1} onClick={() => setJobs(jobs - 1)}>
+                  −
+                </button>
+                <span className="w-8 text-center text-lg font-bold tabular-nums">{jobs}</span>
+                <button type="button" className={BTN_GHOST_CLASS} disabled={patch.isPending || jobs >= 8} onClick={() => setJobs(jobs + 1)}>
+                  +
+                </button>
+              </div>
+            </Field>
+
+            {/* Model */}
+            <Field
+              label="Model"
+              hint="Default worker model for the next drain (per-task (model:) markers in TASKS.md override it). Opus = deepest, Sonnet/Haiku = cheaper/faster. Fixed at launch — changing it needs a restart to apply."
+              pending={pendingByKey.get("model")}
+            >
+              <select
+                className={FIELD_CLASS}
+                value={modelValue}
+                disabled={patch.isPending}
+                onChange={(e) => patch.mutate({ model: e.target.value })}
+              >
+                {modelOptions.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            {/* Thinking level */}
+            <Field
+              label="Thinking level"
+              hint="Extended-thinking budget per run (maps to MAX_THINKING_TOKENS). Higher = deeper but slower/pricier. Fixed at launch — changing it needs a restart to apply."
+              pending={pendingByKey.get("thinkingLevel")}
+            >
+              <select
+                className={FIELD_CLASS}
+                value={snap.config.thinkingLevel ?? "off"}
+                disabled={patch.isPending}
+                onChange={(e) => patch.mutate({ thinkingLevel: e.target.value as ThinkingLevel })}
+              >
+                {THINKING_LEVELS.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            {/* Fast mode */}
+            <Field
+              label="Fast mode (/fast)"
+              hint="Request Claude's faster-output Opus mode (~2.5× faster) for each run — applied by the drainer on its next launch. It's a paid research preview (higher cost, billed from usage credits), so leave it off unless a run is speed-sensitive. Fixed at launch — changing it needs a restart to apply."
+              pending={pendingByKey.get("fastMode")}
+            >
+              <div className="flex items-center gap-2 pt-1">
+                <Switch on={!!snap.config.fastMode} disabled={patch.isPending} onChange={(v) => patch.mutate({ fastMode: v })} label="Fast mode" />
+                <span className="text-sm text-gray-500">{snap.config.fastMode ? "on" : "off"}</span>
+              </div>
+            </Field>
+          </div>
+
+          {/* Switch to fleet */}
+          <Tooltip
+            content="Fleet mode lets you configure separate worker pools for each model — e.g. 1 Opus worker and 2 Sonnet workers, each with their own thinking cap. Workers only pick tasks tagged with their model (or untagged tasks)."
+            multiline
+          >
+            <button
+              type="button"
+              className="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 disabled:opacity-40"
+              disabled={patch.isPending}
+              onClick={switchToFleet}
+            >
+              Switch to fleet mode →
+            </button>
+          </Tooltip>
+        </div>
+      )}
+
+      {/* Watchdog interval — always shown */}
+      <div className="border-t border-gray-200 pt-4 dark:border-gray-700">
         <Field label="Watchdog interval (s)" hint="How often the launchd watchdog ticks (StartInterval). Applied + reloaded immediately.">
           <div className="flex items-center gap-2">
             <input

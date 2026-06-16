@@ -130,7 +130,7 @@ export function parseDrainConfig(text: string): DrainConfig {
     }
   }
   // Post-process: reconstruct fleetTiers from FLEET_TIERS + FLEET_N keys in extra.
-  const fleetCountRaw = cfg.extra['FLEET_TIERS'];
+  const fleetCountRaw = cfg.extra.FLEET_TIERS;
   if (fleetCountRaw) {
     const count = Number.parseInt(fleetCountRaw, 10);
     if (Number.isFinite(count) && count > 0) {
@@ -150,7 +150,7 @@ export function parseDrainConfig(text: string): DrainConfig {
       if (tiers.length > 0) {
         cfg.fleetTiers = tiers;
         cfg.jobs = tiers.reduce((s, t) => s + t.slots, 0);
-        delete cfg.extra['FLEET_TIERS'];
+        delete cfg.extra.FLEET_TIERS;
         for (let i = 0; i < count; i++) delete cfg.extra[`FLEET_${i}`];
       }
     }
@@ -369,7 +369,7 @@ export function computePending(cfg: DrainConfig, run: ActiveRun | undefined): Pe
       const runningFleet = run.fleetConfig ?? '';
       // Only report pending when at least one side is in fleet mode.
       if ((savedFleet || runningFleet) && savedFleet !== runningFleet) {
-        out.push({ key: 'fleetTiers', label: NEEDS_RESTART_LABELS['fleetTiers'], running: runningFleet || '(flat)', saved: savedFleet || '(flat)' });
+        out.push({ key: 'fleetTiers', label: NEEDS_RESTART_LABELS.fleetTiers, running: runningFleet || '(flat)', saved: savedFleet || '(flat)' });
       }
       continue;
     }
