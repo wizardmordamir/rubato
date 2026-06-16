@@ -16,6 +16,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import {
+  fetchClaudeUsage,
   fetchEntryTimings,
   fetchOrchestration,
   fetchOrchestrationFile,
@@ -23,6 +24,7 @@ import {
   fetchTimings,
   ingestTimings,
   saveOrchestrationFile,
+  type ClaudeRateLimitInfo,
   type HistoryEntry,
   type OrchCategoryStat,
   type OrchestrationFileDoc,
@@ -54,19 +56,20 @@ import { WatchdogView } from "./WatchdogView";
 /**
  * The Orchestration area — configure, track, and manage the unattended
  * "drain the task queue" workflows (a headless `claude -p` loop draining
- * TASKS.md). Five tabs:
+ * TASKS.md). Six tabs:
  *  - Watchdog: start/stop/pace the drainer + its launchd watchdog, with live
  *    in-progress instances, problems, tunable knobs, logs, files, commands
  *  - Tasks: the live TASKS.md board grouped by status (ready/claimed/done/…)
  *  - History: completed-task archive (Tasks_Completed.md) + aggregate stats
  *  - Runs: live status of the runs/*.jsonl headless-run logs
  *  - Files: view + EDIT the workflow config/doc files (server allowlist)
+ *  - Usage: live Claude API rate-limit probe + burn-rate analytics from run history
  *
  * The pure parsing/aggregation lives in `rubato/orchestration`; the file reads
  * (and the allowlisted read/write + watchdog control) live in the server.
  */
 
-type Tab = "watchdog" | "tasks" | "history" | "runs" | "files";
+type Tab = "watchdog" | "tasks" | "history" | "runs" | "files" | "usage";
 
 const TABS: readonly { key: Tab; label: string }[] = [
   { key: "watchdog", label: "Watchdog" },
@@ -74,6 +77,7 @@ const TABS: readonly { key: Tab; label: string }[] = [
   { key: "history", label: "History & stats" },
   { key: "runs", label: "Runs" },
   { key: "files", label: "Files" },
+  { key: "usage", label: "Claude Usage" },
 ];
 
 const STATUS_TONE: Record<WorkflowTaskStatus, "neutral" | "accent" | "success" | "error"> = {
@@ -139,10 +143,12 @@ export function OrchestrationPage() {
           so it fills the column instead of being a scroll container. The other
           tabs are top-to-bottom lists that scroll as a whole. */}
       <div className={`min-h-0 flex-1 ${tab === "files" ? "flex flex-col" : "overflow-auto"}`}>
-        {/* The Watchdog tab has its own (faster-polling) query, so it renders
-            independent of the overview load below. */}
+        {/* Usage and Watchdog tabs render independently (own queries, don't need the
+            overview to load first). The rest wait for the overview load below. */}
         {tab === "watchdog" ? (
           <WatchdogView />
+        ) : tab === "usage" ? (
+          <ClaudeUsageView overviewData={data} />
         ) : isLoading ? (
           <p className="text-gray-400">loading…</p>
         ) : isError ? (
@@ -781,6 +787,279 @@ function FilesView() {
   );
 }
 
+// ── Claude Usage ──────────────────────────────────────────────────────────────
+
+const USAGE_COLORS = {
+  used: "#f59e0b",
+  remaining: "#10b981",
+  low: "#ef4444",
+};
+
+function ClaudeUsageView({ overviewData }: { overviewData?: OrchestrationOverview }) {
+  const isDark = getTheme() === "dark";
+
+  const { data: usage, isLoading, isError, error, refetch, isFetching } = useQuery({
+    queryKey: ["orchestration", "claude-usage"],
+    queryFn: fetchClaudeUsage,
+    refetchInterval: 60_000,
+    staleTime: 55_000,
+  });
+
+  const burnRate = useMemo(() => {
+    const runs = (overviewData?.runs.recent ?? []).filter((r) => r.totalTokens != null);
+    if (runs.length === 0) return null;
+    const withTime = runs.filter((r) => r.at != null) as (RunEntry & { at: string })[];
+    const sorted = [...withTime].sort((a, b) => a.at.localeCompare(b.at));
+    const avgTokensPerRun = Math.round(runs.reduce((s, r) => s + (r.totalTokens ?? 0), 0) / runs.length);
+    let tokensPerMin: number | null = null;
+    if (sorted.length >= 2) {
+      const spanMs = new Date(sorted[sorted.length - 1].at).getTime() - new Date(sorted[0].at).getTime();
+      const spanMin = spanMs / 60_000;
+      if (spanMin > 0) {
+        tokensPerMin = Math.round(sorted.reduce((s, r) => s + (r.totalTokens ?? 0), 0) / spanMin);
+      }
+    }
+    const barData: BarDatum[] = sorted.map((r, i) => ({
+      label: r.at ? fmtTimeShort(r.at) : `run ${i + 1}`,
+      value: r.totalTokens ?? 0,
+      color: "#6366f1",
+    }));
+    return { avgTokensPerRun, tokensPerMin, barData, runCount: runs.length };
+  }, [overviewData]);
+
+  const rateLimitAnalytics = useMemo(() => {
+    if (!usage?.limitTokensPerMinute) return null;
+    const limit = usage.limitTokensPerMinute;
+    const remaining = usage.remainingTokensPerMinute ?? limit;
+    const used = limit - remaining;
+    const pctUsed = limit > 0 ? (used / limit) * 100 : 0;
+    const pctRemaining = 100 - pctUsed;
+    const remainingColor = pctRemaining < 20 ? USAGE_COLORS.low : USAGE_COLORS.remaining;
+    const donutData: DonutSlice[] = [
+      { name: "Remaining", value: remaining, color: remainingColor },
+      { name: "Used", value: Math.max(0, used), color: USAGE_COLORS.used },
+    ];
+    let minsUntilLimit: number | null = null;
+    if (burnRate?.tokensPerMin && burnRate.tokensPerMin > 0 && remaining > 0) {
+      minsUntilLimit = Math.round(remaining / burnRate.tokensPerMin);
+    }
+    let resetsIn: string | null = null;
+    if (usage.resetTokensAt) {
+      const ms = new Date(usage.resetTokensAt).getTime() - Date.now();
+      if (ms > 0) resetsIn = fmtDeltaMs(ms);
+    }
+    return { limit, remaining, used, pctUsed, donutData, minsUntilLimit, resetsIn };
+  }, [usage, burnRate]);
+
+  const reqAnalytics = useMemo(() => {
+    if (!usage?.limitRequestsPerMinute) return null;
+    const limit = usage.limitRequestsPerMinute;
+    const remaining = usage.remainingRequestsPerMinute ?? limit;
+    const used = limit - remaining;
+    return { limit, remaining, used, pctUsed: limit > 0 ? (used / limit) * 100 : 0 };
+  }, [usage]);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 text-xs text-gray-500">
+          {usage?.fetchedAt && (
+            <span>
+              Rate-limit snapshot:{" "}
+              <Tooltip content={usage.fetchedAt}>
+                <span>{fmtTime(usage.fetchedAt)}</span>
+              </Tooltip>
+            </span>
+          )}
+          <button type="button" onClick={() => refetch()} disabled={isFetching} className={BTN_GHOST_CLASS}>
+            {isFetching && <Spinner />}
+            {isFetching ? "Probing…" : "Re-probe"}
+          </button>
+        </div>
+        <a href="https://console.anthropic.com/settings/limits" target="_blank" rel="noreferrer" className={`${BTN_GHOST_CLASS} text-xs`}>
+          Anthropic Console ↗
+        </a>
+      </div>
+
+      {isLoading && <p className="text-sm text-gray-400">Probing Anthropic API…</p>}
+      {isError && (
+        <Alert tone="error">
+          Rate-limit probe failed: {error instanceof Error ? error.message : "unknown error"}
+        </Alert>
+      )}
+
+      {usage && (
+        <>
+          {!usage.hasApiKey && (
+            <Alert tone="neutral">
+              <strong>ANTHROPIC_API_KEY not set</strong> — the rubato server can't probe live rate limits.
+              Set the env var when starting rubato to enable this feature.
+              History-based burn-rate analytics below are still available.
+            </Alert>
+          )}
+          {usage.hasApiKey && usage.error && (
+            <Alert tone="error">API probe error: {usage.error}. Rate-limit values may be stale or unavailable.</Alert>
+          )}
+
+          {rateLimitAnalytics && (
+            <section>
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
+                Per-minute rate limits (current window)
+              </h3>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                <div className={`${CARD_CLASS} p-4 lg:col-span-1`}>
+                  <h4 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Token window</h4>
+                  <ChartThemeProvider theme={chartThemeFor(isDark)}>
+                    <CategoryDonut
+                      data={rateLimitAnalytics.donutData}
+                      height={180}
+                      valueFormatter={(v) => formatTokens(v)}
+                      centerValue={`${Math.round(100 - rateLimitAnalytics.pctUsed)}%`}
+                      centerLabel="remaining"
+                    />
+                  </ChartThemeProvider>
+                </div>
+                <div className="lg:col-span-2 grid grid-cols-2 gap-3 content-start">
+                  <div className={`${CARD_CLASS} p-4`}>
+                    <StatTile label="Token limit / min" value={formatTokens(rateLimitAnalytics.limit)} />
+                  </div>
+                  <div className={`${CARD_CLASS} p-4`}>
+                    <StatTile
+                      label="Tokens remaining"
+                      value={formatTokens(rateLimitAnalytics.remaining)}
+                      sub={`${Math.round(100 - rateLimitAnalytics.pctUsed)}% of window`}
+                      color={rateLimitAnalytics.pctUsed > 80 ? USAGE_COLORS.low : USAGE_COLORS.remaining}
+                    />
+                  </div>
+                  <div className={`${CARD_CLASS} p-4`}>
+                    <StatTile label="Tokens used this min" value={formatTokens(rateLimitAnalytics.used)} color={USAGE_COLORS.used} />
+                  </div>
+                  <div className={`${CARD_CLASS} p-4`}>
+                    <StatTile
+                      label="Window resets in"
+                      value={rateLimitAnalytics.resetsIn ?? "—"}
+                      sub={usage.resetTokensAt ? fmtTime(usage.resetTokensAt) : undefined}
+                    />
+                  </div>
+                  {reqAnalytics && (
+                    <>
+                      <div className={`${CARD_CLASS} p-4`}>
+                        <StatTile label="Requests / min limit" value={String(reqAnalytics.limit)} />
+                      </div>
+                      <div className={`${CARD_CLASS} p-4`}>
+                        <StatTile
+                          label="Requests remaining"
+                          value={String(reqAnalytics.remaining)}
+                          sub={`${Math.round(100 - reqAnalytics.pctUsed)}% of window`}
+                          color={reqAnalytics.pctUsed > 80 ? USAGE_COLORS.low : USAGE_COLORS.remaining}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {usage.hasApiKey && !usage.error && !rateLimitAnalytics && (
+            <div className={`${CARD_CLASS} p-4 text-sm text-gray-500`}>
+              Rate-limit headers were not returned by the API probe. The limits may be returned
+              on inference calls only. Try re-probing or check the Anthropic Console.
+            </div>
+          )}
+        </>
+      )}
+
+      {overviewData && (
+        <section>
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
+            Burn-rate analytics (from run history)
+          </h3>
+          {!burnRate ? (
+            <div className={`${CARD_CLASS} p-4 text-sm text-gray-500`}>
+              No run-log token data available yet. Run the drainer a few times and the charts will populate here.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className={`${CARD_CLASS} p-4`}>
+                  <StatTile label="Avg tokens / run" value={formatTokens(burnRate.avgTokensPerRun)} />
+                </div>
+                <div className={`${CARD_CLASS} p-4`}>
+                  <StatTile
+                    label="Est. tokens / min"
+                    value={burnRate.tokensPerMin != null ? formatTokens(burnRate.tokensPerMin) : "—"}
+                    sub="across recorded runs"
+                  />
+                </div>
+                <div className={`${CARD_CLASS} p-4`}>
+                  <StatTile label="All-time tokens" value={formatTokens(overviewData.stats.totalTokens)} />
+                </div>
+                <div className={`${CARD_CLASS} p-4`}>
+                  <StatTile label="All-time cost" value={formatUsd(overviewData.stats.totalCostUsd)} />
+                </div>
+              </div>
+
+              {rateLimitAnalytics?.minsUntilLimit != null && burnRate.tokensPerMin && burnRate.tokensPerMin > 0 && (
+                <div className={`${CARD_CLASS} p-4`}>
+                  {rateLimitAnalytics.minsUntilLimit <= 0 ? (
+                    <p className="text-sm font-medium text-red-600 dark:text-red-400">
+                      Rate limit window is depleted. Requests will be throttled until the window resets
+                      {rateLimitAnalytics.resetsIn ? ` in ${rateLimitAnalytics.resetsIn}` : ""}.
+                    </p>
+                  ) : rateLimitAnalytics.minsUntilLimit < 5 ? (
+                    <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                      At the current burn rate ({formatTokens(burnRate.tokensPerMin)}/min), the remaining token window
+                      will be exhausted in ~{rateLimitAnalytics.minsUntilLimit} min. The window resets{" "}
+                      {rateLimitAnalytics.resetsIn ? `in ${rateLimitAnalytics.resetsIn}` : "soon"}.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-gray-600 dark:text-gray-300">
+                      At {formatTokens(burnRate.tokensPerMin)}/min, remaining tokens (
+                      {formatTokens(rateLimitAnalytics.remaining)}) will last ~{rateLimitAnalytics.minsUntilLimit} min
+                      — well past the window reset{rateLimitAnalytics.resetsIn ? ` in ${rateLimitAnalytics.resetsIn}` : ""}.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {burnRate.barData.length > 0 && (
+                <div className={`${CARD_CLASS} p-4`}>
+                  <h4 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">
+                    Tokens per run (recent, oldest → newest)
+                  </h4>
+                  <ChartThemeProvider theme={chartThemeFor(isDark)}>
+                    <CategoryBars data={burnRate.barData} height={200} valueFormatter={(v) => formatTokens(v)} />
+                  </ChartThemeProvider>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      <div className={`${CARD_CLASS} p-4 text-xs text-gray-500 space-y-1`}>
+        <p>
+          <strong className="text-gray-700 dark:text-gray-300">About these limits:</strong>{" "}
+          The rate-limit data above reflects per-minute API limits (rolling window). Daily, monthly, or account-level
+          usage caps are not available via the API — view them at{" "}
+          <a href="https://console.anthropic.com/settings/limits" target="_blank" rel="noreferrer" className="text-accent underline hover:no-underline">
+            console.anthropic.com/settings/limits
+          </a>{" "}and{" "}
+          <a href="https://console.anthropic.com/usage" target="_blank" rel="noreferrer" className="text-accent underline hover:no-underline">
+            console.anthropic.com/usage
+          </a>
+          .
+        </p>
+        <p>
+          The burn-rate estimate is derived from the run-log files in the orchestration directory. It reflects actual
+          Claude Code drainer sessions, not all API usage.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /** Format an ISO timestamp compactly for the local timezone; pass through on parse failure. */
@@ -795,6 +1074,25 @@ function fmtDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Very short time label (HH:MM) for chart x-axis labels. */
+function fmtTimeShort(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Format a millisecond delta as "Xh Ym" or "Ym Zs". */
+function fmtDeltaMs(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000));
+  if (totalSec < 60) return `${totalSec}s`;
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  if (mins < 60) return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem > 0 ? `${hrs}h ${rem}m` : `${hrs}h`;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

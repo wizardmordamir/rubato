@@ -948,3 +948,30 @@ export function formatUsd(n: number | undefined): string {
   if (!n) return '$0.00';
   return n < 1 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
 }
+
+// ── Claude usage / rate-limits ────────────────────────────────────────────────
+
+/**
+ * Current per-minute rate-limit snapshot from the Anthropic API headers,
+ * returned by `GET /api/orchestration/claude-usage`.
+ */
+export interface ClaudeRateLimitInfo {
+  /** Whether `ANTHROPIC_API_KEY` was present; false means no live data. */
+  hasApiKey: boolean;
+  /** ISO timestamp of when this snapshot was captured. */
+  fetchedAt: string;
+  /** Per-minute token limit for this API key tier (null when unavailable). */
+  limitTokensPerMinute: number | null;
+  /** Tokens remaining in the current per-minute window. */
+  remainingTokensPerMinute: number | null;
+  /** ISO timestamp when the per-minute token limit resets. */
+  resetTokensAt: string | null;
+  /** Per-minute request limit for this API key tier. */
+  limitRequestsPerMinute: number | null;
+  /** Requests remaining in the current per-minute window. */
+  remainingRequestsPerMinute: number | null;
+  /** ISO timestamp when the per-minute request limit resets. */
+  resetRequestsAt: string | null;
+  /** Error message if the probe call failed. */
+  error?: string;
+}
