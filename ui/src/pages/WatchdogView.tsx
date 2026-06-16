@@ -11,7 +11,7 @@ import {
   type UnservableSummary,
   type WorkerSlotStatus,
 } from "@shared/orchestration";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyFleetPreset,
   controlWatchdogAgent,
@@ -79,6 +79,19 @@ export function WatchdogView() {
     qc.invalidateQueries({ queryKey: ["watchdog"] });
     qc.invalidateQueries({ queryKey: ["orchestration"] });
   };
+
+  // Auto-tier: when the toggle is on and tasks exist that no tier can claim, grow
+  // the fleet to cover them (one reconcile per distinct needed-model set, so it
+  // fires once, not every poll). This is what makes the "auto-fixing" badge real.
+  const reconcile = useMutation({ mutationFn: reconcileFleet, onSuccess: () => invalidate() });
+  const autoSig = data?.unservable.autoTier && data.unservable.count > 0 ? data.unservable.neededModels.join(",") : "";
+  const lastAutoSig = useRef("");
+  useEffect(() => {
+    if (autoSig && autoSig !== lastAutoSig.current && !reconcile.isPending) {
+      lastAutoSig.current = autoSig;
+      reconcile.mutate();
+    }
+  }, [autoSig, reconcile]);
 
   if (isLoading) return <p className="text-gray-400">loading…</p>;
   if (isError || !data)
