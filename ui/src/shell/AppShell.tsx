@@ -3,7 +3,7 @@
 // (HeaderSearch + mobile hamburger/brand/live-dot), the breadcrumb trail, and the
 // main scroll region; the routed page content is supplied as `children` (a
 // `<Routes>` element). rubato's own App.tsx renders `<AppShell>` with no props, so
-// its behaviour is unchanged; a friend app passes `accent`/`pages` to rebrand and
+// its behaviour is unchanged; a friend app passes `accent`/`label`/`pages` to rebrand and
 // scope the nav. See the plugin-system plan (Stage 4).
 
 import type { UiPage } from "@shared/ui";
@@ -28,13 +28,15 @@ export interface AppShellProps {
    *  shell wrapper so every accent utility re-themes. Omit to inherit rubato's own
    *  violet token from `styles.css`. */
   accent?: string;
+  /** Brand label displayed in the mobile header. Defaults to "rubato". */
+  label?: string;
   /** Nav items to show. Omit to use the server-reported page set (rubato default). */
   pages?: UiPage[];
   /** Routed content — the app's `<Routes>`. */
   children: ReactNode;
 }
 
-export function AppShell({ accent, pages, children }: AppShellProps) {
+export function AppShell({ accent, label = "rubato", pages, children }: AppShellProps) {
   const live = useLive();
 
   // Mobile nav drawer: hidden off-canvas below `md`, always-on static at `md+`.
@@ -81,7 +83,7 @@ export function AppShell({ accent, pages, children }: AppShellProps) {
           >
             <IconMenu size={24} />
           </button>
-          <span className="text-lg font-bold tracking-tight text-accent md:hidden">rubato</span>
+          <span className="text-lg font-bold tracking-tight text-accent md:hidden">{label}</span>
           <Tooltip content={`live: ${live}`}>
             <span className={`ml-1 inline-block h-2 w-2 shrink-0 rounded-full md:hidden ${DOT[live]}`} />
           </Tooltip>
