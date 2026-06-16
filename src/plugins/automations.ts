@@ -15,6 +15,7 @@ import { addColumnIfMissing } from 'cwip/sqlite';
 import type { AutomationStore } from '../lib/automations';
 import type { RubatoPlugin } from '../plugin/types';
 import { handleAutomationApi, handleSessionApi } from '../server/automationRoutes';
+import type { RunStore } from '../server/runStore';
 import { pageByKey, type UiPage } from '../shared/ui';
 
 // Re-export the whole storage seam so a friend app builds a backend from one import:
@@ -28,6 +29,7 @@ export {
   createFileAutomationStore,
   slugify,
 } from '../lib/automations';
+export { createSqliteRunStore, type RunStore } from '../server/runStore';
 
 /** Configuration for {@link automationsPlugin}. */
 export interface AutomationsPluginOptions {
@@ -39,6 +41,12 @@ export interface AutomationsPluginOptions {
    * monolith's behavior unchanged.
    */
   storage?: AutomationStore;
+  /**
+   * Where automation run history is persisted. Defaults to rubato's SQLite
+   * `automation_runs` table; inject a {@link RunStore} to keep run records in your
+   * own backend. (Run *artifacts* on disk are separate.) Unset → unchanged.
+   */
+  runStore?: RunStore;
 }
 
 /**
@@ -76,9 +84,9 @@ const AUTOMATIONS_PAGE = pageByKey('automations') as UiPage;
  * separately (it's an optional peer dependency of rubato, not bundled).
  */
 export function automationsPlugin(opts: AutomationsPluginOptions = {}): RubatoPlugin {
-  // Inject the chosen automation store into the CRUD handler (undefined → the
-  // handler's own file-store default). Session routes don't touch storage.
-  const { storage } = opts;
+  // Inject the chosen backends into the CRUD handler (each undefined → the
+  // handler's own default). Session routes don't touch storage.
+  const stores = { automations: opts.storage, runs: opts.runStore };
   return {
     id: 'automations',
     label: 'Browser Automation',
@@ -86,7 +94,7 @@ export function automationsPlugin(opts: AutomationsPluginOptions = {}): RubatoPl
     routes: [
       {
         prefix: ['/api/automations', '/api/automation-runs'],
-        handle: (pathname, req) => handleAutomationApi(pathname, req, storage),
+        handle: (pathname, req) => handleAutomationApi(pathname, req, stores),
       },
       { prefix: '/api/session/', handle: handleSessionApi },
     ],

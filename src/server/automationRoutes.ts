@@ -30,10 +30,10 @@ import {
   sessionTestSelector,
   sessionUrl,
 } from './browserSession';
-import { deleteAutomationRun, deleteAutomationRuns, getAutomationRun, listAutomationRuns } from './db';
 import { closeHeldBrowser, runAutomationHeadless } from './engine';
 import { json, jsonError, readJsonBody } from './http';
 import { planAutomationRuns } from './multiRun';
+import { runStore as defaultRunStore, type RunStore } from './runStore';
 import { startStep, stepNext, stepPause, stepPlay, stepRestart, stepStatus, stopStep } from './stepRunner';
 
 /** The variables an automation references, each flagged present-in-env or not. */
@@ -55,19 +55,21 @@ function missingVariables(automation: Automation, supplied: Record<string, strin
 /**
  * /api/automations, /api/automations/:id, /api/automations/run, /api/automation-runs.
  *
- * `store` is the automation persistence backend; it defaults to rubato's file store,
- * so the monolith (router.ts calls this with two args) is unchanged. A friend app
- * injects its own backend by wrapping this — `automationsPlugin({ storage })` does
- * exactly that.
+ * `stores` injects the persistence backends — `automations` (the JSON store) and
+ * `runs` (run history) — each defaulting to rubato's own, so the monolith (router.ts
+ * calls this with two args) is unchanged. A friend app injects its own backends by
+ * wrapping this; `automationsPlugin({ storage, runStore })` does exactly that.
  */
 export async function handleAutomationApi(
   pathname: string,
   req: Request,
-  store: AutomationStore = defaultAutomationStore,
+  stores: { automations?: AutomationStore; runs?: RunStore } = {},
 ): Promise<Response> {
+  const store = stores.automations ?? defaultAutomationStore;
+  const runs = stores.runs ?? defaultRunStore;
   if (pathname === '/api/automation-runs') {
     const automation = new URL(req.url).searchParams.get('automation') ?? undefined;
-    return json(listAutomationRuns(automation));
+    return json(await runs.list(automation));
   }
 
   // Delete ALL run outputs (optionally just one automation's): DB rows + the
@@ -76,7 +78,7 @@ export async function handleAutomationApi(
   if (pathname === '/api/automation-runs/cleanup') {
     if (req.method !== 'POST') return jsonError('use POST', 405);
     const b = await readJsonBody<{ automation?: string }>(req);
-    const removed = deleteAutomationRuns(b?.automation);
+    const removed = await runs.deleteMany(b?.automation);
     await deleteManyRunArtifacts(removed);
     return json({ deleted: removed.length });
   }
@@ -86,9 +88,9 @@ export async function handleAutomationApi(
     const id = Number(pathname.slice('/api/automation-runs/'.length));
     if (!Number.isInteger(id)) return jsonError('bad run id', 400);
     if (req.method !== 'DELETE') return jsonError('use DELETE', 405);
-    const run = getAutomationRun(id);
+    const run = await runs.get(id);
     if (run) await deleteRunArtifacts(run);
-    return json({ deleted: deleteAutomationRun(id) });
+    return json({ deleted: await runs.delete(id) });
   }
 
   if (pathname === '/api/automations/close-browser') {
@@ -158,6 +160,7 @@ export async function handleAutomationApi(
         keepOpen: spec.keepOpen,
         speed: spec.speed,
         variables: spec.variables,
+        runStore: runs,
       });
     }
     return json(

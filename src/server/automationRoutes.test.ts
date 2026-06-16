@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { type AutomationStore, buildAutomationRecord, saveAutomation, slugify } from '../lib/automations';
 import { writeManifest } from '../lib/captureStore';
-import type { Automation } from '../shared/automation';
+import type { Automation, AutomationRunRecord } from '../shared/automation';
 import type { CaptureManifest } from '../shared/capture';
 import { handleAutomationApi } from './automationRoutes';
 import { route } from './router';
+import type { RunStore } from './runStore';
 
 const post = (path: string, body: unknown) =>
   route(new Request(`http://x${path}`, { method: 'POST', body: JSON.stringify(body) }));
@@ -169,7 +170,7 @@ describe('handleAutomationApi storage injection', () => {
   }
 
   const get = (path: string, store: AutomationStore) =>
-    handleAutomationApi(path, new Request(`http://x${path}`), store);
+    handleAutomationApi(path, new Request(`http://x${path}`), { automations: store });
   const send = (path: string, method: string, store: AutomationStore, body?: unknown) =>
     handleAutomationApi(
       path,
@@ -177,7 +178,7 @@ describe('handleAutomationApi storage injection', () => {
         method,
         ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}),
       }),
-      store,
+      { automations: store },
     );
 
   test('GET /api/automations lists from the injected store', async () => {
@@ -205,5 +206,32 @@ describe('handleAutomationApi storage injection', () => {
     const del = await send('/api/automations/keep-me', 'DELETE', store);
     expect(await del.json()).toEqual({ deleted: true });
     expect(store.map.has('keep-me')).toBe(false);
+  });
+});
+
+/** Run history reads/writes through an injected {@link RunStore} too. */
+describe('handleAutomationApi run-store injection', () => {
+  test('GET /api/automation-runs lists from the injected run store', async () => {
+    const fake: AutomationRunRecord = {
+      id: 7,
+      automation: 'Nightly',
+      status: 'passed',
+      steps: [],
+      scraped: {},
+      startedAt: 1000,
+      durationMs: 42,
+    };
+    const runs: RunStore = {
+      record: async (r) => ({ ...r, id: 1 }),
+      get: async () => fake,
+      list: async () => [fake],
+      delete: async () => true,
+      deleteMany: async () => [fake],
+    };
+    const res = await handleAutomationApi('/api/automation-runs', new Request('http://x/api/automation-runs'), {
+      runs,
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as AutomationRunRecord[]).toEqual([fake]);
   });
 });

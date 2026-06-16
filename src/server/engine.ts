@@ -16,9 +16,9 @@ import { ensureOutputDir } from '../lib/runStore';
 import type { Automation, AutomationRunRecord, StepResult } from '../shared/automation';
 import { capturesFrame, type RunSpeed, smartWaitMs } from '../shared/pacing';
 import { BrowserHost } from './browserHost';
-import { recordAutomationRun } from './db';
 import { setCaptureEnabled } from './debugCapture';
 import { emit } from './events';
+import { runStore as defaultRunStore, type RunStore } from './runStore';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -148,8 +148,11 @@ export async function runAutomationHeadless(
     speed?: RunSpeed;
     variables?: Record<string, string>;
     dir?: string;
+    /** Where the run record is persisted; defaults to the SQLite run store. */
+    runStore?: RunStore;
   } = {},
 ): Promise<AutomationRunRecord> {
+  const runs = opts.runStore ?? defaultRunStore;
   const startedAt = Date.now();
   const headless = opts.headless ?? true;
   const speed: RunSpeed = opts.speed ?? 'off';
@@ -231,7 +234,7 @@ export async function runAutomationHeadless(
         saveRunArtifact(automation, startedAt, outputDir, index, captures, label),
     });
 
-    const run = recordAutomationRun({
+    const run = await runs.record({
       automation: automation.name,
       automationId: automation.id,
       correlationId,
@@ -257,7 +260,7 @@ export async function runAutomationHeadless(
     // Chrome) are debuggable. `diag` may be unset if startDiagnostics itself threw.
     diag?.fail(err, { phase: 'launch/host', automation: automation.name });
     void diag?.finish('error');
-    const run = recordAutomationRun({
+    const run = await runs.record({
       automation: automation.name,
       automationId: automation.id,
       correlationId,
