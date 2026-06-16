@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CopyButton } from "cwip/react";
 import {
   buildMongoFind,
   COMPARISON_OPS,
@@ -481,15 +482,17 @@ export function QueriesPage() {
                   >
                     {run.isPending ? "Running…" : "Run"}
                   </button>
-                  <Tooltip multiline content={isMongo ? "Copies the generated mongosh query to your clipboard so you can paste it into a shell or another tool." : "Copies the SQL in the editor to your clipboard so you can paste it into a database client or another tool."}>
-                    <button
-                      type="button"
-                      className={BTN_GHOST_CLASS}
-                      onClick={() => navigator.clipboard?.writeText(isMongo ? mongoPreview : sqlText)}
-                    >
-                      Copy
-                    </button>
-                  </Tooltip>
+                  <CopyButton
+                    text={isMongo ? mongoPreview : sqlText}
+                    className={BTN_GHOST_CLASS}
+                    tooltip={
+                      isMongo
+                        ? "Copies the generated mongosh query to your clipboard so you can paste it into a shell or another tool."
+                        : "Copies the SQL in the editor to your clipboard so you can paste it into a database client or another tool."
+                    }
+                  >
+                    Copy
+                  </CopyButton>
                   <div className="ml-auto flex items-center gap-2">
                     <input
                       className={FIELD_CLASS}

@@ -9,6 +9,7 @@
  * through the same row — one source of truth for "view/open a run's file".
  */
 import { useQuery } from "@tanstack/react-query";
+import { useCopyToClipboard } from "cwip/react";
 import { useState } from "react";
 import { fetchFileContent, fileDownloadUrl } from "./api";
 import { OpenPathButton, Tooltip } from "./components";
@@ -17,6 +18,7 @@ import { useToast } from "./toast";
 
 export function OutputFileRow({ path, onCopy }: { path: string; onCopy?: (text: string) => void }) {
   const { notify } = useToast();
+  const { copy: copyToClipboard } = useCopyToClipboard();
   const [open, setOpen] = useState(false);
   const name = path.split("/").pop() ?? path;
   const { data, isLoading, error } = useQuery({
@@ -25,14 +27,15 @@ export function OutputFileRow({ path, onCopy }: { path: string; onCopy?: (text: 
     enabled: open,
   });
 
-  // Default to clipboard + toast; callers can pass their own copy handler.
+  // Default to clipboard (via cwip's shared hook) + toast; callers can pass their
+  // own copy handler.
   const copy =
     onCopy ??
-    ((text: string) =>
-      navigator.clipboard?.writeText(text).then(
-        () => notify("Path copied", "success"),
-        () => notify("Couldn't copy", "error"),
-      ));
+    ((text: string) => {
+      void copyToClipboard(text).then((ok) =>
+        notify(ok ? "Path copied" : "Couldn't copy", ok ? "success" : "error"),
+      );
+    });
 
   return (
     <div className="mt-1.5 text-xs text-gray-500">

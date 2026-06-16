@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CopyButton } from "cwip/react";
 import { useState } from "react";
 import {
   type AuthConfigState,
@@ -188,15 +189,6 @@ function TokenView({ result, fresh }: { result: SessionTokenResult; fresh: boole
   const [reveal, setReveal] = useState(false);
   const [varName, setVarName] = useState("SESSION_JWT");
 
-  const copy = async (text: string, what: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      notify(`Copied ${what}`, "success");
-    } catch {
-      notify("Copy failed", "error");
-    }
-  };
-
   const save = useMutation({
     mutationFn: () => saveAuthVar(varName.trim(), result.token),
     onSuccess: (r) => notify(`Saved to ~/.rubato/.env as ${r.name} — use it as \${${r.name}}`, "success"),
@@ -244,31 +236,31 @@ function TokenView({ result, fresh }: { result: SessionTokenResult; fresh: boole
               {reveal ? "Hide" : "Reveal"}
             </button>
           </Tooltip>
-          <Tooltip
-            multiline
-            content="Copies the full JWT to your clipboard (even while it's masked on screen) so you can paste it into a request or tool."
+          <CopyButton
+            text={result.token}
+            showIcon={false}
+            tooltip="Copies the full JWT to your clipboard (even while it's masked on screen) so you can paste it into a request or tool."
+            className={`${BTN_GHOST_CLASS} text-xs`}
+            onCopied={() => notify("Copied token", "success")}
+            onError={() => notify("Copy failed", "error")}
           >
-            <button type="button" onClick={() => copy(result.token, "token")} className={`${BTN_GHOST_CLASS} text-xs`}>
-              Copy
-            </button>
-          </Tooltip>
+            Copy
+          </CopyButton>
         </div>
       </div>
 
       {result.cookieHeader && (
         <div className="mt-2">
-          <Tooltip
-            multiline
-            content="Copies the full Cookie header value from the login response, for endpoints that authenticate via a session cookie instead of a Bearer token."
+          <CopyButton
+            text={result.cookieHeader}
+            showIcon={false}
+            tooltip="Copies the full Cookie header value from the login response, for endpoints that authenticate via a session cookie instead of a Bearer token."
+            className={`${BTN_GHOST_CLASS} text-xs`}
+            onCopied={() => notify("Copied cookie", "success")}
+            onError={() => notify("Copy failed", "error")}
           >
-            <button
-              type="button"
-              onClick={() => copy(result.cookieHeader, "cookie")}
-              className={`${BTN_GHOST_CLASS} text-xs`}
-            >
-              Copy session cookie
-            </button>
-          </Tooltip>
+            Copy session cookie
+          </CopyButton>
         </div>
       )}
 

@@ -1,45 +1,11 @@
-import { type ComponentPropsWithoutRef, useRef, useState } from "react";
+import { CopyButton } from "cwip/react";
+import { type ComponentPropsWithoutRef, useRef } from "react";
 import rehypeHighlight from "rehype-highlight";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../../api";
 import { useDebug } from "../../debug";
-import { IconCheck, IconCopy } from "../../icons";
-import { Tooltip } from "../../components";
 import { TracePanel } from "./Trace";
-
-/** A copy-to-clipboard button that flips to a check for a beat after success. */
-function CopyButton({
-  getText,
-  className = "",
-  label = "Copy",
-}: {
-  getText: () => string;
-  className?: string;
-  label?: string;
-}) {
-  const [done, setDone] = useState(false);
-  const onClick = () => {
-    const text = getText();
-    if (!text) return;
-    navigator.clipboard?.writeText(text).then(() => {
-      setDone(true);
-      setTimeout(() => setDone(false), 1200);
-    });
-  };
-  return (
-    <Tooltip content={done ? "Copied" : label}>
-      <button
-        type="button"
-        onClick={onClick}
-        aria-label={done ? "Copied" : label}
-        className={`shrink-0 cursor-pointer rounded-md p-1 transition-colors ${className}`}
-      >
-        {done ? <IconCheck size={14} /> : <IconCopy size={14} />}
-      </button>
-    </Tooltip>
-  );
-}
 
 /** Code fence with a hover copy button; reads the raw text off the rendered <pre>. */
 function CodeBlock(props: ComponentPropsWithoutRef<"pre">) {
@@ -47,9 +13,11 @@ function CodeBlock(props: ComponentPropsWithoutRef<"pre">) {
   return (
     <div className="code-block group/code">
       <CopyButton
-        getText={() => ref.current?.textContent ?? ""}
+        text={() => ref.current?.textContent ?? ""}
         label="Copy code"
-        className="absolute right-2 top-2 bg-gray-200/80 text-gray-500 opacity-0 hover:text-accent group-hover/code:opacity-100 dark:bg-gray-700/80 dark:text-gray-400"
+        tooltip="Copy code"
+        iconSize={14}
+        className="absolute right-2 top-2 rounded-md bg-gray-200/80 text-gray-500 opacity-0 hover:text-accent group-hover/code:opacity-100 dark:bg-gray-700/80 dark:text-gray-400"
       />
       <pre ref={ref} {...props} />
     </div>
@@ -62,9 +30,11 @@ export function Message({ message }: { message: ChatMessage }) {
   const debug = useDebug();
   const bubbleCopy = (
     <CopyButton
-      getText={() => message.content}
+      text={message.content}
       label="Copy message"
-      className="text-gray-400 opacity-0 hover:text-accent group-hover/msg:opacity-100"
+      tooltip="Copy message"
+      iconSize={14}
+      className="rounded-md text-gray-400 opacity-0 hover:text-accent group-hover/msg:opacity-100"
     />
   );
   return (

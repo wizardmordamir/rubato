@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
 import { dataToTypeScript } from "@shared/resultTypes";
+import { CopyButton } from "cwip/react";
+import { useMemo } from "react";
 import { Tooltip } from "../components";
 import { downloadText } from "./download";
 
@@ -24,28 +25,21 @@ export function TypesView({
   maxHeight?: string;
 }) {
   const ts = useMemo(() => dataToTypeScript(data, typeName), [data, typeName]);
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard?.writeText(ts);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // clipboard blocked (insecure context / permissions) — the `.ts` download still works.
-    }
-  };
 
   return (
     <div className="p-2">
       <div className="mb-1 flex items-center gap-2 text-xs">
         <span className="text-gray-400">Inferred from the result data</span>
         <div className="ml-auto flex items-center gap-2">
-          <Tooltip content="Copy the TypeScript to the clipboard">
-            <button type="button" onClick={copy} className="text-gray-500 hover:text-accent">
-              {copied ? "Copied ✓" : "Copy"}
-            </button>
-          </Tooltip>
+          <CopyButton
+            text={ts}
+            showIcon={false}
+            tooltip="Copy the TypeScript to the clipboard"
+            copiedText="Copied ✓"
+            className="text-gray-500 hover:text-accent"
+          >
+            Copy
+          </CopyButton>
           <Tooltip content="Download as a .ts file">
             <button
               type="button"

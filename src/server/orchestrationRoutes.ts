@@ -25,8 +25,8 @@
 
 import type { DrainConfigPatch, ThinkingLevel } from '../shared/orchestration';
 import { DRAIN_MODEL_IDS, THINKING_LEVELS } from '../shared/orchestration';
-import type { TimingQuery } from './db';
 import { getClaudeRateLimits } from './claudeUsage';
+import type { TimingQuery } from './db';
 import { json, jsonError, readJsonBody } from './http';
 import { getOverview, listFiles, readFileDoc, writeFileDoc } from './orchestration';
 import { clearStoredTimings, getEntryCategoryStats, getTimingOverview, ingestTimings } from './orchestrationTimings';
@@ -292,7 +292,7 @@ async function handleWatchdog(pathname: string, req: Request): Promise<Response>
 }
 
 /** Validate + narrow a raw config-patch body to the allowed fields (null = invalid). */
-function sanitizePatch(body: DrainConfigPatch): DrainConfigPatch | null {
+export function sanitizePatch(body: DrainConfigPatch): DrainConfigPatch | null {
   const patch: DrainConfigPatch = {};
   if (body.enabled !== undefined) {
     if (typeof body.enabled !== 'boolean') return null;
@@ -331,6 +331,29 @@ function sanitizePatch(body: DrainConfigPatch): DrainConfigPatch | null {
     // A UNIX epoch in SECONDS; `0` (or any non-positive) is the explicit "clear" signal.
     if (typeof body.resumeAt !== 'number' || !Number.isFinite(body.resumeAt)) return null;
     patch.resumeAt = body.resumeAt;
+  }
+  if (body.fleetTiers !== undefined) {
+    // `null` (or `[]`) clears fleet mode → flat. Otherwise accept a well-shaped
+    // array of tiers; the authoritative alias/slot/thinking clamping lives in
+    // `applyDrainPatch`, so here we only gate the structure.
+    if (body.fleetTiers === null) {
+      patch.fleetTiers = null;
+    } else if (
+      Array.isArray(body.fleetTiers) &&
+      body.fleetTiers.every(
+        (t) =>
+          t != null &&
+          typeof t === 'object' &&
+          typeof t.modelAlias === 'string' &&
+          typeof t.slots === 'number' &&
+          typeof t.thinkingLevel === 'string' &&
+          typeof t.fastMode === 'boolean',
+      )
+    ) {
+      patch.fleetTiers = body.fleetTiers;
+    } else {
+      return null;
+    }
   }
   if (Object.keys(patch).length === 0) return null;
   return patch;

@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCopyToClipboard } from "cwip/react";
 import { type ReactNode, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { CaptureSummary } from "@shared/capture";
@@ -41,6 +42,7 @@ export function AutomationsPage({ headerActions }: { headerActions?: ReactNode }
   const qc = useQueryClient();
   const nav = useNavigate();
   const { notify } = useToast();
+  const { copy } = useCopyToClipboard();
   const confirm = useConfirm();
   const runner = useAutomationRunner();
   const { data = [] } = useQuery({ queryKey: ["automations"], queryFn: fetchAutomations });
@@ -97,7 +99,7 @@ export function AutomationsPage({ headerActions }: { headerActions?: ReactNode }
   const copyString = useMutation({
     mutationFn: async (id: string) => {
       const { token } = await exportCaptureText(id, seed || undefined);
-      await navigator.clipboard?.writeText(token);
+      if (!(await copy(token))) throw new Error("Couldn't copy to clipboard");
     },
     onSuccess: () => notify("Copied a shareable capture string to the clipboard.", "success"),
     onError: (e) => notify(e instanceof Error ? e.message : "export failed", "error"),

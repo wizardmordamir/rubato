@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { CopyButton } from "cwip/react";
 import { fetchSshServers, openSshInTerminal, type SshServerSummary } from "../../api";
 import {
   BTN_GHOST_CLASS,
@@ -7,22 +7,6 @@ import {
   CARD_CLASS,
   Spinner,
 } from "../../components";
-
-/** Copy text to clipboard and show a brief checkmark. */
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const handle = () => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-  return (
-    <button type="button" onClick={handle} className={BTN_GHOST_CLASS} title="Copy SSH command">
-      {copied ? "✓ Copied" : "Copy"}
-    </button>
-  );
-}
 
 function ServerRow({ server }: { server: SshServerSummary }) {
   const open = useMutation({
@@ -37,7 +21,9 @@ function ServerRow({ server }: { server: SshServerSummary }) {
           <span className="ml-2 text-xs text-gray-400">index {server.index}</span>
         </div>
         <div className="flex items-center gap-2">
-          <CopyButton text={server.command} />
+          <CopyButton text={server.command} tooltip="Copy SSH command" className={BTN_GHOST_CLASS}>
+            Copy
+          </CopyButton>
           <button
             type="button"
             disabled={open.isPending}

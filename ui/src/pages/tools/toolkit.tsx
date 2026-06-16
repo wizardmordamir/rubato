@@ -1,3 +1,4 @@
+import { useCopyToClipboard } from "cwip/react";
 import type { ReactNode } from "react";
 import { Badge, BTN_GHOST_CLASS, CARD_CLASS, Tooltip } from "../../components";
 import { useConfirm } from "../../confirm";
@@ -6,16 +7,19 @@ import { useToast } from "../../toast";
 export const TOOL_TEXTAREA_CLASS =
   "w-full rounded-lg border border-gray-300 bg-white p-3 font-mono text-xs text-gray-900 transition focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100";
 
-/** A button that copies `text` to the clipboard and toasts. */
+/** A text-label button that copies `text` to the clipboard and toasts. The
+ *  clipboard write + failure handling come from cwip's shared `useCopyToClipboard`
+ *  so the logic isn't re-rolled here. */
 export function CopyButton({ text, label = "Copy", disabled }: { text: string; label?: string; disabled?: boolean }) {
   const { notify } = useToast();
+  const { copy } = useCopyToClipboard();
   return (
     <button
       type="button"
       disabled={disabled || !text}
       onClick={async () => {
-        await navigator.clipboard.writeText(text);
-        notify("Copied", "success");
+        if (await copy(text)) notify("Copied", "success");
+        else notify("Couldn't copy to clipboard", "error");
       }}
       className={BTN_GHOST_CLASS}
     >

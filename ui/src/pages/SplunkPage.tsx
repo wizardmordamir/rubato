@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { CopyButton } from "cwip/react";
 import { useEffect, useMemo, useState } from "react";
 import {
   buildSplunkQuery,
@@ -99,12 +100,6 @@ export function SplunkPage() {
     enabled: !!app,
     placeholderData: (prev) => prev,
   });
-
-  const copy = async () => {
-    if (!built?.query) return;
-    await navigator.clipboard.writeText(built.query);
-    notify("Query copied", "success");
-  };
 
   const run = useMutation({
     mutationFn: () => runSplunkSearch({ ...makeRequest(), earliest: earliest || undefined }),
@@ -258,9 +253,14 @@ export function SplunkPage() {
                     </Tooltip>
                   </label>
                 )}
-                <button type="button" onClick={copy} disabled={!built?.query} className={BTN_GHOST_CLASS}>
+                <CopyButton
+                  text={built?.query ?? ""}
+                  disabled={!built?.query}
+                  className={BTN_GHOST_CLASS}
+                  onCopied={() => notify("Query copied", "success")}
+                >
                   Copy
-                </button>
+                </CopyButton>
                 {status?.configured && (
                   <button
                     type="button"
