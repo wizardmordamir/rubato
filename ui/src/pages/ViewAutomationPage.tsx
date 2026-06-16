@@ -311,7 +311,7 @@ function Branch({
   );
 }
 
-export function ViewAutomationPage() {
+export function ViewAutomationPage({ headerActions }: { headerActions?: ReactNode } = {}) {
   const { id = "" } = useParams();
   const runner = useAutomationRunner();
   const { data, isLoading, isError } = useQuery({
@@ -403,6 +403,9 @@ export function ViewAutomationPage() {
                   ↓ Export
                 </a>
               </Tooltip>
+              {/* Friend-app slot: extra actions an embedder injects beside the run/
+                  edit/export controls. Undefined for rubato's own app → unchanged. */}
+              {headerActions}
             </div>
           </div>
 

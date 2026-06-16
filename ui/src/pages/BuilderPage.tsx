@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useRegisterBreadcrumbLabel } from "../breadcrumbs";
 import type { Step, Target } from "@shared/automation";
@@ -56,7 +56,7 @@ const snapshot = (d: Draft) =>
 const input =
   "rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/30 dark:border-gray-700 dark:bg-gray-900";
 
-export function BuilderPage() {
+export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {}) {
   const { id = "new" } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -674,6 +674,9 @@ export function BuilderPage() {
                 </span>
               </Tooltip>
             )}
+            {/* Friend-app slot: extra actions an embedder injects into the builder's
+                action bar. Undefined for rubato's own app → unchanged. */}
+            {headerActions}
             <Tooltip content="Uncheck to run with a visible browser — it stays open on failure so you can inspect the page.">
               <label className="ml-auto flex items-center gap-1 text-xs text-gray-500">
                 <input type="checkbox" checked={runHeadless} onChange={(e) => setRunHeadless(e.target.checked)} />

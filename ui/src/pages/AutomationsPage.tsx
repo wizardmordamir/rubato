@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { CaptureSummary } from "@shared/capture";
 import {
@@ -37,7 +37,7 @@ import { useToast } from "../toast";
  * machine) are listed here too and are made editable by opening them in the
  * builder, which lifts their steps into an editable draft that keeps the timeline.
  */
-export function AutomationsPage() {
+export function AutomationsPage({ headerActions }: { headerActions?: ReactNode } = {}) {
   const qc = useQueryClient();
   const nav = useNavigate();
   const { notify } = useToast();
@@ -130,6 +130,9 @@ export function AutomationsPage() {
                 <IconPlus size={14} /> New flow
               </button>
             </Tooltip>
+            {/* Friend-app slot: extra actions an embedder injects into this page's
+                action bar. Undefined for rubato's own app → unchanged. */}
+            {headerActions}
           </div>
         }
       />
