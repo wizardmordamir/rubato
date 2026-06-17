@@ -449,7 +449,8 @@ function BoardSection({
 }
 
 /** Multi-select for task dependencies (`needs:`) — pick by id + title from a
- *  searchable dropdown rendered in a portal so it's never clipped by the modal. */
+ *  searchable dropdown rendered in a portal so it's never clipped by the modal.
+ *  Supports "#39" or "39" searches to find a task by its board number. */
 function NeedsSelect({
   board,
   value,
@@ -467,9 +468,15 @@ function NeedsSelect({
   const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
-  const options = board.tasks.filter((t) => t.slug && t.id !== excludeId);
-  const f = filter.trim().toLowerCase();
-  const filtered = f ? options.filter((o) => `${o.slug} ${o.title}`.toLowerCase().includes(f)) : options;
+  // All tasks can be depended on — server auto-assigns numeric slugs so every
+  // task has an addressable id. Fallback: use String(id) if slug is somehow absent.
+  const options = board.tasks.filter((t) => t.id !== excludeId);
+  const effectiveSlug = (t: TaskqTaskView) => t.slug ?? String(t.id);
+  // Strip leading "#" so "#39" searches find the task with id/slug "39".
+  const f = filter.trim().replace(/^#/, "").toLowerCase();
+  const filtered = f
+    ? options.filter((o) => `${effectiveSlug(o)} ${o.title}`.toLowerCase().includes(f))
+    : options;
   const toggle = (slug: string) => onChange(value.includes(slug) ? value.filter((s) => s !== slug) : [...value, slug]);
   const addCustom = () => {
     if (custom.trim()) {
@@ -533,31 +540,43 @@ function NeedsSelect({
             }}
           >
             {/* biome-ignore lint/a11y/noAutofocus: focusing the filter on open is the intended UX */}
-            <input autoFocus className={FIELD_CLASS} placeholder="filter by id or title…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <input autoFocus className={FIELD_CLASS} placeholder="filter by #number, id, or title…" value={filter} onChange={(e) => setFilter(e.target.value)} />
             <div className="mt-2 space-y-0.5">
-              {filtered.map((o) => (
-                <label
-                  key={o.id}
-                  title={o.body || undefined}
-                  className="flex cursor-pointer items-start gap-2 rounded p-1.5 hover:bg-gray-50 dark:hover:bg-gray-800"
-                >
-                  <input
-                    type="checkbox"
-                    checked={value.includes(o.slug as string)}
-                    onChange={() => toggle(o.slug as string)}
-                    className="mt-0.5 h-4 w-4 shrink-0"
-                  />
-                  <span className="min-w-0">
-                    <span className="font-mono text-xs text-accent">{o.slug}</span>
-                    {" "}
-                    <span className="text-sm">{o.title}</span>
-                    {o.body && <span className="block truncate text-xs text-gray-400">{o.body}</span>}
-                  </span>
-                </label>
-              ))}
+              {filtered.map((o) => {
+                const slug = effectiveSlug(o);
+                const isNumeric = slug === String(o.id);
+                return (
+                  <label
+                    key={o.id}
+                    title={o.body || undefined}
+                    className="flex cursor-pointer items-start gap-2 rounded p-1.5 hover:bg-gray-50 dark:hover:bg-gray-800"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={value.includes(slug)}
+                      onChange={() => toggle(slug)}
+                      className="mt-0.5 h-4 w-4 shrink-0"
+                    />
+                    <span className="min-w-0">
+                      {isNumeric ? (
+                        <span className="font-mono text-xs text-gray-400">#{o.id}</span>
+                      ) : (
+                        <>
+                          <span className="font-mono text-xs text-gray-400">#{o.id}</span>
+                          {" "}
+                          <span className="font-mono text-xs text-accent">{slug}</span>
+                        </>
+                      )}
+                      {" "}
+                      <span className="text-sm">{o.title}</span>
+                      {o.body && <span className="block truncate text-xs text-gray-400">{o.body}</span>}
+                    </span>
+                  </label>
+                );
+              })}
               {filtered.length === 0 && (
                 <p className="px-1 py-2 text-xs text-gray-400">
-                  No tasks with an id match. Give a task an Id to depend on it, or add a custom id below.
+                  No tasks match. Search by #number, slug id, or title.
                 </p>
               )}
             </div>
