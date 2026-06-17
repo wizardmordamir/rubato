@@ -12,6 +12,7 @@ import type {
   StepRunnerStatus,
   Target,
 } from "@shared/automation";
+import type { AutomationEnvironment, EnvVar } from "@shared/automationEnvironment";
 import type { EnvDiscoveryQuery, EnvDiscoveryResult } from "@shared/envDiscovery";
 import type { RunSpeed } from "@shared/pacing";
 import type { Pipeline, PipelineRunRecord, PipelineVariable, ScriptInfo, ScriptParamValues } from "@shared/pipeline";
@@ -916,6 +917,17 @@ export const runAutomation = (payload: {
 
 /** Close the browser left open after a headed run (failed, or kept open on request). */
 export const closeAutomationBrowser = () => postJson<{ ok: true }>("/api/automations/close-browser", {});
+
+// ── Automation environments (Postman-style named variable sets) ──
+export type { AutomationEnvironment, EnvVar };
+export const fetchAutomationEnvironments = () =>
+  getJson<AutomationEnvironment[]>("/api/automation-environments");
+export const saveAutomationEnvironment = (e: { id?: string; name: string; variables?: EnvVar[] }) =>
+  postJson<AutomationEnvironment>("/api/automation-environments", e);
+export const deleteAutomationEnvironment = async (id: string): Promise<void> => {
+  const res = await fetch(`/api/automation-environments/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete failed → ${res.status}`);
+};
 
 // ── Live step-through executor (run one action at a time in a headed browser) ──
 export const stepStart = (payload: { id?: string; automation?: Automation; speed?: RunSpeed }) =>

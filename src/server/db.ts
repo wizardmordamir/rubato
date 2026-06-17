@@ -25,6 +25,7 @@ import { cleanTags, type LinkImportResult, type LinkItem, type LinkItemInput } f
 import type { PipelineRunRecord } from '../shared/pipeline';
 import type { Plan, PlanInput } from '../shared/plans';
 import type { DbConnection, DbConnectionInput, SavedDbQuery, SavedDbQueryInput } from '../shared/queryBuilder';
+import type { AutomationEnvironment, EnvVar } from '../shared/automationEnvironment';
 import type { Environment, HttpRequest, SavedRequest } from '../shared/request/model';
 import type { SnConnection, SnConnectionInput, SnSavedRequest, SnSavedRequestInput } from '../shared/servicenow';
 import type {
@@ -545,6 +546,15 @@ export function getDb(): Database {
       tags TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS automation_environments (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      variables TEXT NOT NULL DEFAULT '[]',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
     )
   `);
   return db;
@@ -2750,4 +2760,56 @@ export function importShellAliases(aliases: { name: string; command: string; des
     imported++;
   }
   return { imported, skipped };
+}
+
+// ── Automation environments (Postman-style named variable sets for automation runs) ──
+
+interface AutomationEnvRow {
+  id: string;
+  name: string;
+  variables: string;
+  created_at: number;
+  updated_at: number;
+}
+
+function toAutoEnv(row: AutomationEnvRow): AutomationEnvironment {
+  return {
+    id: row.id,
+    name: row.name,
+    variables: JSON.parse(row.variables) as EnvVar[],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function listAutomationEnvironments(): AutomationEnvironment[] {
+  return getDb()
+    .query<AutomationEnvRow, []>('SELECT * FROM automation_environments ORDER BY name ASC')
+    .all()
+    .map(toAutoEnv);
+}
+
+export function saveAutomationEnvironment(input: {
+  id?: string;
+  name: string;
+  variables?: EnvVar[];
+}): AutomationEnvironment {
+  const db = getDb();
+  const now = Date.now();
+  const id = input.id ?? randomUUID();
+  const vars = JSON.stringify(input.variables ?? []);
+  db.query(
+    `INSERT INTO automation_environments (id, name, variables, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, variables=excluded.variables, updated_at=excluded.updated_at`,
+  ).run(id, input.name, vars, now, now);
+  return toAutoEnv(db.query<AutomationEnvRow, [string]>('SELECT * FROM automation_environments WHERE id = ?').get(id)!);
+}
+
+export function deleteAutomationEnvironment(id: string): boolean {
+  return (
+    getDb()
+      .query<{ id: string }, [string]>('DELETE FROM automation_environments WHERE id = ? RETURNING id')
+      .get(id) != null
+  );
 }

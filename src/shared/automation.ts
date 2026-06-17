@@ -174,6 +174,8 @@ export interface Automation {
   id: string;
   name: string;
   description?: string;
+  /** Folder / category this automation belongs to (e.g. "Staging", "Login flows"). */
+  folder?: string;
   /** Where a run starts (an implicit first goto). */
   startUrl?: string;
   steps: Step[];

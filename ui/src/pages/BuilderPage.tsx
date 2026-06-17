@@ -43,17 +43,18 @@ interface Draft {
   id?: string;
   name: string;
   description: string;
+  folder: string;
   startUrl: string;
   steps: Step[];
   /** Capture track recorded alongside the steps (HTML+screenshot timeline). */
   capture?: Automation["capture"];
 }
 
-const EMPTY: Draft = { name: "New automation", description: "", startUrl: "", steps: [] };
+const EMPTY: Draft = { name: "New automation", description: "", folder: "", startUrl: "", steps: [] };
 
 /** Serialize the persisted shape of a draft, to detect unsaved changes. */
 const snapshot = (d: Draft) =>
-  JSON.stringify({ name: d.name, description: d.description, startUrl: d.startUrl, steps: d.steps });
+  JSON.stringify({ name: d.name, description: d.description, folder: d.folder, startUrl: d.startUrl, steps: d.steps });
 
 const input =
   "rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/30 dark:border-gray-700 dark:bg-gray-900";
@@ -119,7 +120,7 @@ export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {
   });
   useEffect(() => {
     if (!data) return;
-    const loaded: Draft = { id: data.id, name: data.name, description: data.description ?? "", startUrl: data.startUrl ?? "", steps: data.steps, capture: data.capture };
+    const loaded: Draft = { id: data.id, name: data.name, description: data.description ?? "", folder: data.folder ?? "", startUrl: data.startUrl ?? "", steps: data.steps, capture: data.capture };
     setDraft(loaded);
     savedSnap.current = snapshot(loaded);
     setCaptureCount(data.capture?.count ?? 0);
@@ -173,6 +174,7 @@ export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {
         const loaded: Draft = {
           name: d.name,
           description: d.description ?? "",
+          folder: d.folder ?? "",
           startUrl: d.startUrl ?? "",
           steps: d.steps,
           capture: d.capture,
@@ -391,7 +393,7 @@ export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {
   };
 
   const save = useMutation({
-    mutationFn: () => saveAutomation({ id: draft.id, name: draft.name, description: draft.description, startUrl: draft.startUrl, steps: draft.steps, capture: draft.capture }),
+    mutationFn: () => saveAutomation({ id: draft.id, name: draft.name, description: draft.description, folder: draft.folder || undefined, startUrl: draft.startUrl, steps: draft.steps, capture: draft.capture }),
     onSuccess: (saved: Automation) => {
       notify(`Saved to ~/.rubato/automations/${saved.id}.json`, "success");
       setDraft((d) => ({ ...d, id: saved.id }));
@@ -457,6 +459,7 @@ export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {
         <div className="space-y-2">
           <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Name" className={`${input} w-full text-lg font-semibold`} />
           <input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="Description (optional)" className={`${input} w-full`} />
+          <input value={draft.folder} onChange={(e) => setDraft({ ...draft, folder: e.target.value })} placeholder="Folder / category (optional — e.g. Staging, Login flows)" className={`${input} w-full`} />
           <input value={draft.startUrl} onChange={(e) => setDraft({ ...draft, startUrl: e.target.value })} placeholder="Start URL (e.g. https://example.com/login)" className={`${input} w-full font-mono`} />
         </div>
 

@@ -81,6 +81,7 @@ import { createAppTag, getAppTags, isTagAction, runAppTagAction } from './appTag
 import { startAsk } from './ask';
 import { handleAuthApi } from './authRoutes';
 import { handleAutomationApi, handleSessionApi } from './automationRoutes';
+import { handleAutomationEnvApi } from './automationEnvRoutes';
 import { handleBoardApi } from './boardRoutes';
 import { handleCaptureApi } from './captureRoutes';
 import { handleCommandsApi } from './commandRoutes';
@@ -382,6 +383,9 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
   // Playwright automation builder routes (parameterized; handled before the switch).
   if (pathname.startsWith('/api/automation-runs') || pathname.startsWith('/api/automations')) {
     return handleAutomationApi(pathname, req);
+  }
+  if (pathname.startsWith('/api/automation-environments')) {
+    return handleAutomationEnvApi(pathname, req);
   }
   if (pathname.startsWith('/api/session/')) return handleSessionApi(pathname, req);
 

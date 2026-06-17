@@ -7,6 +7,7 @@ import { AdminPage } from "./pages/AdminPage";
 import { AppDetailPage, AppsPage } from "./pages/AppsPage";
 import { AppTemplatesPage } from "./pages/AppTemplatesPage";
 import { AutomationsPage } from "./pages/AutomationsPage";
+import { AutomationEnvironmentsPage } from "./pages/AutomationEnvironmentsPage";
 import { BoardPage } from "./pages/BoardPage";
 import { BuilderPage } from "./pages/BuilderPage";
 import { ChatPage } from "./pages/ChatPage";
@@ -56,7 +57,7 @@ const PAGE_ELEMENTS: Record<string, ReactNode> = {
   requests: <RequestsMergedPage />,
   commands: <CommandsPage />,
   scripts: <ScriptsPage />,
-  automations: <AutomationsPage />,
+  automations: <AutomationsPage showSharing />,
   pipelines: <PipelinesPage />,
   runs: <RunsMergedPage />,
   files: <ReportsPage />,
@@ -121,6 +122,7 @@ export function App() {
         {appsOn && <Route key="app-detail" path="/apps/:name" element={<AppDetailPage />} />}
         {commandsOn && <Route key="command-detail" path="/commands/:name" element={<CommandDetailPage />} />}
         {automationsOn && [
+          <Route key="auto-envs" path="/automations/environments" element={<AutomationEnvironmentsPage />} />,
           <Route key="auto-new" path="/automations/new" element={<BuilderPage />} />,
           <Route key="auto-view" path="/automations/:id" element={<ViewAutomationPage />} />,
           <Route key="auto-edit" path="/automations/:id/edit" element={<BuilderPage />} />,

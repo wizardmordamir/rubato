@@ -5,7 +5,9 @@
 
 import type { BrowserChoice, DetectedBrowser } from "@shared/automation";
 import type { RunSpeed } from "@shared/pacing";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { type AutomationEnvironment, fetchAutomationEnvironments, type EnvVar } from "../api";
 import { Alert, Dropdown, Tooltip } from "../components";
 import { RunStepLog, RunSummary } from "./RunSummary";
 import { RUN_SPEEDS, speedLabel } from "./useAutomationRunner";
@@ -60,14 +62,33 @@ export function RunControls({
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset on automation switch.
   useEffect(() => setValues({}), [automationId]);
 
-  const missing = required.filter((v) => !values[v.name]?.trim());
+  // Environment selector: pick a named set of variables to inject into this run.
+  const [selectedEnvId, setSelectedEnvId] = useState("");
+  const { data: environments = [] } = useQuery({
+    queryKey: ["automation-environments"],
+    queryFn: fetchAutomationEnvironments,
+  });
+  const selectedEnv = environments.find((e) => e.id === selectedEnvId) ?? null;
+
+  // Merge: environment vars first (lower priority), then manually entered values.
+  const missing = required.filter((v) => {
+    const fromEnv = selectedEnv?.variables.find((ev: EnvVar) => ev.enabled && ev.key === v.name)?.value;
+    return !fromEnv && !values[v.name]?.trim();
+  });
   const blocked = missing.length > 0;
 
   const supplied = useMemo(() => {
     const out: Record<string, string> = {};
+    // Environment variables as the base layer.
+    if (selectedEnv) {
+      for (const ev of selectedEnv.variables) {
+        if (ev.enabled && ev.key.trim()) out[ev.key.trim()] = ev.value;
+      }
+    }
+    // Manually entered values override environment.
     for (const [k, v] of Object.entries(values)) if (v.trim()) out[k] = v;
     return out;
-  }, [values]);
+  }, [values, selectedEnv]);
 
   // Optional fan-out: run the automation against several URLs at once (one
   // parallel browser window each). One URL per line (commas also split).
@@ -152,6 +173,27 @@ export function RunControls({
 
       {open && (
         <div className="absolute top-full right-0 z-10 mt-1 w-72 rounded-lg border border-gray-200 bg-white p-3 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900">
+          {/* Environment selector — pick a named variable set to inject into this run. */}
+          {environments.length > 0 && (
+            <div className="mb-3">
+              <div className="mb-2 text-xs font-semibold tracking-wide text-gray-400 uppercase">Environment</div>
+              <Dropdown
+                aria-label="Environment"
+                value={selectedEnvId}
+                onChange={(v) => setSelectedEnvId(v)}
+                options={[
+                  { value: "", label: "No environment" },
+                  ...environments.map((e) => ({ value: e.id, label: e.name })),
+                ]}
+              />
+              {selectedEnv && (
+                <p className="mt-1 text-xs text-gray-400">
+                  {selectedEnv.variables.filter((v: EnvVar) => v.enabled).length} variable
+                  {selectedEnv.variables.filter((v: EnvVar) => v.enabled).length === 1 ? "" : "s"} injected. Manual values above override.
+                </p>
+              )}
+            </div>
+          )}
           {variables.length > 0 && (
             <div className="mb-3">
               <div className="mb-2 text-xs font-semibold tracking-wide text-gray-400 uppercase">Variables</div>

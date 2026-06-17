@@ -61,10 +61,12 @@ export function buildAutomationRecord(input: AutomationInput, existing: Automati
   // Preserve the capture track when a save omits it (e.g. a steps-only edit of a
   // captured flow), but let a save set/replace it.
   const capture = input.capture ?? existing?.capture;
+  const folder = input.folder ?? existing?.folder;
   return {
     id,
     name: input.name,
     description: input.description,
+    ...(folder ? { folder } : {}),
     startUrl: input.startUrl,
     steps: input.steps,
     ...(capture ? { capture } : {}),
