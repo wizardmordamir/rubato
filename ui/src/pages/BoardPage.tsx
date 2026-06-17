@@ -18,6 +18,8 @@ import { useConfirm } from "../confirm";
  * Board — a simple Jira-like kanban for work tasks. Four fixed status columns;
  * cards drag between them (and reorder within one); a card opens an editor for
  * title/description/links/images/notes. Deliberately flat: no epics/stories.
+ * Column headers are clickable to focus a single status; clicking "Total" or the
+ * active column again resets to all-visible.
  */
 
 const COLUMN_CLASS = "flex min-h-40 flex-1 flex-col gap-2 rounded-xl bg-gray-100 p-3 dark:bg-gray-900";
@@ -31,6 +33,7 @@ export function BoardPage() {
   const { data: tasks = [] } = useQuery({ queryKey: ["board"], queryFn: fetchBoardTasks });
   const [editing, setEditing] = useState<BoardTask | "new" | null>(null);
   const [newStatus, setNewStatus] = useState<BoardStatus>("ready");
+  const [filter, setFilter] = useState<BoardStatus | null>(null);
 
   const byStatus = useMemo(() => {
     const map = Object.fromEntries(BOARD_STATUSES.map((s) => [s, [] as BoardTask[]])) as Record<
@@ -69,23 +72,57 @@ export function BoardPage() {
     onMove: moveCard,
   });
 
+  const CHIP_BASE = "rounded-full px-3 py-1 text-xs font-semibold transition-all";
+  const CHIP_ACTIVE = "bg-accent text-white";
+  const CHIP_IDLE = "bg-gray-200 text-gray-600 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700";
+
   return (
     <div className="flex h-full flex-col gap-4">
       <PageHeading title="Board" count={tasks.length} />
+
+      {/* Filter chips: Total clears the filter; each status chip focuses that column. */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setFilter(null)}
+          className={`${CHIP_BASE} ${filter === null ? CHIP_ACTIVE : CHIP_IDLE}`}
+        >
+          Total · {tasks.length}
+        </button>
+        {BOARD_STATUSES.map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setFilter(f => f === s ? null : s)}
+            className={`${CHIP_BASE} ${filter === s ? CHIP_ACTIVE : CHIP_IDLE}`}
+          >
+            {BOARD_STATUS_LABELS[s]} · {byStatus[s].length}
+          </button>
+        ))}
+      </div>
+
       <div className="flex flex-1 flex-wrap gap-4 lg:flex-nowrap">
         {BOARD_STATUSES.map((status) => {
           const isDropTarget = Boolean(draggingId) && activeContainerId === status;
+          const isDimmed = filter !== null && filter !== status;
+          const isSelected = filter === status;
           return (
             <section
               key={status}
               aria-label={BOARD_STATUS_LABELS[status]}
-              className={`${COLUMN_CLASS} transition ${isDropTarget ? "ring-2 ring-accent ring-inset" : ""}`}
+              className={`${COLUMN_CLASS} transition ${isDropTarget ? "ring-2 ring-accent ring-inset" : ""} ${isDimmed ? "opacity-40" : ""}`}
               {...getContainerProps(status)}
             >
               <div className="flex items-center justify-between">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                <h2
+                  className={`text-xs uppercase tracking-wide transition-colors ${
+                    isSelected ? "font-bold text-accent" : "font-semibold text-gray-500"
+                  }`}
+                >
                   {BOARD_STATUS_LABELS[status]}
-                  <span className="ml-1.5 font-normal text-gray-400">{byStatus[status].length}</span>
+                  <span className={`ml-1.5 font-normal ${isSelected ? "text-accent/70" : "text-gray-400"}`}>
+                    {byStatus[status].length}
+                  </span>
                 </h2>
                 <Tooltip multiline content={`Creates a new task card in the "${BOARD_STATUS_LABELS[status]}" column — a work item with a title, description, links, images, and notes that you can drag between columns as it progresses.`}>
                   <button

@@ -157,9 +157,12 @@ export function SideNav({
         itemClassNames={ITEM_CLASSNAMES}
       />
 
+      {/* Footer: collapse button stays anchored at the bottom-left corner.
+          In the expanded row it's first (leftmost); when the sidebar collapses to
+          a column, order-last pushes it to the bottom so it never "jumps up". */}
       <div
         className={`mt-3 flex items-center gap-2 border-t border-gray-200 pt-3 dark:border-gray-800 ${
-          collapsed ? "md:flex-wrap md:justify-center" : ""
+          collapsed ? "md:flex-col md:items-center" : ""
         }`}
       >
         <Tooltip content={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
@@ -167,7 +170,7 @@ export function SideNav({
           type="button"
           onClick={() => setCollapsed(!collapsed)}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className="icon-btn hidden md:inline-flex"
+          className={`icon-btn hidden md:inline-flex ${collapsed ? "md:order-last" : ""}`}
         >
           <span aria-hidden className="text-2xl leading-none">
             {collapsed ? "»" : "«"}
