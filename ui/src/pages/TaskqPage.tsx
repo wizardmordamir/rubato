@@ -45,7 +45,7 @@ import {
   type TaskqTaskView,
   updateTaskqTask,
 } from "../api";
-import { Alert, Badge, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLASS, PageHeading, Spinner, Tabs } from "../components";
+import { Alert, Badge, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLASS, PageHeading, Spinner, Tabs, Tooltip } from "../components";
 import { useConfirm } from "../confirm";
 import { useToast } from "../toast";
 
@@ -213,8 +213,8 @@ export function TaskqPage() {
         )}
         {tab === "workers" && (
           <div className="space-y-4">
-            <DrainerControl />
-            <CapacityPanel />
+            <DrainerControl onGoToSettings={() => setTab("settings")} />
+            <CapacityPanel onGoToSettings={() => setTab("settings")} />
             <InstancesPanel />
             <LogsPanel />
           </div>
@@ -903,11 +903,27 @@ const BUCKET_LABELS_SHORT: Record<string, string> = {
   weekly_sonnet: "Sonnet",
 };
 
+const DECISION_TOOLTIPS: Record<string, string> = {
+  Paused:
+    "One or more token buckets are exhausted. The drain will not spawn new workers until capacity recovers. Check the Usage tab for details or wait for the bucket to reset.",
+  Throttled:
+    "Token capacity is low. The drain will use a single worker this pass and prefer lighter models (Haiku/Sonnet) over Opus to conserve tokens.",
+  "Burning expiring":
+    "You have tokens that expire soon. The drain is running at full capacity to use them before they reset.",
+  Normal: "Token capacity is healthy. The drain will run at the configured number of workers.",
+};
+
+const BUCKET_FULL_LABELS: Record<string, string> = {
+  session_5h: "5-hour session",
+  weekly_total: "weekly total",
+  weekly_sonnet: "weekly Sonnet",
+};
+
 /**
  * Capacity panel — shows the schedule decision the next drain pass would make,
  * which worker slots exist, and which ready tasks can/cannot be claimed.
  */
-function CapacityPanel() {
+function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
   const { data, isLoading } = useQuery({
     queryKey: ["taskq-capacity"],
     queryFn: fetchTaskqCapacity,
@@ -942,17 +958,24 @@ function CapacityPanel() {
 
       {/* Schedule decision */}
       <div className={`${CARD_CLASS} mb-2 p-3`}>
-        <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
+        <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
           {/* Status */}
           <div>
-            <div className="mb-0.5 text-xs text-gray-500">Status</div>
+            <Tooltip multiline content="The scheduling decision the next drain pass will make, based on current token bucket levels. Paused = no workers; Throttled = 1 light-model worker; Burning expiring = full capacity; Normal = full capacity.">
+              <div className="mb-0.5 cursor-help text-xs text-gray-500 underline decoration-dotted">Status</div>
+            </Tooltip>
             <span className={`font-semibold ${decisionTone}`}>{decisionLabel}</span>
             <span className="ml-2 text-xs text-gray-400">{cap.decision.reason}</span>
+            {DECISION_TOOLTIPS[decisionLabel] && (
+              <p className={`mt-1 text-xs ${decisionTone} opacity-80`}>{DECISION_TOOLTIPS[decisionLabel]}</p>
+            )}
           </div>
 
           {/* Worker count */}
           <div>
-            <div className="mb-0.5 text-xs text-gray-500">Workers (next drain)</div>
+            <Tooltip multiline content={`The next drain pass will spawn ${cap.effectiveJobs} worker${cap.effectiveJobs !== 1 ? "s" : ""} (out of ${cap.maxJobs} configured slots). Workers are one-shot processes — they claim a task, run Claude, then exit. They are NOT always-on background processes.${throttled ? ` Throttled from ${cap.maxJobs} because capacity is low.` : ""}`}>
+              <div className="mb-0.5 cursor-help text-xs text-gray-500 underline decoration-dotted">Workers (next drain)</div>
+            </Tooltip>
             <span className="font-semibold">
               {cap.effectiveJobs}
               <span className="text-gray-400">/{cap.maxJobs}</span>
@@ -966,77 +989,116 @@ function CapacityPanel() {
 
           {/* Mode */}
           <div>
-            <div className="mb-0.5 text-xs text-gray-500">Mode</div>
-            <span className="text-sm">
+            <Tooltip
+              multiline
+              content={
+                cap.fleetMode
+                  ? "Fleet tiers mode: worker slots are partitioned by model family. Each tier only claims tasks that match its model list. Useful for mixing heavy (Opus) and light (Haiku/Sonnet) workers. Configure tiers in Settings → Fleet tiers. To switch to Flat mode, remove all fleet tiers in Settings."
+                  : "Flat mode: all worker slots claim any ready task regardless of the task's model marker. The task's (model:) annotation pins which model the worker will invoke — it does NOT filter which slot picks the task. To switch to Fleet tiers mode, add fleet tier entries in Settings → Fleet tiers."
+              }
+            >
+              <div className="mb-0.5 cursor-help text-xs text-gray-500 underline decoration-dotted">Mode</div>
+            </Tooltip>
+            <span className="text-sm font-medium">
               {cap.fleetMode ? "Fleet tiers" : "Flat"}
             </span>
             <span className="ml-1.5 text-xs text-gray-400">
               default: <span className="font-mono">{cap.defaultModel}</span>
             </span>
+            <button
+              type="button"
+              className="ml-2 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              onClick={onGoToSettings}
+            >
+              {cap.fleetMode ? "Edit tiers ↗" : "Add tiers ↗"}
+            </button>
           </div>
 
           {/* Token buckets */}
           {cap.buckets.length > 0 && (
             <div>
-              <div className="mb-0.5 text-xs text-gray-500">Token capacity</div>
+              <Tooltip multiline content="Claude API token usage across time windows. Drain behavior adapts automatically: below ~40% a throttle kicks in; near 0% the drain pauses entirely. Buckets reset on their own schedule (shown as '·Xh' remaining). Adjust calibration on the Usage tab.">
+                <div className="mb-0.5 cursor-help text-xs text-gray-500 underline decoration-dotted">Token capacity</div>
+              </Tooltip>
               <div className="flex items-center gap-3">
                 {cap.buckets.map((b) => {
                   const pct = Math.round(b.fraction * 100);
                   const tone = b.fraction < 0.12 ? "text-red-600" : b.fraction < 0.4 ? "text-amber-600" : "text-emerald-600";
                   return (
-                    <span key={b.key} className="text-xs">
-                      <span className="text-gray-500">{BUCKET_LABELS_SHORT[b.key] ?? b.key} </span>
-                      <span className={`font-semibold ${tone}`}>{pct}%</span>
-                      {b.resetInSeconds != null && (
-                        <span className="text-gray-400"> ·{Math.round(b.resetInSeconds / 3600)}h</span>
-                      )}
-                    </span>
+                    <Tooltip
+                      key={b.key}
+                      content={`${BUCKET_FULL_LABELS[b.key] ?? b.key}: ${pct}% remaining (${b.remaining.toLocaleString()} tokens left${b.resetInSeconds != null ? `, resets in ~${Math.round(b.resetInSeconds / 3600)}h` : ""})`}
+                    >
+                      <span className="cursor-help text-xs">
+                        <span className="text-gray-500">{BUCKET_LABELS_SHORT[b.key] ?? b.key} </span>
+                        <span className={`font-semibold ${tone}`}>{pct}%</span>
+                        {b.resetInSeconds != null && (
+                          <span className="text-gray-400"> ·{Math.round(b.resetInSeconds / 3600)}h</span>
+                        )}
+                      </span>
+                    </Tooltip>
                   );
                 })}
               </div>
             </div>
           )}
         </div>
-
-        {/* Paused explanation */}
-        {cap.decision.paused && (
-          <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-            Token limit exhausted — drain is paused. Calibrate usage on the Usage tab or wait for reset.
-          </p>
-        )}
-
-        {/* preferLight note */}
-        {cap.decision.preferLight && !cap.decision.paused && (
-          <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-            Low capacity: drain will use 1 worker and prefer light models this pass.
-          </p>
-        )}
       </div>
 
       {/* Worker slots */}
       <div className={`${CARD_CLASS} mb-2 p-3`}>
-        <div className="mb-1 text-xs font-medium text-gray-500">
-          Worker slots ({cap.maxJobs} configured
-          {cap.fleetMode ? " via fleet tiers" : " flat"})
-        </div>
+        <Tooltip
+          multiline
+          content={
+            cap.fleetMode
+              ? "Worker slots allocated by fleet tier. Each slot shows which model(s) it will use when claiming tasks. A slot only picks up tasks that match its model list (or tasks with no model pin in Fleet mode)."
+              : "Worker slots in Flat mode. All slots show 'any' — they can claim any ready task regardless of model. The task's (model:) tag tells the worker which model to invoke, but any slot can claim any task."
+          }
+        >
+          <div className="mb-1 cursor-help text-xs font-medium text-gray-500 underline decoration-dotted">
+            Worker slots ({cap.maxJobs} configured
+            {cap.fleetMode ? " via fleet tiers" : " · flat"})
+          </div>
+        </Tooltip>
         <div className="flex flex-wrap gap-1.5">
           {cap.workerSlots.map((s) => (
-            <span
+            <Tooltip
               key={s.index}
-              className="inline-flex items-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-800"
+              content={
+                s.models === null
+                  ? `Slot w${s.index}: Flat mode — claims any ready task.`
+                  : `Slot w${s.index}: Fleet tier — only claims tasks pinned to ${s.models.join(" or ")}.`
+              }
             >
-              <span className="text-gray-400">w{s.index}</span>
-              <span className="font-mono">
-                {s.models === null ? <span className="text-gray-500">any</span> : s.models.join(",")}
+              <span
+                className="inline-flex cursor-help items-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-800"
+              >
+                <span className="text-gray-400">w{s.index}</span>
+                <span className="font-mono">
+                  {s.models === null ? <span className="text-gray-500">any</span> : s.models.join(",")}
+                </span>
               </span>
-            </span>
+            </Tooltip>
           ))}
         </div>
         {!cap.fleetMode && (
-          <p className="mt-1 text-xs text-gray-400">
-            Flat mode: all slots claim any ready task regardless of model.
-            A task's <span className="font-mono">model:</span> marker pins the model the worker will invoke,
-            not which slot claims it.
+          <p className="mt-1.5 text-xs text-gray-400">
+            <strong className="text-gray-500">Flat mode:</strong> all slots claim any ready task. A task's{" "}
+            <span className="font-mono">(model:)</span> marker tells the worker which model to invoke — it does
+            NOT restrict which slot can claim it. Switch to{" "}
+            <button type="button" className="underline hover:text-gray-600" onClick={onGoToSettings}>
+              Fleet tiers
+            </button>{" "}
+            to partition slots by model family.
+          </p>
+        )}
+        {cap.fleetMode && (
+          <p className="mt-1.5 text-xs text-gray-400">
+            <strong className="text-gray-500">Fleet tiers mode:</strong> each slot only claims tasks matching its
+            model list. Tasks with no model pin are claimable by any slot.{" "}
+            <button type="button" className="underline hover:text-gray-600" onClick={onGoToSettings}>
+              Edit tiers ↗
+            </button>
           </p>
         )}
       </div>
@@ -1044,15 +1106,20 @@ function CapacityPanel() {
       {/* Ready task eligibility */}
       <div className={`${CARD_CLASS} p-3`}>
         <div className="mb-2 flex items-center justify-between">
-          <div className="text-xs font-medium text-gray-500">
-            Ready tasks ({cap.totalReady}
-            {cap.unservableReady > 0 && (
-              <span className="ml-1 font-semibold text-red-600 dark:text-red-400">
-                · {cap.unservableReady} unclaimable
-              </span>
-            )}
-            )
-          </div>
+          <Tooltip
+            multiline
+            content="Tasks currently in 'ready' status and eligible for the next drain pass. A task is unclaimable when no worker slot can serve its model requirement (Fleet mode mismatch). Fix by adding the required model to a fleet tier, or switch to Flat mode."
+          >
+            <div className="cursor-help text-xs font-medium text-gray-500 underline decoration-dotted">
+              Ready tasks ({cap.totalReady}
+              {cap.unservableReady > 0 && (
+                <span className="ml-1 font-semibold text-red-600 dark:text-red-400">
+                  · {cap.unservableReady} unclaimable
+                </span>
+              )}
+              )
+            </div>
+          </Tooltip>
         </div>
 
         {cap.totalReady === 0 ? (
@@ -1081,20 +1148,28 @@ function CapacityPanel() {
                     <span className="font-medium">{t.title}</span>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-gray-500">
                       {/* Model resolution */}
-                      <span>
-                        {t.model ? (
-                          <>
-                            <span className="font-mono text-accent">{t.model}</span>
-                            <span className="text-gray-400"> (pinned)</span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="text-gray-400">no model pin → </span>
-                            <span className="font-mono">{t.effectiveModel}</span>
-                            <span className="text-gray-400"> (default)</span>
-                          </>
-                        )}
-                      </span>
+                      <Tooltip
+                        content={
+                          t.model
+                            ? `This task has a (model:${t.model}) pin — the worker will run Claude with that model.`
+                            : `No model pin — the worker will use the default model (${t.effectiveModel}).`
+                        }
+                      >
+                        <span className="cursor-help">
+                          {t.model ? (
+                            <>
+                              <span className="font-mono text-accent">{t.model}</span>
+                              <span className="text-gray-400"> (pinned)</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-gray-400">no pin → </span>
+                              <span className="font-mono">{t.effectiveModel}</span>
+                              <span className="text-gray-400"> (default)</span>
+                            </>
+                          )}
+                        </span>
+                      </Tooltip>
                       {t.repo && <span>{t.repo}</span>}
                       {/* Claimability */}
                       {canClaim ? (
@@ -1125,7 +1200,7 @@ function CapacityPanel() {
           <p className="mt-2 text-xs text-gray-400">
             {cap.totalReady} ready task{cap.totalReady > 1 ? "s" : ""} · {cap.maxJobs} slots — only{" "}
             {cap.totalReady} worker{cap.totalReady > 1 ? "s" : ""} will run (others exit idle immediately).
-            Workers are per-drain-pass, not always-on processes.
+            Workers are per-drain-pass processes, not always-on daemons.
           </p>
         )}
       </div>
@@ -1133,9 +1208,45 @@ function CapacityPanel() {
   );
 }
 
+/** Small status dot with label. */
+function StatusDot({
+  on,
+  label,
+  color,
+}: {
+  on: boolean;
+  label: string;
+  color: "emerald" | "accent" | "amber" | "gray";
+}) {
+  const dotColor = on
+    ? color === "accent"
+      ? "bg-accent"
+      : color === "emerald"
+        ? "bg-emerald-500 dark:bg-emerald-400"
+        : color === "amber"
+          ? "bg-amber-500 dark:bg-amber-400"
+          : "bg-gray-400"
+    : "bg-gray-300 dark:bg-gray-600";
+  const textColor =
+    color === "accent"
+      ? "text-accent"
+      : color === "emerald"
+        ? "text-emerald-600 dark:text-emerald-400"
+        : color === "amber"
+          ? "text-amber-600 dark:text-amber-400"
+          : "text-gray-400";
+  return (
+    <span className={`flex items-center gap-1.5 text-xs ${on ? textColor : "text-gray-400"}`}>
+      <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
+      {label}
+    </span>
+  );
+}
+
 /** Drainer status + control (replaces the old Watchdog tab). */
-function DrainerControl() {
+function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
   const { data } = useQuery({ queryKey: ["taskq-drainer"], queryFn: fetchTaskqDrainer, refetchInterval: 5000 });
+  const configQ = useQuery({ queryKey: ["taskq-config"], queryFn: fetchTaskqConfig });
   const qc = useQueryClient();
   const { notify } = useToast();
   const run = useMutation({
@@ -1150,44 +1261,187 @@ function DrainerControl() {
     mutationFn: stopTaskqDrainer,
     onSuccess: (r) => {
       qc.setQueryData(["taskq-drainer"], r.status);
-      notify("Graceful stop set — workers exit between tasks", "success");
+      notify("Graceful stop set — workers finish their current task, then exit", "success");
     },
   });
   const resume = useMutation({
     mutationFn: resumeTaskqDrainer,
     onSuccess: (r) => {
       qc.setQueryData(["taskq-drainer"], r.status);
-      notify("Resumed", "success");
+      notify("Resumed — workers will claim new tasks on the next drain", "success");
     },
+  });
+  const watchdog = useMutation({
+    mutationFn: (action: "load" | "unload") => setTaskqWatchdog(action),
+    onSuccess: (r, action) => {
+      qc.invalidateQueries({ queryKey: ["taskq-drainer"] });
+      notify(
+        r.ok
+          ? action === "load"
+            ? "Watchdog loaded — drain passes will fire automatically on the tick interval"
+            : "Watchdog unloaded — no more automatic drain ticks (you can still run manually)"
+          : r.out || "failed",
+        r.ok ? "success" : "error",
+      );
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "failed", "error"),
   });
 
   const s = data;
-  const dot = (on: boolean, label: string, tone: string) => (
-    <span className={`flex items-center gap-1 text-xs ${tone}`}>
-      <span className={`inline-block h-2 w-2 rounded-full ${on ? "bg-current" : "bg-gray-300 dark:bg-gray-600"}`} />
-      {label}
-    </span>
-  );
+  const interval = configQ.data?.interval;
+
   return (
-    <div className={`${CARD_CLASS} mb-3 flex flex-wrap items-center justify-between gap-3 p-3`}>
-      <div className="flex flex-wrap items-center gap-4">
-        {dot(!!s?.watchdogLoaded, s?.watchdogLoaded ? "Watchdog loaded" : "Watchdog off", s?.watchdogLoaded ? "text-emerald-600" : "text-gray-400")}
-        {dot(!!s?.running, s?.running ? "Draining now" : "Idle", s?.running ? "text-accent" : "text-gray-400")}
-        {s?.stopped && dot(true, "Stop sentinel set", "text-amber-600")}
-      </div>
-      <div className="flex items-center gap-2">
-        <button type="button" className={BTN_GHOST_CLASS} onClick={() => run.mutate()} disabled={run.isPending || s?.running}>
-          Run now
-        </button>
-        {s?.stopped ? (
-          <button type="button" className={BTN_GHOST_CLASS} onClick={() => resume.mutate()} disabled={resume.isPending}>
-            Resume
-          </button>
-        ) : (
-          <button type="button" className={BTN_GHOST_CLASS} onClick={() => stop.mutate()} disabled={stop.isPending}>
-            Graceful stop
-          </button>
+    <div className={`${CARD_CLASS} mb-3 p-3`}>
+      {/* Status row */}
+      <div className="mb-3 flex flex-wrap items-start gap-6">
+        {/* Scheduler section */}
+        <div className="min-w-[120px]">
+          <div className="mb-1.5 text-xs font-medium text-gray-500">Scheduler</div>
+          <Tooltip
+            multiline
+            content={
+              s?.watchdogLoaded
+                ? `The launchd watchdog agent (com.taskq.drain) is loaded and active. It automatically fires a drain pass every ${interval != null ? fmtInterval(interval) : "tick"} — even when no browser window is open. Unload it to stop automatic draining (you can still trigger runs manually).`
+                : "The launchd watchdog agent is NOT loaded — drain passes only run when you click 'Run now'. Load it to enable automatic periodic draining on a background timer."
+            }
+          >
+            <StatusDot
+              on={!!s?.watchdogLoaded}
+              label={s?.watchdogLoaded ? "Watchdog loaded" : "Watchdog off"}
+              color={s?.watchdogLoaded ? "emerald" : "gray"}
+            />
+          </Tooltip>
+          {s?.watchdogLoaded && interval != null && (
+            <div className="mt-1 text-xs text-gray-400">
+              fires every{" "}
+              <Tooltip content={`launchd StartInterval = ${interval}s. Change this in Settings → Watchdog. Reload is required for the new interval to take effect.`}>
+                <span className="cursor-help border-b border-dotted border-gray-400 font-medium text-gray-600 dark:text-gray-300">
+                  {fmtInterval(interval)}
+                </span>
+              </Tooltip>
+            </div>
+          )}
+        </div>
+
+        {/* Active drain section */}
+        <div className="min-w-[120px]">
+          <div className="mb-1.5 text-xs font-medium text-gray-500">Active drain</div>
+          <Tooltip
+            multiline
+            content={
+              s?.running
+                ? "A taskqDrain process is actively running right now — it is claiming ready tasks and spawning Claude workers. This state is ephemeral: the process starts, works through the queue, and exits. The watchdog scheduler (if loaded) will restart it on the next tick."
+                : "No drain is running right now. The queue is idle. If the watchdog is loaded, a new drain pass will start automatically on the next scheduler tick. You can also trigger one immediately with 'Run now'."
+            }
+          >
+            <StatusDot on={!!s?.running} label={s?.running ? "Draining now" : "Idle"} color={s?.running ? "accent" : "gray"} />
+          </Tooltip>
+          {s?.running && (
+            <div className="mt-1 text-xs text-gray-400">
+              workers are claiming tasks
+            </div>
+          )}
+          {!s?.running && s?.watchdogLoaded && interval != null && (
+            <div className="mt-1 text-xs text-gray-400">
+              next auto-tick in ≤{fmtInterval(interval)}
+            </div>
+          )}
+        </div>
+
+        {/* Stop sentinel section */}
+        {s?.stopped && (
+          <div className="min-w-[120px]">
+            <div className="mb-1.5 text-xs font-medium text-gray-500">Stop signal</div>
+            <Tooltip
+              multiline
+              content="The graceful-stop sentinel (.stop file in ~/.taskq/) is set. Running workers will finish their current task and then exit — no new tasks are claimed. The watchdog will still fire ticks but the drain will exit early when it sees this file. Click 'Resume' to clear it and let workers claim tasks again."
+            >
+              <StatusDot on={true} label="Stop sentinel set" color="amber" />
+            </Tooltip>
+          </div>
         )}
+      </div>
+
+      {/* Controls row */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Drain controls */}
+        <Tooltip content="Spawn a drain pass right now. Clears the stop sentinel first. Workers start immediately, claim ready tasks, and exit when the queue is empty or all slots are filled.">
+          <button
+            type="button"
+            className={BTN_GHOST_CLASS}
+            onClick={() => run.mutate()}
+            disabled={run.isPending || !!s?.running}
+          >
+            {run.isPending && <Spinner />}
+            Run now
+          </button>
+        </Tooltip>
+
+        {s?.stopped ? (
+          <Tooltip content="Clear the graceful-stop sentinel so workers can claim new tasks on the next drain pass.">
+            <button
+              type="button"
+              className={BTN_GHOST_CLASS}
+              onClick={() => resume.mutate()}
+              disabled={resume.isPending}
+            >
+              {resume.isPending && <Spinner />}
+              Resume
+            </button>
+          </Tooltip>
+        ) : (
+          <Tooltip
+            multiline
+            content="Set the graceful-stop sentinel. Running workers finish their current task and then exit without picking up anything new. The queue is preserved — nothing is lost. Use this to pause draining gracefully without interrupting in-flight work."
+          >
+            <button
+              type="button"
+              className={BTN_GHOST_CLASS}
+              onClick={() => stop.mutate()}
+              disabled={stop.isPending}
+            >
+              {stop.isPending && <Spinner />}
+              Graceful stop
+            </button>
+          </Tooltip>
+        )}
+
+        {/* Watchdog load/unload */}
+        <div className="ml-1 border-l border-gray-200 pl-3 dark:border-gray-700">
+          {s?.watchdogLoaded ? (
+            <Tooltip content="Unload the launchd watchdog agent. Automatic drain ticks stop immediately. You can still trigger drains manually with 'Run now'. Reload in Settings → Watchdog to re-enable.">
+              <button
+                type="button"
+                className={BTN_GHOST_CLASS}
+                onClick={() => watchdog.mutate("unload")}
+                disabled={watchdog.isPending}
+              >
+                {watchdog.isPending && <Spinner />}
+                Unload watchdog
+              </button>
+            </Tooltip>
+          ) : (
+            <Tooltip content="Load the launchd watchdog agent. It will run drain passes automatically on the configured tick interval. Configure the interval and other settings in Settings.">
+              <button
+                type="button"
+                className={BTN_GHOST_CLASS}
+                onClick={() => watchdog.mutate("load")}
+                disabled={watchdog.isPending}
+              >
+                {watchdog.isPending && <Spinner />}
+                Load watchdog
+              </button>
+            </Tooltip>
+          )}
+        </div>
+
+        <button
+          type="button"
+          className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+          onClick={onGoToSettings}
+        >
+          Configure in Settings ↗
+        </button>
       </div>
     </div>
   );
@@ -1196,6 +1450,13 @@ function DrainerControl() {
 function fmtDur(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+function fmtInterval(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+  if (seconds >= 60) return `${Math.floor(seconds / 60)}m`;
+  return `${seconds}s`;
 }
 
 /** Live worker instances (current leases) + per-instance release. */
@@ -1427,17 +1688,20 @@ function ConfigForm({ config, interval, watchdogLoaded }: { config: TaskqConfig;
       <section className={`${CARD_CLASS} p-4`}>
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Worker pool</h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label={`Max instances (jobs): ${jobs}`} hint="Concurrent workers when no fleet tiers are set.">
+          <Field
+            label={`Max instances (jobs): ${jobs}`}
+            hint="Max concurrent workers per drain pass (Flat mode). Overridden by fleet tiers if any are configured."
+          >
             <input type="range" min={1} max={16} value={jobs} onChange={(e) => setJobs(Number(e.target.value))} className="w-full" />
           </Field>
-          <Field label="Default model" hint="Used when a task pins no model.">
+          <Field label="Default model" hint="Model passed to 'claude -p' when a task has no (model:) pin. Overridden per-task by (model:opus), (model:sonnet), etc.">
             <select className={FIELD_CLASS} value={model} onChange={(e) => setModel(e.target.value)}>
               {TASKQ_MODEL_ALIASES.map((m) => (
                 <option key={m} value={m}>{m}</option>
               ))}
             </select>
           </Field>
-          <Field label="Default thinking" hint="Fallback when a task pins none.">
+          <Field label="Default thinking" hint="Extended thinking level for workers with no (think:) task pin. 'off' = no extended thinking. Higher levels use more tokens.">
             <select className={FIELD_CLASS} value={think} onChange={(e) => setThink(e.target.value)}>
               <option value="">off / unset</option>
               {TASKQ_THINK_LEVELS.map((t) => (
@@ -1445,24 +1709,35 @@ function ConfigForm({ config, interval, watchdogLoaded }: { config: TaskqConfig;
               ))}
             </select>
           </Field>
-          <Field label="Lease TTL (min)" hint="Reaped + retried if a worker doesn't heartbeat within this.">
+          <Field label="Lease TTL (min)" hint="A worker must heartbeat within this window or its lease is reaped and the task is returned to 'ready' for retry.">
             <input type="number" min={1} className={FIELD_CLASS} value={ttlMin} onChange={(e) => setTtlMin(Number(e.target.value))} />
           </Field>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={fast} onChange={(e) => setFast(e.target.checked)} className="h-4 w-4" />
-            Fast mode default
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={triage} onChange={(e) => setTriage(e.target.checked)} className="h-4 w-4" />
-            Auto-triage (grade blank tasks + decompose epics)
-          </label>
+          <Tooltip content="Pass --fast to 'claude -p', enabling fast mode (Opus with faster output). Uses more tokens per session. Can be overridden per-task with (fast:) markers.">
+            <label className="flex cursor-help items-center gap-2 text-sm">
+              <input type="checkbox" checked={fast} onChange={(e) => setFast(e.target.checked)} className="h-4 w-4" />
+              Fast mode default
+            </label>
+          </Tooltip>
+          <Tooltip multiline content="When enabled, the drain checks new tasks with no description and auto-grades them (assigns a model/think level) and decomposes any epics into subtasks before claiming. Adds a brief triage pass before the main drain.">
+            <label className="flex cursor-help items-center gap-2 text-sm">
+              <input type="checkbox" checked={triage} onChange={(e) => setTriage(e.target.checked)} className="h-4 w-4" />
+              Auto-triage (grade blank tasks + decompose epics)
+            </label>
+          </Tooltip>
         </div>
       </section>
 
       {/* Fleet tiers */}
       <section className={`${CARD_CLASS} p-4`}>
         <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-gray-500">Fleet tiers</h3>
-        <p className="mb-3 text-xs text-gray-400">Per-model worker pools — overrides the flat Jobs above. Each tier only claims tasks for its models (untagged tasks match any).</p>
+        <p className="mb-3 text-xs text-gray-400">
+          Per-model worker pools — overrides the flat Jobs setting above.{" "}
+          <strong className="text-gray-500">Flat mode</strong> (no tiers): all slots claim any task, the task's{" "}
+          <span className="font-mono">(model:)</span> tag just picks the model.{" "}
+          <strong className="text-gray-500">Fleet mode</strong> (has tiers): each tier gets a dedicated pool that
+          only claims tasks matching its model list. Useful for mixing Opus/Sonnet/Haiku workers. Each tier entry
+          shows as a labeled slot in Workers → Drain capacity. Remove all tiers to return to Flat mode.
+        </p>
         <div className="space-y-2">
           {fleet.map((tier, i) => (
             <div key={i} className="flex items-center gap-2">
@@ -1497,24 +1772,54 @@ function ConfigForm({ config, interval, watchdogLoaded }: { config: TaskqConfig;
 
       {/* Watchdog (launchd) */}
       <section className={`${CARD_CLASS} p-4`}>
-        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Watchdog (launchd)</h3>
+        <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-gray-500">Watchdog (launchd)</h3>
+        <p className="mb-3 text-xs text-gray-400">
+          The launchd agent (<span className="font-mono">com.taskq.drain</span>) fires drain passes automatically
+          on a timer. When loaded, it runs even when no browser window is open. Loading writes a plist to{" "}
+          <span className="font-mono">~/Library/LaunchAgents/</span> and registers it with launchd.
+        </p>
         <div className="flex flex-wrap items-center gap-3">
-          <Badge tone={watchdogLoaded ? "success" : "neutral"}>{watchdogLoaded ? "loaded" : "not loaded"}</Badge>
+          <Tooltip
+            content={
+              watchdogLoaded
+                ? "The launchd agent is loaded and will fire drain passes automatically on the configured tick interval."
+                : "The launchd agent is not loaded. Drain passes will only run when triggered manually."
+            }
+          >
+            <Badge tone={watchdogLoaded ? "success" : "neutral"}>{watchdogLoaded ? "loaded" : "not loaded"}</Badge>
+          </Tooltip>
           {watchdogLoaded ? (
-            <button type="button" className={BTN_GHOST_CLASS} onClick={() => watchdog.mutate("unload")} disabled={watchdog.isPending}>
-              Unload
-            </button>
+            <Tooltip content="Unload the launchd agent. Automatic drain ticks will stop. You can still run drains manually from the Workers tab.">
+              <button type="button" className={BTN_GHOST_CLASS} onClick={() => watchdog.mutate("unload")} disabled={watchdog.isPending}>
+                {watchdog.isPending && <Spinner />}
+                Unload
+              </button>
+            </Tooltip>
           ) : (
-            <button type="button" className={BTN_GHOST_CLASS} onClick={() => watchdog.mutate("load")} disabled={watchdog.isPending}>
-              Load
-            </button>
+            <Tooltip content="Load (or reload) the launchd agent with the current tick interval. The agent will start firing drain passes automatically.">
+              <button type="button" className={BTN_GHOST_CLASS} onClick={() => watchdog.mutate("load")} disabled={watchdog.isPending}>
+                {watchdog.isPending && <Spinner />}
+                Load
+              </button>
+            </Tooltip>
           )}
-          <span className="text-sm text-gray-500">Tick every</span>
-          <input type="number" min={30} className={`${FIELD_CLASS} w-24`} value={intervalS} onChange={(e) => setIntervalS(Number(e.target.value))} />
+          <Tooltip content="How often launchd fires a drain pass, in seconds. Minimum 30s. After changing, click 'Set interval' — this rewrites the plist and reloads the agent.">
+            <span className="text-sm text-gray-500">Tick every</span>
+          </Tooltip>
+          <input
+            type="number"
+            min={30}
+            className={`${FIELD_CLASS} w-24`}
+            value={intervalS}
+            onChange={(e) => setIntervalS(Number(e.target.value))}
+          />
           <span className="text-sm text-gray-500">s</span>
-          <button type="button" className={BTN_GHOST_CLASS} onClick={() => setIntv.mutate()} disabled={setIntv.isPending}>
-            Set interval
-          </button>
+          <Tooltip content="Rewrite the plist with the new tick interval and reload the launchd agent. Takes effect immediately.">
+            <button type="button" className={BTN_GHOST_CLASS} onClick={() => setIntv.mutate()} disabled={setIntv.isPending}>
+              {setIntv.isPending && <Spinner />}
+              Set interval
+            </button>
+          </Tooltip>
         </div>
       </section>
 
