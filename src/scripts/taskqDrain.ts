@@ -46,6 +46,9 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Stamp the fire time so the UI can compute a real countdown to the next tick.
+  writeFileSync(join(taskqHome(), '.last-fire'), String(Date.now()));
+
   const config = loadTaskqConfig();
   const db = getTaskqDb();
   const dryRun = process.env.TASKQ_DRY_RUN === '1';
