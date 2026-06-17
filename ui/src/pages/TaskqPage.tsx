@@ -225,6 +225,7 @@ export function TaskqPage() {
                   onHold={(t) =>
                     status.mutate(t.status === "on_hold" ? { id: t.id, status: "ready" } : { id: t.id, status: "on_hold" })
                   }
+                  onRequeue={(t) => status.mutate({ id: t.id, status: "ready" })}
                   onEnqueue={(t) => enqueue.mutate(t.id)}
                 />
               ))
@@ -286,6 +287,7 @@ function TaskCard({
   onEdit,
   onDelete,
   onHold,
+  onRequeue,
   onEnqueue,
   dragHandle,
 }: {
@@ -293,6 +295,7 @@ function TaskCard({
   onEdit: () => void;
   onDelete: () => void;
   onHold: () => void;
+  onRequeue: () => void;
   onEnqueue: () => void;
   /** A drag-grip element (from the section's useDragReorder), when reorderable. */
   dragHandle?: React.ReactNode;
@@ -378,6 +381,11 @@ function TaskCard({
                 Enqueue
               </button>
             )}
+            {task.status === "failed" && (
+              <button type="button" onClick={onRequeue} className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
+                Re-queue
+              </button>
+            )}
             {editable && (
               <>
                 <button type="button" onClick={onEdit} className="text-xs text-accent hover:underline">
@@ -430,6 +438,7 @@ function BoardSection({
   onEdit,
   onDelete,
   onHold,
+  onRequeue,
   onEnqueue,
 }: {
   status: TaskqStatus;
@@ -442,6 +451,7 @@ function BoardSection({
   onEdit: (t: TaskqTaskView) => void;
   onDelete: (t: TaskqTaskView) => void;
   onHold: (t: TaskqTaskView) => void;
+  onRequeue: (t: TaskqTaskView) => void;
   onEnqueue: (t: TaskqTaskView) => void;
 }) {
   const ids = tasks.map((t) => String(t.id));
@@ -462,7 +472,7 @@ function BoardSection({
         <div {...(canDrag ? dr.containerProps : {})} className="space-y-2">
           {tasks.map((t) => {
             if (!canDrag) {
-              return <TaskCard key={t.id} task={t} onEdit={() => onEdit(t)} onDelete={() => onDelete(t)} onHold={() => onHold(t)} onEnqueue={() => onEnqueue(t)} />;
+              return <TaskCard key={t.id} task={t} onEdit={() => onEdit(t)} onDelete={() => onDelete(t)} onHold={() => onHold(t)} onRequeue={() => onRequeue(t)} onEnqueue={() => onEnqueue(t)} />;
             }
             const idStr = String(t.id);
             const ip = dr.getItemProps(idStr);
@@ -481,6 +491,7 @@ function BoardSection({
                   onEdit={() => onEdit(t)}
                   onDelete={() => onDelete(t)}
                   onHold={() => onHold(t)}
+                  onRequeue={() => onRequeue(t)}
                   onEnqueue={() => onEnqueue(t)}
                   dragHandle={<DragHandle handleProps={dr.getHandleProps(idStr)} label={`Reorder ${t.title}`} />}
                 />

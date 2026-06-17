@@ -56,7 +56,7 @@ export const TASKQ_STATUSES: TaskStatus[] = [
 ];
 
 /** Statuses the builder may set directly (runtime states are engine-owned). */
-export const TASKQ_AUTHORABLE_STATUSES: TaskStatus[] = ['ready', 'on_hold', 'not_ready', 'pending_triage'];
+export const TASKQ_AUTHORABLE_STATUSES: TaskStatus[] = ['ready', 'on_hold', 'not_ready', 'pending_triage', 'failed'];
 
 export const TASKQ_STATUS_LABELS: Record<TaskStatus, string> = {
   pending_triage: 'Pending triage',
