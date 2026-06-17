@@ -1,0 +1,81 @@
+#!/usr/bin/env bun
+/**
+ * taskq drainer entrypoint (the v2 orchestrator process; replaces drain-queue.sh).
+ * Opens ~/.taskq, sizes the worker pool from config (flat JOBS or fleet tiers),
+ * picks the real `claude -p` executor (or a no-op in dry-run), drains until the
+ * queue is empty or a stop sentinel appears, then regenerates the markdown view.
+ *
+ *   bun run src/scripts/taskqDrain.ts            # real run
+ *   TASKQ_DRY_RUN=1 bun run src/scripts/taskqDrain.ts   # validate the loop, no agents
+ *
+ * Graceful stop: `touch ~/.taskq/.stop` (workers exit between tasks).
+ */
+
+import { existsSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { type ClaimFilters, getNeeds, listTasks, renderTasksMarkdown, taskqHome } from 'cwip/taskq';
+import { getTaskqDb } from '../server/taskqDb';
+import { loadTaskqConfig } from '../server/taskq/config';
+import { dryRunExecutor, makeClaudeExecutor } from '../server/taskq/claudeExecutor';
+import { taskqLaunchdPlist } from '../server/taskq/launchd';
+import { runDrain } from '../server/taskq/orchestrator';
+
+function regenerateView(db: ReturnType<typeof getTaskqDb>): void {
+  const rows = listTasks(db);
+  const needs: Record<number, string[]> = {};
+  for (const t of rows) {
+    const n = getNeeds(db, t.id);
+    if (n.length) needs[t.id] = n;
+  }
+  writeFileSync(join(taskqHome(), 'TASKS.view.md'), renderTasksMarkdown(rows, needs));
+}
+
+async function main(): Promise<void> {
+  if (process.argv.includes('--print-launchd')) {
+    process.stdout.write(
+      taskqLaunchdPlist({
+        bunPath: process.execPath,
+        rubatoDir: process.cwd(),
+        intervalSeconds: 300,
+        logDir: taskqHome(),
+      }),
+    );
+    return;
+  }
+
+  const config = loadTaskqConfig();
+  const db = getTaskqDb();
+  const dryRun = process.env.TASKQ_DRY_RUN === '1';
+  const executor = dryRun ? dryRunExecutor : makeClaudeExecutor(config);
+
+  // Per-worker tier filters: flatten fleet tiers into one filter per worker slot.
+  const perWorker: ClaimFilters[] = [];
+  if (config.fleet?.length) {
+    for (const tier of config.fleet) for (let i = 0; i < tier.jobs; i++) perWorker.push({ models: tier.models });
+  }
+  const jobs = perWorker.length || config.jobs;
+
+  const stopFile = join(taskqHome(), '.stop');
+  process.stdout.write(`taskq drain: ${jobs} worker(s)${dryRun ? ' [DRY RUN]' : ''}, db=${taskqHome()}\n`);
+
+  const summary = await runDrain(db, {
+    jobs,
+    executor,
+    leaseTtlMs: config.leaseTtlMs,
+    worker: (i) => ({ filters: perWorker[i] ?? {} }),
+    shouldStop: () => existsSync(stopFile),
+    onEvent: (e) => {
+      if (e.type === 'completed') process.stdout.write(`  ✓ #${e.taskId} (${e.durationS}s) by w${e.worker}\n`);
+      else if (e.type === 'failed') process.stdout.write(`  ✗ #${e.taskId}: ${e.reason}\n`);
+      else if (e.type === 'reaped') process.stdout.write(`  reaped ${e.count} stranded lease(s)\n`);
+    },
+  });
+
+  regenerateView(db);
+  process.stdout.write(`taskq drain done: ${summary.completed} completed, ${summary.failed} failed, ${summary.reaped} reaped\n`);
+}
+
+main().catch((e) => {
+  process.stderr.write(`taskq drain error: ${e instanceof Error ? e.message : String(e)}\n`);
+  process.exit(1);
+});
