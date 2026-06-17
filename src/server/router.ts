@@ -80,8 +80,8 @@ import {
 import { createAppTag, getAppTags, isTagAction, runAppTagAction } from './appTags';
 import { startAsk } from './ask';
 import { handleAuthApi } from './authRoutes';
-import { handleAutomationApi, handleSessionApi } from './automationRoutes';
 import { handleAutomationEnvApi } from './automationEnvRoutes';
+import { handleAutomationApi, handleSessionApi } from './automationRoutes';
 import { handleBoardApi } from './boardRoutes';
 import { handleCaptureApi } from './captureRoutes';
 import { handleCommandsApi } from './commandRoutes';
@@ -107,9 +107,7 @@ import { handleExcelAutomationApi } from './excelAutomationRoutes';
 import { listOutputFiles, readOutputFile, resolveOutputFile } from './files';
 import { json, jsonError, readJsonBody } from './http';
 import { handleLinksApi } from './linksRoutes';
-import { handleShellAliasApi } from './shellAliasRoutes';
 import { handleOrchestrationApi } from './orchestrationRoutes';
-import { handleTaskqApi } from './taskqRoutes';
 import { handlePipelineApi } from './pipelineRoutes';
 import { handlePlansApi } from './plansRoutes';
 import { handleRallyApi } from './rallyRoutes';
@@ -119,9 +117,11 @@ import { handleScriptApi } from './scriptRoutes';
 import { handleSearchApi } from './searchRoutes';
 import { handleServiceNowApi } from './servicenowRoutes';
 import { handleServiceApi } from './serviceRoutes';
+import { handleShellAliasApi } from './shellAliasRoutes';
 import { handleSplunkApi } from './splunkRoutes';
 import { listSystemFiles, readSystemFile, writeSystemFile } from './systemFiles';
 import { readSystemHealthFile, runSystemHealth } from './systemHealth';
+import { handleTaskqApi } from './taskqRoutes';
 import { handleTestReportsApi } from './testReportsRoutes';
 import { handleToolsApi } from './toolsRoutes';
 import { UI_HTML } from './ui';
@@ -454,7 +454,8 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
   if (pathname === '/api/links' || pathname.startsWith('/api/links/')) return handleLinksApi(pathname, req);
 
   // Shell aliases (user-defined name→command pairs, system shell config setup, ca export/import).
-  if (pathname === '/api/shell-aliases' || pathname.startsWith('/api/shell-aliases/')) return handleShellAliasApi(pathname, req);
+  if (pathname === '/api/shell-aliases' || pathname.startsWith('/api/shell-aliases/'))
+    return handleShellAliasApi(pathname, req);
 
   // Vault (encrypted, master-password-gated credential store).
   if (pathname === '/api/vault' || pathname.startsWith('/api/vault/')) return handleVaultApi(pathname, req);

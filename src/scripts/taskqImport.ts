@@ -11,8 +11,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getNeeds, listTasks, renderTasksMarkdown, taskqHome } from 'cwip/taskq';
 import { notesDir } from '../server/orchestration';
-import { getTaskqDb } from '../server/taskqDb';
 import { importTasksMd } from '../server/taskq/importer';
+import { getTaskqDb } from '../server/taskqDb';
 
 async function main(): Promise<void> {
   const path = process.argv[2] ?? join(await notesDir(), 'TASKS.md');

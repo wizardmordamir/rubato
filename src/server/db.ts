@@ -19,13 +19,13 @@ import { addColumnIfMissing, applyRecommendedPragmas } from 'cwip/sqlite';
 import { RUBATO_HOME } from '../lib/config';
 import { migrateAutomationsDb } from '../plugins/automations';
 import type { AutomationRunRecord } from '../shared/automation';
+import type { AutomationEnvironment, EnvVar } from '../shared/automationEnvironment';
 import type { BoardTask, BoardTaskInput } from '../shared/board';
 import type { CustomPage, CustomPageInput } from '../shared/customPage';
 import { cleanTags, type LinkImportResult, type LinkItem, type LinkItemInput } from '../shared/links';
 import type { PipelineRunRecord } from '../shared/pipeline';
 import type { Plan, PlanInput } from '../shared/plans';
 import type { DbConnection, DbConnectionInput, SavedDbQuery, SavedDbQueryInput } from '../shared/queryBuilder';
-import type { AutomationEnvironment, EnvVar } from '../shared/automationEnvironment';
 import type { Environment, HttpRequest, SavedRequest } from '../shared/request/model';
 import type { SnConnection, SnConnectionInput, SnSavedRequest, SnSavedRequestInput } from '../shared/servicenow';
 import type {
@@ -2722,7 +2722,15 @@ export interface ShellAliasInput {
 }
 
 function toShellAlias(r: ShellAliasRow): ShellAlias {
-  return { id: r.id, name: r.name, command: r.command, description: r.description, tags: r.tags, createdAt: r.created_at, updatedAt: r.updated_at };
+  return {
+    id: r.id,
+    name: r.name,
+    command: r.command,
+    description: r.description,
+    tags: r.tags,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
 }
 
 export function listShellAliases(): ShellAlias[] {
@@ -2765,19 +2773,28 @@ export function deleteShellAlias(id: string): boolean {
 }
 
 /** Import aliases from a JSON export (from cursedalchemy). Returns how many were added. */
-export function importShellAliases(aliases: { name: string; command: string; description?: string; tags?: string }[]): { imported: number; skipped: number } {
+export function importShellAliases(aliases: { name: string; command: string; description?: string; tags?: string }[]): {
+  imported: number;
+  skipped: number;
+} {
   const db = getDb();
   let imported = 0;
   let skipped = 0;
   const now = new Date().toISOString();
   for (const a of aliases) {
-    if (!a.name?.trim() || !a.command?.trim()) { skipped++; continue; }
+    if (!a.name?.trim() || !a.command?.trim()) {
+      skipped++;
+      continue;
+    }
     const exists = db.query<{ id: string }, [string]>('SELECT id FROM shell_aliases WHERE name = ?').get(a.name.trim());
-    if (exists) { skipped++; continue; }
+    if (exists) {
+      skipped++;
+      continue;
+    }
     const id = randomUUID();
-    db.query('INSERT INTO shell_aliases (id, name, command, description, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-      id, a.name.trim(), a.command, a.description ?? '', a.tags ?? '', now, now,
-    );
+    db.query(
+      'INSERT INTO shell_aliases (id, name, command, description, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(id, a.name.trim(), a.command, a.description ?? '', a.tags ?? '', now, now);
     imported++;
   }
   return { imported, skipped };
@@ -2829,8 +2846,7 @@ export function saveAutomationEnvironment(input: {
 
 export function deleteAutomationEnvironment(id: string): boolean {
   return (
-    getDb()
-      .query<{ id: string }, [string]>('DELETE FROM automation_environments WHERE id = ? RETURNING id')
-      .get(id) != null
+    getDb().query<{ id: string }, [string]>('DELETE FROM automation_environments WHERE id = ? RETURNING id').get(id) !=
+    null
   );
 }

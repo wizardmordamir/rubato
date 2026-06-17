@@ -81,7 +81,12 @@ describe('makeClaudeExecutor (injected spawn)', () => {
         stdout: JSON.stringify({ subtype: 'success', is_error: false, result: 'ok', usage: { output_tokens: 5 } }),
       };
     });
-    const res = await exec(task({ repo: 'ru', model: 'sonnet' }), { index: 0, workerId: 'w', worktree: 'wt', filters: {} });
+    const res = await exec(task({ repo: 'ru', model: 'sonnet' }), {
+      index: 0,
+      workerId: 'w',
+      worktree: 'wt',
+      filters: {},
+    });
     expect(res.ok).toBe(true);
     expect(res.outputTokens).toBe(5);
     expect(seen!.cmd).toContain('claude-sonnet-4-6');

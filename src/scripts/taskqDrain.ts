@@ -13,14 +13,24 @@
 
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { allBucketStates, type ClaimFilters, finishDrainRun, getNeeds, insertDrainRun, listTasks, renderTasksMarkdown, scheduleDecision, taskqHome } from 'cwip/taskq';
-import { getTaskqDb } from '../server/taskqDb';
-import { loadTaskqConfig } from '../server/taskq/config';
+import {
+  allBucketStates,
+  type ClaimFilters,
+  finishDrainRun,
+  getNeeds,
+  insertDrainRun,
+  listTasks,
+  renderTasksMarkdown,
+  scheduleDecision,
+  taskqHome,
+} from 'cwip/taskq';
 import { agentPath, dryRunExecutor, makeClaudeExecutor } from '../server/taskq/claudeExecutor';
+import { loadTaskqConfig } from '../server/taskq/config';
 import { taskqLaunchdPlist } from '../server/taskq/launchd';
 import { runDrain } from '../server/taskq/orchestrator';
 import { runEpicDecomposition, runTriage } from '../server/taskq/triage';
 import { makePlanner, makeTriageAgent } from '../server/taskq/triageAgents';
+import { getTaskqDb } from '../server/taskqDb';
 
 function ts(): string {
   const d = new Date();
@@ -63,7 +73,9 @@ async function main(): Promise<void> {
   if (config.triage?.enabled && !dryRun) {
     const t = await runTriage(db, makeTriageAgent());
     const e = await runEpicDecomposition(db, makePlanner());
-    process.stdout.write(`${ts()} taskq triage: ${t.graded} graded (${t.toReady} ready, ${t.toEpic} epic), ${e.decomposed} decomposed\n`);
+    process.stdout.write(
+      `${ts()} taskq triage: ${t.graded} graded (${t.toReady} ready, ${t.toEpic} epic), ${e.decomposed} decomposed\n`,
+    );
   }
 
   // Per-worker tier filters: flatten fleet tiers into one filter per worker slot.
@@ -77,7 +89,13 @@ async function main(): Promise<void> {
   const decision = scheduleDecision(allBucketStates(db, Date.now()), { maxJobs, baseJobs: config.jobs });
   if (decision.paused) {
     process.stdout.write(`${ts()} taskq drain: PAUSED — ${decision.reason}\n`);
-    const pausedRunId = insertDrainRun(db, { startedAt: Date.now(), decision: 'paused', reason: decision.reason, jobs: 0, maxJobs });
+    const pausedRunId = insertDrainRun(db, {
+      startedAt: Date.now(),
+      decision: 'paused',
+      reason: decision.reason,
+      jobs: 0,
+      maxJobs,
+    });
     finishDrainRun(db, pausedRunId, { endedAt: Date.now(), completed: 0, failed: 0, reaped: 0 });
     return;
   }
@@ -89,7 +107,13 @@ async function main(): Promise<void> {
   );
 
   const drainDecision = decision.preferLight ? 'throttled' : decision.burnExpiring ? 'burning' : 'normal';
-  const drainRunId = insertDrainRun(db, { startedAt: Date.now(), decision: drainDecision, reason: decision.reason, jobs, maxJobs });
+  const drainRunId = insertDrainRun(db, {
+    startedAt: Date.now(),
+    decision: drainDecision,
+    reason: decision.reason,
+    jobs,
+    maxJobs,
+  });
 
   const summary = await runDrain(db, {
     jobs,
@@ -104,10 +128,17 @@ async function main(): Promise<void> {
     },
   });
 
-  finishDrainRun(db, drainRunId, { endedAt: Date.now(), completed: summary.completed, failed: summary.failed, reaped: summary.reaped });
+  finishDrainRun(db, drainRunId, {
+    endedAt: Date.now(),
+    completed: summary.completed,
+    failed: summary.failed,
+    reaped: summary.reaped,
+  });
 
   regenerateView(db);
-  process.stdout.write(`${ts()} taskq drain done: ${summary.completed} completed, ${summary.failed} failed, ${summary.reaped} reaped\n`);
+  process.stdout.write(
+    `${ts()} taskq drain done: ${summary.completed} completed, ${summary.failed} failed, ${summary.reaped} reaped\n`,
+  );
 }
 
 main().catch((e) => {

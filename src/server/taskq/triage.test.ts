@@ -1,6 +1,15 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { addTask, getClarification, getTask, listChildren, listTasks, migrate, openClarifications, type TaskqDb } from 'cwip/taskq';
+import {
+  addTask,
+  getClarification,
+  getTask,
+  listChildren,
+  listTasks,
+  migrate,
+  openClarifications,
+  type TaskqDb,
+} from 'cwip/taskq';
 import { type Planner, resolveGateway, runEpicDecomposition, runTriage, type TriageAgent } from './triage';
 
 function fresh(): TaskqDb {

@@ -10,8 +10,8 @@
  */
 
 import {
-  claimNext,
   type ClaimFilters,
+  claimNext,
   completeTask,
   failTask,
   heartbeat,

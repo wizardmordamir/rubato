@@ -87,7 +87,8 @@ export function validateConfigPatch(patch: TaskqConfigPatch): TaskqConfigPatch {
     out.jobs = patch.jobs;
   }
   if (patch.model !== undefined) {
-    if (!CONFIG_MODEL_ALIASES.includes(patch.model)) throw new Error(`model must be one of ${CONFIG_MODEL_ALIASES.join(', ')}`);
+    if (!CONFIG_MODEL_ALIASES.includes(patch.model))
+      throw new Error(`model must be one of ${CONFIG_MODEL_ALIASES.join(', ')}`);
     out.model = patch.model;
   }
   if (patch.think !== undefined) {

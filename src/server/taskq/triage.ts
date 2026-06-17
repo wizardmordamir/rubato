@@ -46,7 +46,11 @@ export interface TriageSummary {
  * `single` task becomes `ready`; an `epic` stays `pending_triage` (complexity
  * stamped) for {@link runEpicDecomposition} to expand.
  */
-export async function runTriage(db: TaskqDb, agent: TriageAgent, now: () => number = () => Date.now()): Promise<TriageSummary> {
+export async function runTriage(
+  db: TaskqDb,
+  agent: TriageAgent,
+  now: () => number = () => Date.now(),
+): Promise<TriageSummary> {
   void now;
   const summary: TriageSummary = { graded: 0, toReady: 0, toEpic: 0 };
   for (const task of listTasks(db, { status: 'pending_triage' })) {
@@ -74,7 +78,11 @@ export interface EpicSummary {
  * (`not_ready`, blocked behind the gateway) and park the epic itself as a
  * `needs_input` gateway with the planner's clarification question.
  */
-export async function runEpicDecomposition(db: TaskqDb, planner: Planner, now: () => number = () => Date.now()): Promise<EpicSummary> {
+export async function runEpicDecomposition(
+  db: TaskqDb,
+  planner: Planner,
+  now: () => number = () => Date.now(),
+): Promise<EpicSummary> {
   const summary: EpicSummary = { decomposed: 0, childrenCreated: 0 };
   const epics = listTasks(db, { status: 'pending_triage' }).filter((t) => t.complexity === 'epic');
   for (const epic of epics) {
@@ -99,7 +107,12 @@ export async function runEpicDecomposition(db: TaskqDb, planner: Planner, now: (
  * `not_ready` children to `ready` (carrying the answer into their body so the
  * worker has the context).
  */
-export function resolveGateway(db: TaskqDb, taskId: number, answer: string, now: () => number = () => Date.now()): void {
+export function resolveGateway(
+  db: TaskqDb,
+  taskId: number,
+  answer: string,
+  now: () => number = () => Date.now(),
+): void {
   answerClarification(db, taskId, answer, now());
   for (const child of listChildren(db, taskId)) {
     if (child.status === 'not_ready') {

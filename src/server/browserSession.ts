@@ -67,10 +67,7 @@ const EDGE_PATHS: Record<string, string[]> = {
 };
 const FIREFOX_PATHS: Record<string, string[]> = {
   darwin: ['/Applications/Firefox.app/Contents/MacOS/firefox'],
-  win32: [
-    'C:\\Program Files\\Mozilla Firefox\\firefox.exe',
-    'C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe',
-  ],
+  win32: ['C:\\Program Files\\Mozilla Firefox\\firefox.exe', 'C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe'],
   linux: ['/usr/bin/firefox'],
 };
 

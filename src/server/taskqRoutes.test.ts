@@ -3,8 +3,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TaskqBoard } from '../shared/taskq';
-import { handleTaskqApi } from './taskqRoutes';
 import { __resetTaskqDbForTests } from './taskqDb';
+import { handleTaskqApi } from './taskqRoutes';
 
 let dir: string;
 const prev = process.env.TASKQ_DB;
@@ -50,7 +50,9 @@ describe('taskq routes', () => {
     expect(board.total).toBe(1);
     expect(board.tasks[0].title).toBe('first');
 
-    const patched = await boardOf(await call('PATCH', `/api/taskq/tasks/${id}`, { patch: { title: 'renamed', needs: ['x'] } }));
+    const patched = await boardOf(
+      await call('PATCH', `/api/taskq/tasks/${id}`, { patch: { title: 'renamed', needs: ['x'] } }),
+    );
     expect(patched.tasks[0].title).toBe('renamed');
     expect(patched.tasks[0].needs).toEqual(['x']);
 
@@ -74,10 +76,16 @@ describe('taskq routes', () => {
   });
 
   test('usage: GET buckets + calibrate', async () => {
-    const buckets = (await (await call('GET', '/api/taskq/usage')).json()) as { buckets: { key: string; fraction: number }[] };
+    const buckets = (await (await call('GET', '/api/taskq/usage')).json()) as {
+      buckets: { key: string; fraction: number }[];
+    };
     expect(buckets.buckets.length).toBe(3);
 
-    const cal = await call('POST', '/api/taskq/usage/calibrate', { key: 'session_5h', consumedFraction: 0.75, resetAt: Date.now() + 3600_000 });
+    const cal = await call('POST', '/api/taskq/usage/calibrate', {
+      key: 'session_5h',
+      consumedFraction: 0.75,
+      resetAt: Date.now() + 3600_000,
+    });
     expect(cal.status).toBe(200);
     const after = (await cal.json()) as { buckets: { key: string; fraction: number }[] };
     const s = after.buckets.find((b) => b.key === 'session_5h');
@@ -92,7 +100,11 @@ describe('taskq routes', () => {
     expect(get1.config.jobs).toBeGreaterThanOrEqual(1);
 
     const saved = (await (
-      await call('POST', '/api/taskq/config', { jobs: 4, model: 'sonnet', fleet: [{ models: ['sonnet', 'haiku'], jobs: 2 }] })
+      await call('POST', '/api/taskq/config', {
+        jobs: 4,
+        model: 'sonnet',
+        fleet: [{ models: ['sonnet', 'haiku'], jobs: 2 }],
+      })
     ).json()) as { config: { jobs: number; model: string; fleet?: { jobs: number }[] } };
     expect(saved.config.jobs).toBe(4);
     expect(saved.config.model).toBe('sonnet');

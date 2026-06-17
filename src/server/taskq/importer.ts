@@ -7,7 +7,16 @@
  * (runtime/history — not migrated).
  */
 
-import { addTask, getTask, listTasks, MODEL_ALIASES, type NewTask, type TaskqDb, type TaskStatus, THINK_LEVELS } from 'cwip/taskq';
+import {
+  addTask,
+  getTask,
+  listTasks,
+  MODEL_ALIASES,
+  type NewTask,
+  type TaskqDb,
+  type TaskStatus,
+  THINK_LEVELS,
+} from 'cwip/taskq';
 import { parseTaskBoard } from '../../lib/orchestration';
 import type { WorkflowTask } from '../../shared/orchestration';
 
@@ -68,8 +77,16 @@ export function importTasksMd(db: TaskqDb, markdown: string): ImportResult {
   const board = parseTaskBoard(markdown);
   const result: ImportResult = { imported: 0, skipped: [] };
 
-  const existingSlugs = new Set(listTasks(db).map((t) => t.slug).filter(Boolean) as string[]);
-  const existingTitles = new Set(listTasks(db).filter((t) => t.status !== 'done').map((t) => t.title));
+  const existingSlugs = new Set(
+    listTasks(db)
+      .map((t) => t.slug)
+      .filter(Boolean) as string[],
+  );
+  const existingTitles = new Set(
+    listTasks(db)
+      .filter((t) => t.status !== 'done')
+      .map((t) => t.title),
+  );
 
   // File order is priority order (top first); insert at bottom to preserve it.
   for (const task of board.tasks) {

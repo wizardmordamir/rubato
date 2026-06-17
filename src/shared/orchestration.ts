@@ -649,7 +649,8 @@ export function serializeTaskBlock(draft: TaskDraft): string {
  */
 export function draftFromTask(task: WorkflowTask): TaskDraft {
   const tag = task.rawHeading.match(/^##\s+\[(.)\]/)?.[1] ?? ' ';
-  const status: TaskDraftStatus = tag === '-' ? 'not-ready' : tag === 'b' || tag === 'B' || tag === '!' ? 'hold' : 'ready';
+  const status: TaskDraftStatus =
+    tag === '-' ? 'not-ready' : tag === 'b' || tag === 'B' || tag === '!' ? 'hold' : 'ready';
   const m = task.meta;
   return {
     status,

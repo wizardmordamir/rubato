@@ -6,7 +6,16 @@
 
 import type { TaskRow, TaskStatus } from 'cwip/taskq';
 
-export type { BucketState, NewTask, OpenClarification, Position, TaskPatch, TaskRow, TaskStatus, ThinkLevel } from 'cwip/taskq';
+export type {
+  BucketState,
+  NewTask,
+  OpenClarification,
+  Position,
+  TaskPatch,
+  TaskRow,
+  TaskStatus,
+  ThinkLevel,
+} from 'cwip/taskq';
 
 /** A task row plus its resolved `needs:` slugs and optional runtime data. */
 export interface TaskqTaskView extends TaskRow {

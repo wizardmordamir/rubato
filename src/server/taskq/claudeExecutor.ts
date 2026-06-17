@@ -10,7 +10,7 @@
 
 import { homedir } from 'node:os';
 import type { TaskRow } from 'cwip/taskq';
-import { type TaskqConfig, repoRoot } from './config';
+import { repoRoot, type TaskqConfig } from './config';
 import type { TaskExecutor, TaskResult } from './orchestrator';
 
 /** Map a task's `model` alias to a full `claude -p --model` id. */

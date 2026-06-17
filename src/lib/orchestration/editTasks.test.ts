@@ -5,8 +5,8 @@ import {
   effectiveTaskTitle,
   serializeTaskBlock,
   serializeTaskMarkers,
-  validateTaskDraft,
   type TaskDraft,
+  validateTaskDraft,
 } from '../../shared/orchestration';
 import { deleteTaskBlock, insertTaskBlock, replaceTaskBlock, TaskConflictError } from './editTasks';
 import { parseTaskBoard } from './parseTasks';
@@ -74,7 +74,9 @@ describe('serialize', () => {
       recur: 10,
       recurLast: 3,
     };
-    expect(serializeTaskMarkers(draft)).toBe('(recur:10 last:3) (id:a) (needs:b,c) (group:g) (model:sonnet) (think:low)');
+    expect(serializeTaskMarkers(draft)).toBe(
+      '(recur:10 last:3) (id:a) (needs:b,c) (group:g) (model:sonnet) (think:low)',
+    );
   });
 
   test('full block: heading tag + markers + body', () => {
@@ -179,7 +181,7 @@ describe('insertTaskBlock', () => {
     expect(after.indexOf('Inserted task')).toBe(after.indexOf('Second task') + 1);
   });
 
-  test("after the first task does not swallow the following banner", () => {
+  test('after the first task does not swallow the following banner', () => {
     const out = insertTaskBlock(SAMPLE, block, 'after', '## [ ] First task');
     expect(out).toContain('SECTION BANNER');
     const board = parseTaskBoard(out);

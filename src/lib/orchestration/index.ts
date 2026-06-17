@@ -63,9 +63,6 @@ export type {
 } from '../../shared/orchestration';
 export {
   bucketTimingTrend,
-  type TaskDraft,
-  type TaskDraftStatus,
-  type TaskInsertPosition,
   draftFromTask,
   fleetPresetId,
   isTaskEditable,
@@ -76,6 +73,9 @@ export {
   TASK_DRAFT_STATUSES,
   TASK_ID_PATTERN,
   TASK_MODEL_ALIASES,
+  type TaskDraft,
+  type TaskDraftStatus,
+  type TaskInsertPosition,
   THINKING_LEVELS,
   thinkingTokensFor,
   validateTaskDraft,

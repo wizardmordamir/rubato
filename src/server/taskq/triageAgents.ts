@@ -19,7 +19,10 @@ const defaultSpawn: SpawnFn = async (cmd) => {
 
 /** Pull the last `{...}` JSON object out of agent stdout. */
 function lastJson<T>(stdout: string): T | null {
-  const lines = stdout.trim().split('\n').map((l) => l.trim());
+  const lines = stdout
+    .trim()
+    .split('\n')
+    .map((l) => l.trim());
   for (let i = lines.length - 1; i >= 0; i--) {
     if (lines[i].startsWith('{')) {
       try {
@@ -64,6 +67,9 @@ export function makePlanner(spawn: SpawnFn = defaultSpawn): Planner {
     const plan = exitCode === 0 ? lastJson<EpicPlan>(stdout) : null;
     if (plan && Array.isArray(plan.children) && plan.children.length && typeof plan.question === 'string') return plan;
     // Fallback: a single clarification, no children (keeps the gateway intact).
-    return { children: [], question: `This looked large but couldn't be auto-planned. How should "${task.title}" be broken down?` };
+    return {
+      children: [],
+      question: `This looked large but couldn't be auto-planned. How should "${task.title}" be broken down?`,
+    };
   };
 }

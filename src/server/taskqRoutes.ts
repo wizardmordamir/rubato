@@ -14,6 +14,8 @@
  *   POST   /api/taskq/tasks/:id/enqueue    → clone a template into a ready one-shot → { board, id }
  */
 
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   addTask,
   allBucketStates,
@@ -31,15 +33,19 @@ import {
   recordRun,
   releaseLease,
   setStatus,
-  type TaskPatch,
   TASK_STATUSES,
+  type TaskPatch,
   type TaskStatus,
-  updateTask,
   USAGE_BUCKETS,
+  updateTask,
 } from 'cwip/taskq';
+import { parseRunsJsonl } from '../lib/orchestration';
 import type { TaskqBoard } from '../shared/taskq';
-import { loadTaskqConfig, saveTaskqConfig, type TaskqConfigPatch } from './taskq/config';
+import { getUiPref, setUiPref } from './db';
 import { json, jsonError, readJsonBody } from './http';
+import { notesDir } from './orchestration';
+import { capacitySnapshot } from './taskq/capacity';
+import { loadTaskqConfig, saveTaskqConfig, type TaskqConfigPatch } from './taskq/config';
 import {
   currentInterval,
   drainerStatus,
@@ -52,13 +58,7 @@ import {
   taskqHistory,
 } from './taskq/control';
 import { resolveGateway } from './taskq/triage';
-import { capacitySnapshot } from './taskq/capacity';
 import { getTaskqDb } from './taskqDb';
-import { getUiPref, setUiPref } from './db';
-import { notesDir } from './orchestration';
-import { parseRunsJsonl } from '../lib/orchestration';
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
 const SECTION_PREFS_KEY = 'taskq_section_collapse';
 
@@ -118,9 +118,18 @@ function board(): TaskqBoard {
   const leaseByTaskId = new Map(leases.map((l) => [l.task_id, l.claimed_at]));
 
   // Most-recent completion row per done task.
-  type CompRow = { task_id: number; started_at: number | null; ended_at: number; duration_s: number | null; summary: string | null; commit: string | null };
+  type CompRow = {
+    task_id: number;
+    started_at: number | null;
+    ended_at: number;
+    duration_s: number | null;
+    summary: string | null;
+    commit: string | null;
+  };
   const completions = db
-    .query(`SELECT task_id, started_at, ended_at, duration_s, summary, "commit" FROM completions ORDER BY ended_at DESC`)
+    .query(
+      `SELECT task_id, started_at, ended_at, duration_s, summary, "commit" FROM completions ORDER BY ended_at DESC`,
+    )
     .all() as CompRow[];
   const completionByTaskId = new Map<number, CompRow>();
   for (const c of completions) {
@@ -134,7 +143,15 @@ function board(): TaskqBoard {
     }
     if (t.status === 'done') {
       const c = completionByTaskId.get(t.id);
-      if (c) return { ...base, started_at: c.started_at, ended_at: c.ended_at, duration_s: c.duration_s, summary: c.summary, commit: c.commit };
+      if (c)
+        return {
+          ...base,
+          started_at: c.started_at,
+          ended_at: c.ended_at,
+          duration_s: c.duration_s,
+          summary: c.summary,
+          commit: c.commit,
+        };
     }
     return base;
   });
@@ -165,7 +182,9 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       if (!body.draft.slug) {
         db.run(
           `UPDATE tasks SET slug = CAST(id AS TEXT) WHERE id = ? AND NOT EXISTS (SELECT 1 FROM tasks t2 WHERE t2.slug = CAST(? AS TEXT) AND t2.id <> ?)`,
-          id, id, id,
+          id,
+          id,
+          id,
         );
       }
       return json({ board: board(), id });
@@ -182,7 +201,9 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
   }
   if (pathname === '/api/taskq/usage/calibrate') {
     if (req.method !== 'POST') return jsonError('use POST', 405);
-    const body = await readJsonBody<{ key?: string; consumedFraction?: number; limitUnits?: number; resetAt?: number }>(req);
+    const body = await readJsonBody<{ key?: string; consumedFraction?: number; limitUnits?: number; resetAt?: number }>(
+      req,
+    );
     if (!body?.key || !(USAGE_BUCKETS as readonly string[]).includes(body.key)) {
       return jsonError(`key must be one of ${USAGE_BUCKETS.join(', ')}`, 400);
     }
@@ -227,7 +248,8 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
   if (pathname === '/api/taskq/drainer/watchdog') {
     if (req.method !== 'POST') return jsonError('use POST', 405);
     const body = await readJsonBody<{ action?: string }>(req);
-    if (body?.action !== 'load' && body?.action !== 'unload') return jsonError("action must be 'load' or 'unload'", 400);
+    if (body?.action !== 'load' && body?.action !== 'unload')
+      return jsonError("action must be 'load' or 'unload'", 400);
     const r = setWatchdog(body.action);
     return json({ ok: r.ok, out: r.out, status: drainerStatus() });
   }

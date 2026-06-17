@@ -250,7 +250,10 @@ export async function handleSessionApi(pathname: string, req: Request): Promise<
   if (action === 'browsers') return json({ browsers: detectSessionBrowsers() });
 
   if (req.method !== 'POST') return jsonError('use POST', 405);
-  const b = (await readJsonBody<{ url?: string; target?: Target; on?: boolean; headless?: boolean; browser?: BrowserChoice }>(req)) ?? {};
+  const b =
+    (await readJsonBody<{ url?: string; target?: Target; on?: boolean; headless?: boolean; browser?: BrowserChoice }>(
+      req,
+    )) ?? {};
 
   switch (action) {
     case 'launch':

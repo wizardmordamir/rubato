@@ -17,13 +17,7 @@ import { existsSync } from 'node:fs';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import {
-  createShellAlias,
-  deleteShellAlias,
-  importShellAliases,
-  listShellAliases,
-  updateShellAlias,
-} from './db';
+import { createShellAlias, deleteShellAlias, importShellAliases, listShellAliases, updateShellAlias } from './db';
 import { json, jsonError, readJsonBody } from './http';
 
 const ALIASES_FILE = join(homedir(), '.rubato-user-aliases.sh');
@@ -143,7 +137,12 @@ export async function handleShellAliasApi(pathname: string, req: Request): Promi
     const body = await readJsonBody<{ name?: string; command?: string; description?: string; tags?: string }>(req);
     if (!body?.name?.trim()) return jsonError('name is required', 400);
     if (!body?.command?.trim()) return jsonError('command is required', 400);
-    const alias = createShellAlias({ name: body.name.trim(), command: body.command, description: body.description, tags: body.tags });
+    const alias = createShellAlias({
+      name: body.name.trim(),
+      command: body.command,
+      description: body.description,
+      tags: body.tags,
+    });
     return json(alias, 201);
   }
 

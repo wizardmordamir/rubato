@@ -204,10 +204,7 @@ describe('file allowlist (read/write)', () => {
 
 describe('task builder mutations (race-safe TASKS.md edits)', () => {
   const seed = async () =>
-    writeFile(
-      join(dir, 'TASKS.md'),
-      '<!-- legend -->\n\n## [ ] alpha\n\n## [ ] (id:keep) beta\nbody.\n',
-    );
+    writeFile(join(dir, 'TASKS.md'), '<!-- legend -->\n\n## [ ] alpha\n\n## [ ] (id:keep) beta\nbody.\n');
 
   test('create inserts at top by default and writes the file atomically', async () => {
     await seed();
@@ -217,7 +214,11 @@ describe('task builder mutations (race-safe TASKS.md edits)', () => {
     expect(onDisk).toContain('## [ ] gamma');
     expect(onDisk).toContain('<!-- legend -->');
     // The lock file is always cleaned up.
-    expect(await readFile(join(dir, 'TASKS.md.lock'), 'utf8').then(() => true).catch(() => false)).toBe(false);
+    expect(
+      await readFile(join(dir, 'TASKS.md.lock'), 'utf8')
+        .then(() => true)
+        .catch(() => false),
+    ).toBe(false);
   });
 
   test('create with markers serializes the full heading', async () => {
@@ -232,7 +233,10 @@ describe('task builder mutations (race-safe TASKS.md edits)', () => {
 
   test('before/after position relative to an anchor', async () => {
     await seed();
-    const board = await createTask({ status: 'ready', title: 'between' }, { at: 'after', anchorHeading: '## [ ] alpha' });
+    const board = await createTask(
+      { status: 'ready', title: 'between' },
+      { at: 'after', anchorHeading: '## [ ] alpha' },
+    );
     const titles = board.tasks.map((t) => t.title);
     expect(titles.indexOf('between')).toBe(titles.indexOf('alpha') + 1);
   });
@@ -253,9 +257,7 @@ describe('task builder mutations (race-safe TASKS.md edits)', () => {
 
   test('update on a vanished anchor throws a conflict (no clobber)', async () => {
     await seed();
-    await expect(updateTask('## [ ] ghost', { status: 'ready', title: 'x' })).rejects.toThrow(
-      /no longer in TASKS\.md/,
-    );
+    await expect(updateTask('## [ ] ghost', { status: 'ready', title: 'x' })).rejects.toThrow(/no longer in TASKS\.md/);
   });
 
   test('delete removes the task', async () => {

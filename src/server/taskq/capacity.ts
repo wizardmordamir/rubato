@@ -7,8 +7,8 @@
  *   - What model will each task actually run with?
  */
 
-import { allBucketStates, listTasks, scheduleDecision, type ClaimFilters } from 'cwip/taskq';
 import type { TaskqDb } from 'cwip/taskq';
+import { allBucketStates, type ClaimFilters, listTasks, scheduleDecision } from 'cwip/taskq';
 import { loadTaskqConfig, type TaskqConfig } from './config';
 
 export interface CapacityWorkerSlot {
@@ -73,8 +73,8 @@ export interface CapacitySnapshot {
 
 /** Whether a task with this model pin can be claimed by a slot with these filters. */
 function taskMatchesSlot(taskModel: string | null, slotModels: string[] | null): boolean {
-  if (slotModels === null) return true;        // flat mode: any task
-  if (taskModel === null) return true;          // untagged task: any slot
+  if (slotModels === null) return true; // flat mode: any task
+  if (taskModel === null) return true; // untagged task: any slot
   return slotModels.includes(taskModel);
 }
 
@@ -106,9 +106,7 @@ export function capacitySnapshot(db: TaskqDb, config?: TaskqConfig): CapacitySna
   const readyRows = listTasks(db).filter((t) => t.status === 'ready');
   const readyTasks: CapacityReadyTask[] = readyRows.map((t) => {
     const effectiveModel = t.model ?? cfg.model;
-    const claimableBySlots = workerSlots
-      .filter((s) => taskMatchesSlot(t.model, s.models))
-      .map((s) => s.index);
+    const claimableBySlots = workerSlots.filter((s) => taskMatchesSlot(t.model, s.models)).map((s) => s.index);
 
     let unclaimableReason: string | undefined;
     if (claimableBySlots.length === 0) {
@@ -119,7 +117,15 @@ export function capacitySnapshot(db: TaskqDb, config?: TaskqConfig): CapacitySna
       }
     }
 
-    return { id: t.id, title: t.title, model: t.model, effectiveModel, repo: t.repo, claimableBySlots, unclaimableReason };
+    return {
+      id: t.id,
+      title: t.title,
+      model: t.model,
+      effectiveModel,
+      repo: t.repo,
+      claimableBySlots,
+      unclaimableReason,
+    };
   });
 
   return {
@@ -139,6 +145,11 @@ export function capacitySnapshot(db: TaskqDb, config?: TaskqConfig): CapacitySna
     totalReady: readyTasks.length,
     unservableReady: readyTasks.filter((t) => t.claimableBySlots.length === 0).length,
     readyTasks,
-    buckets: buckets.map((b) => ({ key: b.key, fraction: b.fraction, remaining: b.remaining, resetInSeconds: b.resetInSeconds })),
+    buckets: buckets.map((b) => ({
+      key: b.key,
+      fraction: b.fraction,
+      remaining: b.remaining,
+      resetInSeconds: b.resetInSeconds,
+    })),
   };
 }
