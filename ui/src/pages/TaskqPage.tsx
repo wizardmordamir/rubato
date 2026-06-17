@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ModalShell } from "cwip/react";
-import { useMemo, useState } from "react";
+import { DragHandle, DropIndicator, ModalShell, useDragReorder } from "cwip/react";
+import { useState } from "react";
 import {
   answerTaskqClarification,
   calibrateTaskqBucket,
@@ -60,6 +60,20 @@ const TASKQ_TABS: readonly { key: TaskqTab; label: string }[] = [
  * there's no clobber/conflict surface — the DB is the single writer authority.
  */
 
+/** Statuses where drag-reorder changes claim priority (running/done are not). */
+const REORDERABLE = new Set<TaskqStatus>(["ready", "on_hold", "not_ready", "blocked", "pending_triage"]);
+
+/** Find the single id whose removal makes the two orderings identical (the moved one). */
+function findMovedId(oldIds: number[], newIds: number[]): number | null {
+  if (oldIds.length !== newIds.length) return null;
+  for (const id of oldIds) {
+    const o = oldIds.filter((x) => x !== id);
+    const n = newIds.filter((x) => x !== id);
+    if (o.every((x, i) => x === n[i])) return id;
+  }
+  return null;
+}
+
 const STATUS_TONE: Record<TaskqStatus, "neutral" | "accent" | "success" | "error" | "warn"> = {
   pending_triage: "warn",
   ready: "accent",
@@ -100,6 +114,31 @@ export function TaskqPage() {
     onSuccess: (r) => apply(r.board),
     onError: (e) => notify(e instanceof Error ? e.message : "status change failed", "error"),
   });
+  const move = useMutation({
+    mutationFn: (v: { id: number; position: TaskqPosition }) => moveTaskqTask(v.id, v.position),
+    onSuccess: (r) => apply(r.board),
+    onError: (e) => {
+      notify(e instanceof Error ? e.message : "reorder failed", "error");
+      qc.invalidateQueries({ queryKey: ["taskq"] }); // revert optimistic order
+    },
+  });
+
+  /** Commit a within-status reorder: optimistic local order + a before/after move. */
+  const onReorder = (curBoard: TaskqBoard, sectionStatus: TaskqStatus, newIds: number[]) => {
+    const oldIds = curBoard.tasks.filter((t) => t.status === sectionStatus).map((t) => t.id);
+    const moved = findMovedId(oldIds, newIds);
+    if (moved == null || newIds.length < 2) return;
+    // Optimistic: re-thread this section's tasks into the new order in place.
+    const byId = new Map(curBoard.tasks.map((t) => [t.id, t]));
+    const ordered = newIds.map((id) => byId.get(id)).filter(Boolean) as TaskqTaskView[];
+    let k = 0;
+    const tasks = curBoard.tasks.map((t) => (t.status === sectionStatus ? ordered[k++] : t));
+    apply({ ...curBoard, tasks });
+    const idx = newIds.indexOf(moved);
+    const position: TaskqPosition =
+      idx > 0 ? { at: "after", anchorId: newIds[idx - 1] } : { at: "before", anchorId: newIds[1] };
+    move.mutate({ id: moved, position });
+  };
 
   if (isLoading) return <p className="text-gray-400">loading…</p>;
   if (isError)
@@ -136,30 +175,21 @@ export function TaskqPage() {
               <p className="text-gray-400">No tasks yet — add one with “New task”.</p>
             ) : (
               TASKQ_STATUSES.filter((s) => board.tasks.some((t) => t.status === s)).map((s) => (
-                <section key={s}>
-                  <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
-                    {TASKQ_STATUS_LABELS[s]} <span className="text-gray-400">({board.counts[s]})</span>
-                  </h3>
-                  <div className="space-y-2">
-                    {board.tasks
-                      .filter((t) => t.status === s)
-                      .map((t) => (
-                        <TaskCard
-                          key={t.id}
-                          task={t}
-                          onEdit={() => setBuilder({ mode: "edit", task: t })}
-                          onDelete={async () => {
-                            if (await confirm({ prompt: `Delete "${t.title}"?`, confirmText: "Delete" })) del.mutate(t.id);
-                          }}
-                          onHold={() =>
-                            status.mutate(
-                              t.status === "on_hold" ? { id: t.id, status: "ready" } : { id: t.id, status: "on_hold" },
-                            )
-                          }
-                        />
-                      ))}
-                  </div>
-                </section>
+                <BoardSection
+                  key={s}
+                  status={s}
+                  tasks={board.tasks.filter((t) => t.status === s)}
+                  count={board.counts[s]}
+                  reorderable={REORDERABLE.has(s)}
+                  onReorder={(ids) => onReorder(board, s, ids)}
+                  onEdit={(t) => setBuilder({ mode: "edit", task: t })}
+                  onDelete={async (t) => {
+                    if (await confirm({ prompt: `Delete "${t.title}"?`, confirmText: "Delete" })) del.mutate(t.id);
+                  }}
+                  onHold={(t) =>
+                    status.mutate(t.status === "on_hold" ? { id: t.id, status: "ready" } : { id: t.id, status: "on_hold" })
+                  }
+                />
               ))
             )}
           </div>
@@ -197,11 +227,14 @@ function TaskCard({
   onEdit,
   onDelete,
   onHold,
+  dragHandle,
 }: {
   task: TaskqTaskView;
   onEdit: () => void;
   onDelete: () => void;
   onHold: () => void;
+  /** A drag-grip element (from the section's useDragReorder), when reorderable. */
+  dragHandle?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const editable = task.status !== "claimed" && task.status !== "done";
@@ -215,49 +248,223 @@ function TaskCard({
     task.repo && `repo:${task.repo}`,
   ].filter(Boolean) as string[];
   return (
-    <div className={`${CARD_CLASS} p-3`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-medium">
-            <span className="mr-1 text-gray-400">#{task.id}</span>
-            {task.title}
-          </p>
-          {markers.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-1 font-mono text-xs text-gray-500">
-              {markers.map((m) => (
-                <span key={m} className="rounded bg-gray-100 px-1 dark:bg-gray-800">
-                  {m}
-                </span>
-              ))}
-            </div>
-          )}
-          {task.note && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">note: {task.note}</p>}
+    <div className={`group ${CARD_CLASS} flex gap-2 p-3`}>
+      {dragHandle}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="font-medium">
+              <span className="mr-1 text-gray-400">#{task.id}</span>
+              {task.title}
+            </p>
+            {markers.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1 font-mono text-xs text-gray-500">
+                {markers.map((m) => (
+                  <span key={m} className="rounded bg-gray-100 px-1 dark:bg-gray-800">
+                    {m}
+                  </span>
+                ))}
+              </div>
+            )}
+            {task.note && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">note: {task.note}</p>}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {editable && (
+              <>
+                <button type="button" onClick={onEdit} className="text-xs text-accent hover:underline">
+                  Edit
+                </button>
+                <button type="button" onClick={onHold} className="text-xs text-amber-600 hover:underline dark:text-amber-400">
+                  {task.status === "on_hold" ? "Unhold" : "Hold"}
+                </button>
+                <button type="button" onClick={onDelete} className="text-xs text-red-600 hover:underline dark:text-red-400">
+                  Delete
+                </button>
+              </>
+            )}
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {editable && (
-            <>
-              <button type="button" onClick={onEdit} className="text-xs text-accent hover:underline">
-                Edit
-              </button>
-              <button type="button" onClick={onHold} className="text-xs text-amber-600 hover:underline dark:text-amber-400">
-                {task.status === "on_hold" ? "Unhold" : "Hold"}
-              </button>
-              <button type="button" onClick={onDelete} className="text-xs text-red-600 hover:underline dark:text-red-400">
-                Delete
-              </button>
-            </>
-          )}
-        </div>
+        {task.body && (
+          <button type="button" onClick={() => setOpen((o) => !o)} className="mt-2 text-xs text-accent hover:underline">
+            {open ? "Hide details" : "Show details"}
+          </button>
+        )}
+        {open && task.body && (
+          <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-gray-50 p-2 text-xs text-gray-600 dark:bg-gray-950 dark:text-gray-300">
+            {task.body}
+          </pre>
+        )}
       </div>
-      {task.body && (
-        <button type="button" onClick={() => setOpen((o) => !o)} className="mt-2 text-xs text-accent hover:underline">
-          {open ? "Hide details" : "Show details"}
-        </button>
-      )}
-      {open && task.body && (
-        <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-gray-50 p-2 text-xs text-gray-600 dark:bg-gray-950 dark:text-gray-300">
-          {task.body}
-        </pre>
+    </div>
+  );
+}
+
+/** A status section that supports drag-to-reorder (priority) via cwip's useDragReorder. */
+function BoardSection({
+  status,
+  tasks,
+  count,
+  reorderable,
+  onReorder,
+  onEdit,
+  onDelete,
+  onHold,
+}: {
+  status: TaskqStatus;
+  tasks: TaskqTaskView[];
+  count: number;
+  reorderable: boolean;
+  onReorder: (ids: number[]) => void;
+  onEdit: (t: TaskqTaskView) => void;
+  onDelete: (t: TaskqTaskView) => void;
+  onHold: (t: TaskqTaskView) => void;
+}) {
+  const ids = tasks.map((t) => String(t.id));
+  const dr = useDragReorder({ ids, axis: "y", onReorder: (next) => onReorder(next.map(Number)) });
+  const canDrag = reorderable && tasks.length > 1;
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+        {TASKQ_STATUS_LABELS[status]} <span className="text-gray-400">({count})</span>
+        {canDrag && <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder priority</span>}
+      </h3>
+      <div {...(canDrag ? dr.containerProps : {})} className="space-y-2">
+        {tasks.map((t) => {
+          if (!canDrag) {
+            return <TaskCard key={t.id} task={t} onEdit={() => onEdit(t)} onDelete={() => onDelete(t)} onHold={() => onHold(t)} />;
+          }
+          const idStr = String(t.id);
+          const ip = dr.getItemProps(idStr);
+          return (
+            <div
+              key={t.id}
+              data-drag-id={ip["data-drag-id"]}
+              style={ip.style}
+              onClickCapture={ip.onClickCapture}
+              className={`relative ${ip.isDragging ? "opacity-70" : ""}`}
+            >
+              {ip.insertBefore && <DropIndicator orientation="horizontal" side="start" />}
+              {ip.insertAfter && <DropIndicator orientation="horizontal" side="end" />}
+              <TaskCard
+                task={t}
+                onEdit={() => onEdit(t)}
+                onDelete={() => onDelete(t)}
+                onHold={() => onHold(t)}
+                dragHandle={<DragHandle handleProps={dr.getHandleProps(idStr)} label={`Reorder ${t.title}`} />}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/** Multi-select for task dependencies (`needs:`) — pick by id + title from a
+ *  searchable dropdown (with a body preview on hover), or type a custom id. */
+function NeedsSelect({
+  board,
+  value,
+  onChange,
+  excludeId,
+}: {
+  board: TaskqBoard;
+  value: string[];
+  onChange: (next: string[]) => void;
+  excludeId?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [custom, setCustom] = useState("");
+  const options = board.tasks.filter((t) => t.slug && t.id !== excludeId);
+  const f = filter.trim().toLowerCase();
+  const filtered = f ? options.filter((o) => `${o.slug} ${o.title}`.toLowerCase().includes(f)) : options;
+  const toggle = (slug: string) => onChange(value.includes(slug) ? value.filter((s) => s !== slug) : [...value, slug]);
+  const addCustom = () => {
+    if (custom.trim()) {
+      toggle(custom.trim());
+      setCustom("");
+    }
+  };
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={`${FIELD_CLASS} flex min-h-[2.4rem] flex-wrap items-center gap-1 text-left`}
+      >
+        {value.length === 0 ? (
+          <span className="text-gray-400">select dependencies…</span>
+        ) : (
+          value.map((s) => (
+            <span key={s} className="inline-flex items-center gap-1 rounded bg-accent/15 px-1.5 py-0.5 text-xs text-accent">
+              {s}
+              <span
+                role="button"
+                tabIndex={-1}
+                aria-label={`remove ${s}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggle(s);
+                }}
+                className="cursor-pointer hover:opacity-70"
+              >
+                ✕
+              </span>
+            </span>
+          ))
+        )}
+      </button>
+      {open && (
+        <>
+          <button type="button" aria-label="close dropdown" className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
+          <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-lg border border-gray-200 bg-white p-2 shadow-lg dark:border-gray-700 dark:bg-gray-900">
+            {/* biome-ignore lint/a11y/noAutofocus: focusing the filter on open is the intended UX */}
+            <input autoFocus className={FIELD_CLASS} placeholder="filter by id or title…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <div className="mt-2 space-y-0.5">
+              {filtered.map((o) => (
+                <label
+                  key={o.id}
+                  title={o.body || undefined}
+                  className="flex cursor-pointer items-start gap-2 rounded p-1 hover:bg-gray-50 dark:hover:bg-gray-800"
+                >
+                  <input
+                    type="checkbox"
+                    checked={value.includes(o.slug as string)}
+                    onChange={() => toggle(o.slug as string)}
+                    className="mt-1 h-4 w-4 shrink-0"
+                  />
+                  <span className="min-w-0">
+                    <span className="font-mono text-xs text-accent">{o.slug}</span> <span className="text-sm">{o.title}</span>
+                    {o.body && <span className="block truncate text-xs text-gray-400">{o.body}</span>}
+                  </span>
+                </label>
+              ))}
+              {filtered.length === 0 && (
+                <p className="px-1 py-2 text-xs text-gray-400">
+                  No tasks with an id match. Give a task an Id to depend on it, or add a custom id below.
+                </p>
+              )}
+            </div>
+            <div className="mt-2 flex gap-1 border-t border-gray-200 pt-2 dark:border-gray-700">
+              <input
+                className={FIELD_CLASS}
+                placeholder="custom id…"
+                value={custom}
+                onChange={(e) => setCustom(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addCustom();
+                  }
+                }}
+              />
+              <button type="button" className={BTN_GHOST_CLASS} onClick={addCustom}>
+                Add
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -284,18 +491,13 @@ function TaskqBuilderModal({
   const [think, setThink] = useState(task?.think ?? "");
   const [slug, setSlug] = useState(task?.slug ?? "");
   const [repo, setRepo] = useState(task?.repo ?? "");
-  const [needsRaw, setNeedsRaw] = useState((task?.needs ?? []).join(", "));
+  const [needs, setNeeds] = useState<string[]>(task?.needs ?? []);
   const [group, setGroup] = useState(task?.group_key ?? "");
   const [recurring, setRecurring] = useState(task?.recur_n != null);
   const [recurN, setRecurN] = useState(task?.recur_n != null ? String(task.recur_n) : "10");
   const [note, setNote] = useState(task?.note ?? "");
   const [posAt, setPosAt] = useState<TaskqPosition["at"]>("top");
   const [posAnchor, setPosAnchor] = useState<number | "">(board.tasks[0]?.id ?? "");
-
-  const needs = useMemo(
-    () => needsRaw.split(",").map((s) => s.trim()).filter(Boolean),
-    [needsRaw],
-  );
 
   const draft: TaskqNewTask = {
     title,
@@ -447,8 +649,8 @@ function TaskqBuilderModal({
         <Field label="Id (slug)">
           <input className={FIELD_CLASS} value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="vault-ui" />
         </Field>
-        <Field label="Needs (comma ids)">
-          <input className={FIELD_CLASS} value={needsRaw} onChange={(e) => setNeedsRaw(e.target.value)} placeholder="vault-ui, db" />
+        <Field label="Needs (dependencies)">
+          <NeedsSelect board={board} value={needs} onChange={setNeeds} excludeId={task?.id} />
         </Field>
         <Field label="Group">
           <input className={FIELD_CLASS} value={group} onChange={(e) => setGroup(e.target.value)} placeholder="vault" />
