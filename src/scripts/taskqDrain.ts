@@ -19,6 +19,8 @@ import { loadTaskqConfig } from '../server/taskq/config';
 import { dryRunExecutor, makeClaudeExecutor } from '../server/taskq/claudeExecutor';
 import { taskqLaunchdPlist } from '../server/taskq/launchd';
 import { runDrain } from '../server/taskq/orchestrator';
+import { runEpicDecomposition, runTriage } from '../server/taskq/triage';
+import { makePlanner, makeTriageAgent } from '../server/taskq/triageAgents';
 
 function regenerateView(db: ReturnType<typeof getTaskqDb>): void {
   const rows = listTasks(db);
@@ -47,6 +49,13 @@ async function main(): Promise<void> {
   const db = getTaskqDb();
   const dryRun = process.env.TASKQ_DRY_RUN === '1';
   const executor = dryRun ? dryRunExecutor : makeClaudeExecutor(config);
+
+  // Opt-in: grade blank tasks + decompose epics before draining.
+  if (config.triage?.enabled && !dryRun) {
+    const t = await runTriage(db, makeTriageAgent());
+    const e = await runEpicDecomposition(db, makePlanner());
+    process.stdout.write(`taskq triage: ${t.graded} graded (${t.toReady} ready, ${t.toEpic} epic), ${e.decomposed} decomposed\n`);
+  }
 
   // Per-worker tier filters: flatten fleet tiers into one filter per worker slot.
   const perWorker: ClaimFilters[] = [];

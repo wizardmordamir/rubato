@@ -2,10 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ModalShell } from "cwip/react";
 import { useMemo, useState } from "react";
 import {
+  answerTaskqClarification,
   calibrateTaskqBucket,
   createTaskqTask,
   deleteTaskqTask,
   fetchTaskqBoard,
+  fetchTaskqClarifications,
   fetchTaskqUsage,
   moveTaskqTask,
   setTaskqStatus,
@@ -97,6 +99,7 @@ export function TaskqPage() {
       </div>
 
       <UsagePanel />
+      <InputQueuePanel />
 
       <div className="min-h-0 flex-1 space-y-6 overflow-auto">
         {board.total === 0 ? (
@@ -507,6 +510,61 @@ function UsagePanel() {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** The no-stall Input Queue: epic gateways awaiting a user answer. */
+function InputQueuePanel() {
+  const { data } = useQuery({ queryKey: ["taskq-clarifications"], queryFn: fetchTaskqClarifications });
+  const qc = useQueryClient();
+  const { notify } = useToast();
+  const [answers, setAnswers] = useState<Record<number, string>>({});
+
+  const answer = useMutation({
+    mutationFn: (v: { id: number; answer: string }) => answerTaskqClarification(v.id, v.answer),
+    onSuccess: (r) => {
+      qc.setQueryData(["taskq-clarifications"], { clarifications: r.clarifications });
+      qc.setQueryData(["taskq"], r.board);
+      notify("Answered — child tasks released", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "answer failed", "error"),
+  });
+
+  const items = data?.clarifications ?? [];
+  if (items.length === 0) return null;
+  return (
+    <div className={`${CARD_CLASS} mb-3 border-l-4 border-amber-400 p-3`}>
+      <h3 className="mb-2 text-sm font-semibold text-amber-700 dark:text-amber-400">
+        Input needed ({items.length})
+      </h3>
+      <div className="space-y-3">
+        {items.map((c) => (
+          <div key={c.task_id} className="text-sm">
+            <p className="font-medium">
+              <span className="mr-1 text-gray-400">#{c.task_id}</span>
+              {c.title}
+            </p>
+            <p className="mb-1 text-gray-600 dark:text-gray-300">{c.question}</p>
+            <div className="flex gap-2">
+              <input
+                className={FIELD_CLASS}
+                placeholder="Your answer…"
+                value={answers[c.task_id] ?? ""}
+                onChange={(e) => setAnswers((a) => ({ ...a, [c.task_id]: e.target.value }))}
+              />
+              <button
+                type="button"
+                className={BTN_PRIMARY_CLASS}
+                disabled={!answers[c.task_id]?.trim() || answer.isPending}
+                onClick={() => answer.mutate({ id: c.task_id, answer: answers[c.task_id] })}
+              >
+                Answer
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

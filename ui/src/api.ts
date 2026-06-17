@@ -1529,6 +1529,7 @@ export const deleteOrchestrationTask = (anchorHeading: string) =>
 // ── Taskq (v2 orchestrator — SQLite-backed board CRUD) ───────────────────────
 export type {
   BucketState as TaskqBucketState,
+  OpenClarification as TaskqClarification,
   NewTask as TaskqNewTask,
   Position as TaskqPosition,
   TaskPatch as TaskqPatch,
@@ -1544,7 +1545,7 @@ export {
   TASKQ_STATUSES,
   TASKQ_THINK_LEVELS,
 } from "@shared/taskq";
-import type { BucketState, NewTask, Position, TaskPatch, TaskqBoard, TaskStatus } from "@shared/taskq";
+import type { BucketState, NewTask, OpenClarification, Position, TaskPatch, TaskqBoard, TaskStatus } from "@shared/taskq";
 
 /** The whole board (tasks + per-status counts). */
 export const fetchTaskqBoard = () => getJson<TaskqBoard>("/api/taskq");
@@ -1572,6 +1573,15 @@ export const calibrateTaskqBucket = (input: {
   limitUnits?: number;
   resetAt?: number;
 }) => postJson<{ buckets: BucketState[] }>("/api/taskq/usage/calibrate", input);
+/** Open clarification gateways (the Input Queue). */
+export const fetchTaskqClarifications = () =>
+  getJson<{ clarifications: OpenClarification[] }>("/api/taskq/clarifications");
+/** Answer a gateway — releases the epic's child tasks. */
+export const answerTaskqClarification = (taskId: number, answer: string) =>
+  postJson<{ board: TaskqBoard; clarifications: OpenClarification[] }>(
+    `/api/taskq/clarifications/${taskId}/answer`,
+    { answer },
+  );
 
 // ── Watchdog control + observe ────────────────────────────────────────────────
 

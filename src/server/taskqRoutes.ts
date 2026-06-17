@@ -17,6 +17,7 @@ import {
   allBucketStates,
   calibrateBucket,
   deleteTask,
+  openClarifications,
   getNeeds,
   listTasks,
   moveTask,
@@ -31,6 +32,7 @@ import {
 } from 'cwip/taskq';
 import type { TaskqBoard } from '../shared/taskq';
 import { json, jsonError, readJsonBody } from './http';
+import { resolveGateway } from './taskq/triage';
 import { getTaskqDb } from './taskqDb';
 
 /** Rebuild the whole board (tasks + needs + per-status counts). */
@@ -88,6 +90,24 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       return json({ buckets: allBucketStates(getTaskqDb(), Date.now()) });
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'calibrate failed', 400);
+    }
+  }
+
+  // Input Queue: open clarification gateways + answering one (releases children).
+  if (pathname === '/api/taskq/clarifications') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    return json({ clarifications: openClarifications(getTaskqDb()) });
+  }
+  const ans = pathname.match(/^\/api\/taskq\/clarifications\/(\d+)\/answer$/);
+  if (ans) {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    const body = await readJsonBody<{ answer?: string }>(req);
+    if (typeof body?.answer !== 'string' || !body.answer.trim()) return jsonError('answer (string) is required', 400);
+    try {
+      resolveGateway(getTaskqDb(), Number(ans[1]), body.answer);
+      return json({ board: board(), clarifications: openClarifications(getTaskqDb()) });
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'answer failed', 400);
     }
   }
 

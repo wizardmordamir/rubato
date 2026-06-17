@@ -26,6 +26,8 @@ export interface TaskqConfig {
   leaseTtlMs: number;
   /** repo alias → absolute checkout root. */
   repos: Record<string, string>;
+  /** Opt-in auto-triage / epic decomposition (off by default — conservative). */
+  triage?: { enabled: boolean };
 }
 
 function defaults(): TaskqConfig {
