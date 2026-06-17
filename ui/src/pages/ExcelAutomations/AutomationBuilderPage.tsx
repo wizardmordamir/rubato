@@ -231,7 +231,6 @@ export function AutomationBuilderPage() {
                 </Tooltip>
               </>
             )}
-          </div>
         </div>
       </div>
 
