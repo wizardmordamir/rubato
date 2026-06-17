@@ -708,11 +708,14 @@ function TaskqBuilderModal({
   onSaved: (board: TaskqBoard) => void;
 }) {
   const { notify } = useToast();
-  type Scheduling = "oneshot" | "time" | "template";
+  // "count" is a read-only legacy mode (recur_n) shown only when editing an
+  // existing count-based task — new tasks are always oneshot/time/template.
+  type Scheduling = "oneshot" | "time" | "template" | "count";
 
   function initialScheduling(t?: TaskqTaskView): Scheduling {
     if (t?.is_template === 1) return "template";
     if (t?.recur_interval_ms != null) return "time";
+    if (t?.recur_n != null) return "count";
     return "oneshot";
   }
 
@@ -779,6 +782,8 @@ function TaskqBuilderModal({
       }
       if (!task) throw new Error("no task");
       // Send the full editable set as a patch (engine clears '' → null).
+      // Always include recur_n: null when switching away from count-based legacy
+      // mode so a count-based task can be migrated to time-based or template.
       return (
         await updateTaskqTask(task.id, {
           title,
@@ -791,6 +796,7 @@ function TaskqBuilderModal({
           needs,
           group_key: group,
           note,
+          recur_n: scheduling !== "count" ? null : undefined,
           recur_interval_ms: intervalMs ?? null,
           is_template: scheduling === "template",
         })
@@ -913,39 +919,59 @@ function TaskqBuilderModal({
         </Field>
 
         <div className="md:col-span-2">
-          <Field label="Scheduling" hint="Run on a fixed schedule, or save as a template to enqueue manually.">
+          <Field
+            label="Scheduling"
+            hint="Should this run automatically on a schedule without human oversight? Choose recurring for unattended automation, template for on-demand manual runs."
+          >
             <div className="space-y-2">
               <div className="flex flex-wrap gap-3">
-                {(["oneshot", "time", "template"] as Scheduling[]).map((s) => (
+                {(["oneshot", "time", "template"] as const).map((s) => (
                   <label key={s} className="flex cursor-pointer items-center gap-1.5 text-sm">
                     <input type="radio" name="scheduling" value={s} checked={scheduling === s} onChange={() => setScheduling(s)} className="h-4 w-4" />
-                    {s === "oneshot" && "One-shot (run once)"}
-                    {s === "time" && "Recurring schedule"}
-                    {s === "template" && "Saved template (manual enqueue)"}
+                    {s === "oneshot" && "One-shot (run once and done)"}
+                    {s === "time" && "Recurring — runs automatically on a schedule"}
+                    {s === "template" && "Saved template — run on demand via Enqueue"}
                   </label>
                 ))}
+                {scheduling === "count" && (
+                  <label className="flex cursor-pointer items-center gap-1.5 text-sm">
+                    <input type="radio" name="scheduling" value="count" checked readOnly className="h-4 w-4" />
+                    Count-based (legacy — run every {task?.recur_n} completions)
+                  </label>
+                )}
               </div>
               {scheduling === "time" && (
-                <div className="flex items-center gap-2 pl-6">
-                  <span className="text-sm text-gray-500">every</span>
-                  <input
-                    type="number"
-                    min={1}
-                    className={`${FIELD_CLASS} w-20`}
-                    value={intervalN}
-                    onChange={(e) => setIntervalN(e.target.value)}
-                  />
-                  <select className={`${FIELD_CLASS} w-32`} value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
-                    <option value="minutes">minutes</option>
-                    <option value="hours">hours</option>
-                    <option value="days">days</option>
-                    <option value="weeks">weeks</option>
-                  </select>
-                </div>
+                <>
+                  <div className="flex items-center gap-2 pl-6">
+                    <span className="text-sm text-gray-500">every</span>
+                    <input
+                      type="number"
+                      min={1}
+                      className={`${FIELD_CLASS} w-20`}
+                      value={intervalN}
+                      onChange={(e) => setIntervalN(e.target.value)}
+                    />
+                    <select className={`${FIELD_CLASS} w-32`} value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
+                      <option value="minutes">minutes</option>
+                      <option value="hours">hours</option>
+                      <option value="days">days</option>
+                      <option value="weeks">weeks</option>
+                    </select>
+                  </div>
+                  <p className="pl-6 text-xs text-gray-400">
+                    Runs automatically, unattended. Use for infrastructure tasks: nightly health checks, weekly vacuums, scheduled reports.
+                  </p>
+                </>
               )}
               {scheduling === "template" && (
                 <p className="pl-6 text-xs text-gray-400">
                   The template stays saved; clicking <strong>Enqueue</strong> sends a fresh copy to the worker queue.
+                </p>
+              )}
+              {scheduling === "count" && (
+                <p className="pl-6 text-xs text-amber-600 dark:text-amber-400">
+                  Count-based recurrence is legacy. Migrate to a <button type="button" className="underline" onClick={() => setScheduling("time")}>recurring schedule</button> or{" "}
+                  <button type="button" className="underline" onClick={() => setScheduling("template")}>saved template</button>.
                 </p>
               )}
             </div>
