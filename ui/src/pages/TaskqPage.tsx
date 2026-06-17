@@ -23,15 +23,35 @@ import {
   TASKQ_STATUSES,
   TASKQ_THINK_LEVELS,
   type TaskqBoard,
+  fetchTaskqConfig,
+  fetchTaskqInstances,
+  fetchTaskqLogs,
+  releaseTaskqInstance,
+  saveTaskqConfig,
+  setTaskqInterval,
+  setTaskqWatchdog,
+  type TaskqConfig,
+  type TaskqConfigPatch,
+  type TaskqFleetTier,
+  type TaskqInstance,
   type TaskqNewTask,
   type TaskqPosition,
   type TaskqStatus,
   type TaskqTaskView,
   updateTaskqTask,
 } from "../api";
-import { Alert, Badge, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLASS, PageHeading, Spinner } from "../components";
+import { Alert, Badge, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLASS, PageHeading, Spinner, Tabs } from "../components";
 import { useConfirm } from "../confirm";
 import { useToast } from "../toast";
+
+type TaskqTab = "board" | "workers" | "settings" | "history" | "usage";
+const TASKQ_TABS: readonly { key: TaskqTab; label: string }[] = [
+  { key: "board", label: "Board" },
+  { key: "workers", label: "Workers" },
+  { key: "settings", label: "Settings" },
+  { key: "history", label: "History" },
+  { key: "usage", label: "Usage" },
+];
 
 /**
  * Taskq — the v2 orchestrator board + builder, backed by the SQLite queue
@@ -60,6 +80,7 @@ export function TaskqPage() {
     refetchInterval: (q) => (q.state.data?.counts.claimed ? 4000 : false),
   });
   const [builder, setBuilder] = useState<{ mode: "create" } | { mode: "edit"; task: TaskqTaskView } | null>(null);
+  const [tab, setTab] = useState<TaskqTab>("board");
   const qc = useQueryClient();
   const { notify } = useToast();
   const confirm = useConfirm();
@@ -88,63 +109,71 @@ export function TaskqPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeading
-        title="Taskq"
+        title="Orchestration"
         actions={
-          <button type="button" className={BTN_PRIMARY_CLASS} onClick={() => setBuilder({ mode: "create" })}>
-            + New task
-          </button>
+          tab === "board" ? (
+            <button type="button" className={BTN_PRIMARY_CLASS} onClick={() => setBuilder({ mode: "create" })}>
+              + New task
+            </button>
+          ) : undefined
         }
       />
-      <p className="mb-3 text-xs text-gray-500">
-        SQLite-backed task queue (the v2 orchestrator). Edits are atomic + by row id — no markdown, no race.
-      </p>
+      <Tabs<TaskqTab> tabs={TASKQ_TABS} active={tab} onChange={setTab} />
 
-      <div className="mb-3 flex flex-wrap gap-2">
-        {TASKQ_STATUSES.filter((s) => board.counts[s] > 0).map((s) => (
-          <Badge key={s} tone={STATUS_TONE[s]}>
-            {TASKQ_STATUS_LABELS[s]}: {board.counts[s]}
-          </Badge>
-        ))}
-        <Badge tone="neutral">Total: {board.total}</Badge>
-      </div>
-
-      <DrainerControl />
-      <UsagePanel />
-      <InputQueuePanel />
-
-      <div className="min-h-0 flex-1 space-y-6 overflow-auto">
-        {board.total === 0 ? (
-          <p className="text-gray-400">No tasks yet — add one with “New task”.</p>
-        ) : (
-          TASKQ_STATUSES.filter((s) => board.tasks.some((t) => t.status === s)).map((s) => (
-            <section key={s}>
-              <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
-                {TASKQ_STATUS_LABELS[s]}{" "}
-                <span className="text-gray-400">({board.counts[s]})</span>
-              </h3>
-              <div className="space-y-2">
-                {board.tasks
-                  .filter((t) => t.status === s)
-                  .map((t) => (
-                    <TaskCard
-                      key={t.id}
-                      task={t}
-                      onEdit={() => setBuilder({ mode: "edit", task: t })}
-                      onDelete={async () => {
-                        if (await confirm({ prompt: `Delete "${t.title}"?`, confirmText: "Delete" })) del.mutate(t.id);
-                      }}
-                      onHold={() =>
-                        status.mutate(
-                          t.status === "on_hold" ? { id: t.id, status: "ready" } : { id: t.id, status: "on_hold" },
-                        )
-                      }
-                    />
-                  ))}
-              </div>
-            </section>
-          ))
+      <div className="min-h-0 flex-1 overflow-auto pt-3">
+        {tab === "board" && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              {TASKQ_STATUSES.filter((s) => board.counts[s] > 0).map((s) => (
+                <Badge key={s} tone={STATUS_TONE[s]}>
+                  {TASKQ_STATUS_LABELS[s]}: {board.counts[s]}
+                </Badge>
+              ))}
+              <Badge tone="neutral">Total: {board.total}</Badge>
+            </div>
+            <InputQueuePanel />
+            {board.total === 0 ? (
+              <p className="text-gray-400">No tasks yet — add one with “New task”.</p>
+            ) : (
+              TASKQ_STATUSES.filter((s) => board.tasks.some((t) => t.status === s)).map((s) => (
+                <section key={s}>
+                  <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+                    {TASKQ_STATUS_LABELS[s]} <span className="text-gray-400">({board.counts[s]})</span>
+                  </h3>
+                  <div className="space-y-2">
+                    {board.tasks
+                      .filter((t) => t.status === s)
+                      .map((t) => (
+                        <TaskCard
+                          key={t.id}
+                          task={t}
+                          onEdit={() => setBuilder({ mode: "edit", task: t })}
+                          onDelete={async () => {
+                            if (await confirm({ prompt: `Delete "${t.title}"?`, confirmText: "Delete" })) del.mutate(t.id);
+                          }}
+                          onHold={() =>
+                            status.mutate(
+                              t.status === "on_hold" ? { id: t.id, status: "ready" } : { id: t.id, status: "on_hold" },
+                            )
+                          }
+                        />
+                      ))}
+                  </div>
+                </section>
+              ))
+            )}
+          </div>
         )}
-        <HistoryPanel />
+        {tab === "workers" && (
+          <div className="space-y-4">
+            <DrainerControl />
+            <InstancesPanel />
+            <LogsPanel />
+          </div>
+        )}
+        {tab === "settings" && <SettingsPanel />}
+        {tab === "history" && <HistoryPanel />}
+        {tab === "usage" && <UsagePanel />}
       </div>
 
       {builder && (
@@ -586,6 +615,238 @@ function DrainerControl() {
   );
 }
 
+function fmtDur(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+/** Live worker instances (current leases) + per-instance release. */
+function InstancesPanel() {
+  const { data } = useQuery({ queryKey: ["taskq-instances"], queryFn: fetchTaskqInstances, refetchInterval: 4000 });
+  const qc = useQueryClient();
+  const { notify } = useToast();
+  const release = useMutation({
+    mutationFn: (id: number) => releaseTaskqInstance(id),
+    onSuccess: (r) => {
+      qc.setQueryData(["taskq-instances"], { instances: r.instances });
+      qc.setQueryData(["taskq"], r.board);
+      notify("Released → ready", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "release failed", "error"),
+  });
+  const items = data?.instances ?? [];
+  const now = Date.now();
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+        Live instances <span className="text-gray-400">({items.length})</span>
+      </h3>
+      {items.length === 0 ? (
+        <p className="text-sm text-gray-400">No workers claimed right now.</p>
+      ) : (
+        <div className="space-y-1">
+          {items.map((i) => (
+            <div key={i.task_id} className={`${CARD_CLASS} flex items-center justify-between gap-3 p-2 text-xs`}>
+              <div className="min-w-0">
+                <p className="truncate font-medium">
+                  <span className="text-gray-400">#{i.task_id}</span> {i.title}
+                </p>
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-gray-500">
+                  <span>worker {i.worker_id}</span>
+                  {i.model && <Badge tone="neutral">{i.model}</Badge>}
+                  {i.repo && <span>{i.repo}</span>}
+                  <span>running {fmtDur(now - i.claimed_at)}</span>
+                  <span>hb {fmtDur(now - i.heartbeat_at)} ago</span>
+                  {now > i.expires_at && <span className="text-amber-600 dark:text-amber-400">lease expired</span>}
+                </div>
+              </div>
+              <button type="button" className={BTN_GHOST_CLASS} disabled={release.isPending} onClick={() => release.mutate(i.task_id)}>
+                Release
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="mt-2 text-xs text-gray-400">
+        Release returns a task to “ready” (drops the lease). To stop ALL work, use Graceful stop above. To cap how
+        many run at once, set Jobs / fleet tiers in Settings.
+      </p>
+    </section>
+  );
+}
+
+/** Tail of the watchdog log. */
+function LogsPanel() {
+  const { data } = useQuery({ queryKey: ["taskq-logs"], queryFn: () => fetchTaskqLogs(200), refetchInterval: 5000 });
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Watchdog log</h3>
+      <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-gray-950 p-3 text-xs text-gray-300">
+        {(data?.lines ?? []).join("\n") || "(empty)"}
+      </pre>
+      {data?.path && <p className="mt-1 font-mono text-xs text-gray-400">{data.path}</p>}
+    </section>
+  );
+}
+
+/** Settings: drainer/watchdog config + fleet tiers + launchd control. */
+function SettingsPanel() {
+  const { data } = useQuery({ queryKey: ["taskq-config"], queryFn: fetchTaskqConfig });
+  const status = useQuery({ queryKey: ["taskq-drainer"], queryFn: fetchTaskqDrainer, refetchInterval: 5000 });
+  if (!data) return <p className="text-gray-400">loading…</p>;
+  return <ConfigForm config={data.config} interval={data.interval} watchdogLoaded={!!status.data?.watchdogLoaded} />;
+}
+
+function ConfigForm({ config, interval, watchdogLoaded }: { config: TaskqConfig; interval: number; watchdogLoaded: boolean }) {
+  const qc = useQueryClient();
+  const { notify } = useToast();
+  const [jobs, setJobs] = useState(config.jobs);
+  const [model, setModel] = useState(config.model);
+  const [think, setThink] = useState(config.think ?? "");
+  const [fast, setFast] = useState(!!config.fast);
+  const [ttlMin, setTtlMin] = useState(Math.round(config.leaseTtlMs / 60000));
+  const [triage, setTriage] = useState(!!config.triage?.enabled);
+  const [fleet, setFleet] = useState<TaskqFleetTier[]>(config.fleet ?? []);
+  const [intervalS, setIntervalS] = useState(interval);
+
+  const save = useMutation({
+    mutationFn: () => {
+      const patch: TaskqConfigPatch = {
+        jobs,
+        model,
+        think,
+        fast,
+        leaseTtlMs: ttlMin * 60000,
+        triageEnabled: triage,
+        fleet: fleet.length ? fleet : null,
+      };
+      return saveTaskqConfig(patch);
+    },
+    onSuccess: (r) => {
+      qc.setQueryData(["taskq-config"], r);
+      notify("Settings saved (applies on the next drain)", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "save failed", "error"),
+  });
+  const watchdog = useMutation({
+    mutationFn: (a: "load" | "unload") => setTaskqWatchdog(a),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["taskq-drainer"] });
+      notify(r.ok ? "Watchdog updated" : r.out || "failed", r.ok ? "success" : "error");
+    },
+  });
+  const setIntv = useMutation({
+    mutationFn: () => setTaskqInterval(intervalS),
+    onSuccess: (r) => notify(r.ok ? "Interval set" : r.out || "failed", r.ok ? "success" : "error"),
+    onError: (e) => notify(e instanceof Error ? e.message : "failed", "error"),
+  });
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      {/* Worker pool */}
+      <section className={`${CARD_CLASS} p-4`}>
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Worker pool</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label={`Max instances (jobs): ${jobs}`} hint="Concurrent workers when no fleet tiers are set.">
+            <input type="range" min={1} max={16} value={jobs} onChange={(e) => setJobs(Number(e.target.value))} className="w-full" />
+          </Field>
+          <Field label="Default model" hint="Used when a task pins no model.">
+            <select className={FIELD_CLASS} value={model} onChange={(e) => setModel(e.target.value)}>
+              {TASKQ_MODEL_ALIASES.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Default thinking" hint="Fallback when a task pins none.">
+            <select className={FIELD_CLASS} value={think} onChange={(e) => setThink(e.target.value)}>
+              <option value="">off / unset</option>
+              {TASKQ_THINK_LEVELS.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Lease TTL (min)" hint="Reaped + retried if a worker doesn't heartbeat within this.">
+            <input type="number" min={1} className={FIELD_CLASS} value={ttlMin} onChange={(e) => setTtlMin(Number(e.target.value))} />
+          </Field>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={fast} onChange={(e) => setFast(e.target.checked)} className="h-4 w-4" />
+            Fast mode default
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={triage} onChange={(e) => setTriage(e.target.checked)} className="h-4 w-4" />
+            Auto-triage (grade blank tasks + decompose epics)
+          </label>
+        </div>
+      </section>
+
+      {/* Fleet tiers */}
+      <section className={`${CARD_CLASS} p-4`}>
+        <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-gray-500">Fleet tiers</h3>
+        <p className="mb-3 text-xs text-gray-400">Per-model worker pools — overrides the flat Jobs above. Each tier only claims tasks for its models (untagged tasks match any).</p>
+        <div className="space-y-2">
+          {fleet.map((tier, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                className={`${FIELD_CLASS} flex-1`}
+                placeholder="models e.g. sonnet,haiku"
+                value={tier.models.join(",")}
+                onChange={(e) => setFleet((f) => f.map((t, j) => (j === i ? { ...t, models: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } : t)))}
+              />
+              <input
+                type="number"
+                min={1}
+                max={16}
+                className={`${FIELD_CLASS} w-20`}
+                value={tier.jobs}
+                onChange={(e) => setFleet((f) => f.map((t, j) => (j === i ? { ...t, jobs: Number(e.target.value) } : t)))}
+              />
+              <button type="button" className={BTN_GHOST_CLASS} onClick={() => setFleet((f) => f.filter((_, j) => j !== i))}>
+                ✕
+              </button>
+            </div>
+          ))}
+          <button type="button" className={BTN_GHOST_CLASS} onClick={() => setFleet((f) => [...f, { models: ["sonnet"], jobs: 1 }])}>
+            + Add tier
+          </button>
+        </div>
+      </section>
+
+      <button type="button" className={BTN_PRIMARY_CLASS} onClick={() => save.mutate()} disabled={save.isPending}>
+        {save.isPending && <Spinner />}Save settings
+      </button>
+
+      {/* Watchdog (launchd) */}
+      <section className={`${CARD_CLASS} p-4`}>
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Watchdog (launchd)</h3>
+        <div className="flex flex-wrap items-center gap-3">
+          <Badge tone={watchdogLoaded ? "success" : "neutral"}>{watchdogLoaded ? "loaded" : "not loaded"}</Badge>
+          {watchdogLoaded ? (
+            <button type="button" className={BTN_GHOST_CLASS} onClick={() => watchdog.mutate("unload")} disabled={watchdog.isPending}>
+              Unload
+            </button>
+          ) : (
+            <button type="button" className={BTN_GHOST_CLASS} onClick={() => watchdog.mutate("load")} disabled={watchdog.isPending}>
+              Load
+            </button>
+          )}
+          <span className="text-sm text-gray-500">Tick every</span>
+          <input type="number" min={30} className={`${FIELD_CLASS} w-24`} value={intervalS} onChange={(e) => setIntervalS(Number(e.target.value))} />
+          <span className="text-sm text-gray-500">s</span>
+          <button type="button" className={BTN_GHOST_CLASS} onClick={() => setIntv.mutate()} disabled={setIntv.isPending}>
+            Set interval
+          </button>
+        </div>
+      </section>
+
+      {/* Effective state + paths */}
+      <section className={`${CARD_CLASS} p-4 text-xs`}>
+        <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Current effective settings</h3>
+        <pre className="overflow-auto whitespace-pre-wrap text-gray-600 dark:text-gray-300">{JSON.stringify(config, null, 2)}</pre>
+      </section>
+    </div>
+  );
+}
+
 /** Completed-task history + simple stats (from the completions table). */
 function HistoryPanel() {
   const { data } = useQuery({ queryKey: ["taskq-history"], queryFn: fetchTaskqHistory, refetchInterval: 10000 });
@@ -670,11 +931,12 @@ function InputQueuePanel() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
       <span className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">{label}</span>
       {children}
+      {hint && <span className="mt-1 block text-xs text-gray-400">{hint}</span>}
     </label>
   );
 }

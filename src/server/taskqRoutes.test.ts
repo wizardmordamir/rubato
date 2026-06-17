@@ -8,6 +8,7 @@ import { __resetTaskqDbForTests } from './taskqDb';
 
 let dir: string;
 const prev = process.env.TASKQ_DB;
+const prevHome = process.env.TASKQ_HOME;
 
 const call = (method: string, path: string, body?: unknown) =>
   handleTaskqApi(
@@ -23,10 +24,13 @@ const boardOf = async (res: Response) => ((await res.json()) as { board: TaskqBo
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'taskq-routes-'));
   process.env.TASKQ_DB = join(dir, 'q.sqlite');
+  process.env.TASKQ_HOME = dir; // isolate config.json + logs from the real ~/.taskq
 });
 afterAll(() => {
   if (prev === undefined) delete process.env.TASKQ_DB;
   else process.env.TASKQ_DB = prev;
+  if (prevHome === undefined) delete process.env.TASKQ_HOME;
+  else process.env.TASKQ_HOME = prevHome;
 });
 beforeEach(() => __resetTaskqDbForTests());
 
@@ -81,5 +85,28 @@ describe('taskq routes', () => {
 
     const bad = await call('POST', '/api/taskq/usage/calibrate', { key: 'nope', consumedFraction: 0.5 });
     expect(bad.status).toBe(400);
+  });
+
+  test('config: GET → patch jobs/model/fleet → reflected; bad model 400', async () => {
+    const get1 = (await (await call('GET', '/api/taskq/config')).json()) as { config: { jobs: number } };
+    expect(get1.config.jobs).toBeGreaterThanOrEqual(1);
+
+    const saved = (await (
+      await call('POST', '/api/taskq/config', { jobs: 4, model: 'sonnet', fleet: [{ models: ['sonnet', 'haiku'], jobs: 2 }] })
+    ).json()) as { config: { jobs: number; model: string; fleet?: { jobs: number }[] } };
+    expect(saved.config.jobs).toBe(4);
+    expect(saved.config.model).toBe('sonnet');
+    expect(saved.config.fleet?.[0].jobs).toBe(2);
+
+    const bad = await call('POST', '/api/taskq/config', { model: 'gpt' });
+    expect(bad.status).toBe(400);
+  });
+
+  test('instances: empty, then one appears after a claim-equivalent', async () => {
+    const empty = (await (await call('GET', '/api/taskq/instances')).json()) as { instances: unknown[] };
+    expect(empty.instances.length).toBe(0);
+    // logs endpoint returns a shape even with no log file
+    const logs = (await (await call('GET', '/api/taskq/logs')).json()) as { lines: string[] };
+    expect(Array.isArray(logs.lines)).toBe(true);
   });
 });

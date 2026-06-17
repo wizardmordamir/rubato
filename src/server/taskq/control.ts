@@ -5,11 +5,12 @@
  * spawns a detached drain; graceful stop toggles the `.stop` sentinel.
  */
 
-import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type TaskqDb, taskqHome } from 'cwip/taskq';
-import { TASKQ_LAUNCHD_LABEL } from './launchd';
 import { agentPath } from './claudeExecutor';
+import { TASKQ_LAUNCHD_LABEL, taskqLaunchdPlist } from './launchd';
 
 export interface DrainerStatus {
   /** The launchd watchdog (`com.taskq.drain`) is loaded. */
@@ -89,4 +90,88 @@ export function taskqHistory(db: TaskqDb, limit = 50): TaskqHistory {
     d: number;
   };
   return { recent, stats: { total: agg.n, totalDurationS: agg.d } };
+}
+
+export interface LiveInstance {
+  task_id: number;
+  title: string;
+  repo: string | null;
+  model: string | null;
+  worker_id: string;
+  worktree: string | null;
+  claimed_at: number;
+  heartbeat_at: number;
+  expires_at: number;
+}
+
+/** Currently-claimed tasks (the live worker instances), from `leases` ⋈ `tasks`. */
+export function liveInstances(db: TaskqDb): LiveInstance[] {
+  return db
+    .query(
+      `SELECT l.task_id, t.title, t.repo, t.model, l.worker_id, l.worktree, l.claimed_at, l.heartbeat_at, l.expires_at
+         FROM leases l JOIN tasks t ON t.id = l.task_id
+        ORDER BY l.claimed_at ASC`,
+    )
+    .all() as LiveInstance[];
+}
+
+/** Tail the watchdog log (`~/.taskq/watchdog.out`). */
+export function tailWatchdogLog(lines = 200): { path: string; lines: string[] } {
+  const path = join(taskqHome(), 'watchdog.out');
+  try {
+    const all = readFileSync(path, 'utf8').split('\n');
+    return { path, lines: all.slice(-lines) };
+  } catch {
+    return { path, lines: [] };
+  }
+}
+
+const PLIST_PATH = join(homedir(), 'Library', 'LaunchAgents', `${TASKQ_LAUNCHD_LABEL}.plist`);
+
+function shRun(cmd: string[]): { ok: boolean; out: string } {
+  try {
+    const r = Bun.spawnSync(cmd, { stdout: 'pipe', stderr: 'pipe' });
+    return { ok: r.exitCode === 0, out: `${r.stdout.toString()}${r.stderr.toString()}`.trim() };
+  } catch (e) {
+    return { ok: false, out: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** (Re)write the watchdog plist at the given tick interval. */
+export function writeWatchdogPlist(intervalSeconds: number): void {
+  const plist = taskqLaunchdPlist({
+    bunPath: process.execPath,
+    rubatoDir: new URL('../../../', import.meta.url).pathname,
+    intervalSeconds,
+    logDir: taskqHome(),
+    path: agentPath(),
+  });
+  writeFileSync(PLIST_PATH, plist);
+}
+
+/** Read the current tick interval from the installed plist (default 300). */
+export function currentInterval(): number {
+  try {
+    const m = readFileSync(PLIST_PATH, 'utf8').match(/<key>StartInterval<\/key>\s*<integer>(\d+)<\/integer>/);
+    return m ? Number(m[1]) : 300;
+  } catch {
+    return 300;
+  }
+}
+
+/** Load or unload the launchd watchdog (load (re)writes the plist first). */
+export function setWatchdog(action: 'load' | 'unload'): { ok: boolean; out: string } {
+  if (action === 'load') {
+    if (!existsSync(PLIST_PATH)) writeWatchdogPlist(currentInterval());
+    return shRun(['launchctl', 'load', PLIST_PATH]);
+  }
+  return shRun(['launchctl', 'unload', PLIST_PATH]);
+}
+
+/** Set the watchdog tick interval: rewrite the plist + reload it. */
+export function setWatchdogInterval(seconds: number): { ok: boolean; out: string } {
+  if (!Number.isInteger(seconds) || seconds < 30) throw new Error('interval must be ≥ 30 seconds');
+  shRun(['launchctl', 'unload', PLIST_PATH]);
+  writeWatchdogPlist(seconds);
+  return shRun(['launchctl', 'load', PLIST_PATH]);
 }

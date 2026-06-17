@@ -1614,6 +1614,60 @@ export const stopTaskqDrainer = () => postJson<{ ok: boolean; status: TaskqDrain
 export const resumeTaskqDrainer = () =>
   postJson<{ ok: boolean; status: TaskqDrainerStatus }>("/api/taskq/drainer/resume", {});
 
+export interface TaskqFleetTier {
+  models: string[];
+  jobs: number;
+}
+export interface TaskqConfig {
+  jobs: number;
+  model: string;
+  think?: string;
+  fast?: boolean;
+  fleet?: TaskqFleetTier[];
+  leaseTtlMs: number;
+  triage?: { enabled: boolean };
+  repos: Record<string, string>;
+}
+export interface TaskqConfigPatch {
+  jobs?: number;
+  model?: string;
+  think?: string;
+  fast?: boolean;
+  fleet?: TaskqFleetTier[] | null;
+  leaseTtlMs?: number;
+  triageEnabled?: boolean;
+}
+export interface TaskqInstance {
+  task_id: number;
+  title: string;
+  repo: string | null;
+  model: string | null;
+  worker_id: string;
+  worktree: string | null;
+  claimed_at: number;
+  heartbeat_at: number;
+  expires_at: number;
+}
+
+/** View the effective config + the watchdog tick interval. */
+export const fetchTaskqConfig = () => getJson<{ config: TaskqConfig; interval: number }>("/api/taskq/config");
+/** Patch the editable config knobs (jobs/model/think/fast/fleet/leaseTtl/triage). */
+export const saveTaskqConfig = (patch: TaskqConfigPatch) =>
+  postJson<{ config: TaskqConfig; interval: number }>("/api/taskq/config", patch);
+/** Live worker instances (current leases). */
+export const fetchTaskqInstances = () => getJson<{ instances: TaskqInstance[] }>("/api/taskq/instances");
+/** Release a claimed task back to ready (abandon the lease). */
+export const releaseTaskqInstance = (taskId: number) =>
+  postJson<{ board: TaskqBoard; instances: TaskqInstance[] }>(`/api/taskq/instances/${taskId}/release`, {});
+/** Tail the watchdog log. */
+export const fetchTaskqLogs = (lines = 200) => getJson<{ path: string; lines: string[] }>(`/api/taskq/logs?lines=${lines}`);
+/** Load or unload the launchd watchdog. */
+export const setTaskqWatchdog = (action: "load" | "unload") =>
+  postJson<{ ok: boolean; out: string; status: TaskqDrainerStatus }>("/api/taskq/drainer/watchdog", { action });
+/** Set the watchdog tick interval (seconds). */
+export const setTaskqInterval = (seconds: number) =>
+  postJson<{ ok: boolean; out: string; interval: number }>("/api/taskq/drainer/interval", { seconds });
+
 // ── Watchdog control + observe ────────────────────────────────────────────────
 
 /** The live watchdog snapshot (config + status + instances + problems + logs + …). */

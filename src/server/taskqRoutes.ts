@@ -17,12 +17,13 @@ import {
   allBucketStates,
   calibrateBucket,
   deleteTask,
-  openClarifications,
   getNeeds,
   listTasks,
   moveTask,
   type NewTask,
+  openClarifications,
   type Position,
+  releaseLease,
   setStatus,
   type TaskPatch,
   TASK_STATUSES,
@@ -31,8 +32,19 @@ import {
   USAGE_BUCKETS,
 } from 'cwip/taskq';
 import type { TaskqBoard } from '../shared/taskq';
+import { loadTaskqConfig, saveTaskqConfig, type TaskqConfigPatch } from './taskq/config';
 import { json, jsonError, readJsonBody } from './http';
-import { drainerStatus, runDrainerNow, setDrainerStop, taskqHistory } from './taskq/control';
+import {
+  currentInterval,
+  drainerStatus,
+  liveInstances,
+  runDrainerNow,
+  setDrainerStop,
+  setWatchdog,
+  setWatchdogInterval,
+  tailWatchdogLog,
+  taskqHistory,
+} from './taskq/control';
 import { resolveGateway } from './taskq/triage';
 import { getTaskqDb } from './taskqDb';
 
@@ -114,6 +126,58 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
     if (req.method !== 'POST') return jsonError('use POST', 405);
     setDrainerStop(pathname.endsWith('/stop'));
     return json({ ok: true, status: drainerStatus() });
+  }
+  // launchd watchdog: load/unload + tick interval.
+  if (pathname === '/api/taskq/drainer/watchdog') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    const body = await readJsonBody<{ action?: string }>(req);
+    if (body?.action !== 'load' && body?.action !== 'unload') return jsonError("action must be 'load' or 'unload'", 400);
+    const r = setWatchdog(body.action);
+    return json({ ok: r.ok, out: r.out, status: drainerStatus() });
+  }
+  if (pathname === '/api/taskq/drainer/interval') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    const body = await readJsonBody<{ seconds?: number }>(req);
+    try {
+      const r = setWatchdogInterval(Number(body?.seconds));
+      return json({ ok: r.ok, out: r.out, interval: currentInterval() });
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'failed to set interval', 400);
+    }
+  }
+
+  // Config (the Settings tab): view + patch the editable knobs.
+  if (pathname === '/api/taskq/config') {
+    if (req.method === 'GET') return json({ config: loadTaskqConfig(), interval: currentInterval() });
+    if (req.method === 'POST') {
+      const body = await readJsonBody<TaskqConfigPatch>(req);
+      if (!body || typeof body !== 'object') return jsonError('a config patch is required', 400);
+      try {
+        return json({ config: saveTaskqConfig(body), interval: currentInterval() });
+      } catch (e) {
+        return jsonError(e instanceof Error ? e.message : 'invalid config', 400);
+      }
+    }
+    return jsonError('use GET or POST', 405);
+  }
+
+  // Live worker instances (current leases) + release one.
+  if (pathname === '/api/taskq/instances') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    return json({ instances: liveInstances(getTaskqDb()) });
+  }
+  const rel = pathname.match(/^\/api\/taskq\/instances\/(\d+)\/release$/);
+  if (rel) {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    releaseLease(getTaskqDb(), Number(rel[1]));
+    return json({ board: board(), instances: liveInstances(getTaskqDb()) });
+  }
+
+  // Tail the watchdog log.
+  if (pathname === '/api/taskq/logs') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    const n = Number(new URL(req.url).searchParams.get('lines') ?? '200');
+    return json(tailWatchdogLog(Number.isFinite(n) ? n : 200));
   }
 
   // Input Queue: open clarification gateways + answering one (releases children).

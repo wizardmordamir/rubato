@@ -127,7 +127,9 @@ export function makeClaudeExecutor(config: TaskqConfig, spawn: SpawnFn = default
       '--dangerously-skip-permissions',
     ];
     const env: Record<string, string> = { PATH: agentPath() };
-    const think = task.think ? THINK_TOKENS[task.think] : undefined;
+    // Task marker wins; else the config's default thinking level.
+    const thinkLevel = task.think ?? config.think;
+    const think = thinkLevel ? THINK_TOKENS[thinkLevel] : undefined;
     if (think) env.MAX_THINKING_TOKENS = String(think);
     const { exitCode, stdout } = await spawn(cmd, cwd, env);
     if (exitCode !== 0) return { ok: false, reason: `claude -p exited ${exitCode}` };
