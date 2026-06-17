@@ -19,6 +19,7 @@ import {
   calibrateBucket,
   deleteTask,
   getNeeds,
+  listDrainRuns,
   listTasks,
   modelAliasFromId,
   moveTask,
@@ -275,6 +276,14 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
     if (req.method !== 'GET') return jsonError('use GET', 405);
     const n = Number(new URL(req.url).searchParams.get('lines') ?? '200');
     return json(tailWatchdogLog(Number.isFinite(n) ? n : 200));
+  }
+
+  // Drain run audit log: recent drain pass decisions + outcomes.
+  if (pathname === '/api/taskq/drain-runs') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    const url = new URL(req.url);
+    const limit = Number(url.searchParams.get('limit') ?? '50');
+    return json(listDrainRuns(getTaskqDb(), Number.isFinite(limit) ? limit : 50));
   }
 
   // Input Queue: open clarification gateways + answering one (releases children).

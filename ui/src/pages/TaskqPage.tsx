@@ -30,6 +30,7 @@ import {
   TASKQ_THINK_LEVELS,
   type TaskqBoard,
   fetchTaskqConfig,
+  fetchTaskqDrainRuns,
   fetchTaskqInstances,
   fetchTaskqLogs,
   releaseTaskqInstance,
@@ -38,6 +39,7 @@ import {
   setTaskqWatchdog,
   type TaskqConfig,
   type TaskqConfigPatch,
+  type TaskqDrainRun,
   type TaskqFleetTier,
   type TaskqInstance,
   type TaskqNewTask,
@@ -100,7 +102,7 @@ export function TaskqPage() {
     queryKey: ["taskq"],
     queryFn: fetchTaskqBoard,
     // Poll while work is in flight so claimed/running status shows live.
-    refetchInterval: (q) => (q.state.data?.counts.claimed ? 4000 : false),
+    refetchInterval: (q) => (q.state.data?.counts.claimed ? 4000 : 10000),
   });
   const { data: sectionPrefsData } = useQuery({
     queryKey: ["taskq-section-prefs"],
@@ -224,7 +226,7 @@ export function TaskqPage() {
             <DrainerControl onGoToSettings={() => setTab("settings")} />
             <CapacityPanel onGoToSettings={() => setTab("settings")} />
             <InstancesPanel />
-            <LogsPanel />
+            <DrainRunsPanel />
           </div>
         )}
         {tab === "settings" && <SettingsPanel />}
@@ -1354,6 +1356,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
   const { data } = useQuery({ queryKey: ["taskq-drainer"], queryFn: fetchTaskqDrainer, refetchInterval: 5000 });
   const configQ = useQuery({ queryKey: ["taskq-config"], queryFn: fetchTaskqConfig });
   const { data: cap } = useQuery({ queryKey: ["taskq-capacity"], queryFn: fetchTaskqCapacity, refetchInterval: 8000 });
+  const { data: runsData } = useQuery({ queryKey: ["taskq-drain-runs"], queryFn: () => fetchTaskqDrainRuns(1), refetchInterval: 5000 });
   const qc = useQueryClient();
   const { notify } = useToast();
   const run = useMutation({
@@ -1395,7 +1398,17 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
   });
 
   const s = data;
-  const interval = configQ.data?.interval;
+  const interval = configQ.data?.interval ?? null;
+  const lastDrainAt = runsData?.[0]?.started_at ?? null;
+
+  const [countdown, setCountdown] = useState<number | null>(null);
+  useEffect(() => {
+    if (!lastDrainAt || !interval) { setCountdown(null); return; }
+    const tick = () => setCountdown(Math.max(0, interval - Math.floor((Date.now() - lastDrainAt) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lastDrainAt, interval]);
 
   return (
     <div className={`${CARD_CLASS} mb-3 p-3`}>
@@ -1461,7 +1474,11 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
           )}
           {!s?.running && !cap?.decision.paused && s?.watchdogLoaded && interval != null && (
             <div className="mt-1 text-xs text-gray-400">
-              next auto-tick in ≤{fmtInterval(interval)}
+              {countdown === null
+                ? `next auto-tick in ≤${fmtInterval(interval)}`
+                : countdown === 0
+                  ? 'any moment now…'
+                  : `next tick in ${countdown}s`}
             </div>
           )}
         </div>
@@ -1580,6 +1597,8 @@ function fmtInterval(seconds: number): string {
 /** Live worker instances (current leases) + per-instance release. */
 function InstancesPanel() {
   const { data } = useQuery({ queryKey: ["taskq-instances"], queryFn: fetchTaskqInstances, refetchInterval: 4000 });
+  const configQ = useQuery({ queryKey: ["taskq-config"], queryFn: fetchTaskqConfig });
+  const defaultModel = configQ.data?.config?.model ?? 'sonnet';
   const qc = useQueryClient();
   const { notify } = useToast();
   const release = useMutation({
@@ -1638,8 +1657,8 @@ function InstancesPanel() {
                 {/* Detail grid */}
                 <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-xs sm:grid-cols-3">
                   <WorkerInfoCell label="Model">
-                    <span className={`font-mono font-medium ${i.model ? "text-accent" : "text-gray-400"}`}>
-                      {i.model ?? "default"}
+                    <span className="font-mono font-medium text-accent">
+                      {i.model ?? defaultModel}
                     </span>
                   </WorkerInfoCell>
 
@@ -1734,16 +1753,79 @@ function WorkerInfoCell({ label, children, wide }: { label: string; children: Re
   );
 }
 
-/** Tail of the watchdog log. */
-function LogsPanel() {
-  const { data } = useQuery({ queryKey: ["taskq-logs"], queryFn: () => fetchTaskqLogs(200), refetchInterval: 5000 });
+/** Structured drain history + raw watchdog log. */
+function DrainRunsPanel() {
+  const { data: runs } = useQuery({ queryKey: ["taskq-drain-runs"], queryFn: () => fetchTaskqDrainRuns(30), refetchInterval: 5000 });
+  const { data: logs } = useQuery({ queryKey: ["taskq-logs"], queryFn: () => fetchTaskqLogs(200), refetchInterval: 5000 });
+
+  function fmtRunTs(epochMs: number): string {
+    const d = new Date(epochMs);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+  }
+
+  function decisionBadge(decision: string) {
+    const map: Record<string, { label: string; cls: string }> = {
+      normal:    { label: 'Normal',    cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' },
+      paused:    { label: 'Paused',    cls: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' },
+      throttled: { label: 'Throttled', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' },
+      burning:   { label: 'Burning',   cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
+      stopped:   { label: 'Stopped',   cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' },
+    };
+    const d = map[decision] ?? { label: decision, cls: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300' };
+    return <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${d.cls}`}>{d.label}</span>;
+  }
+
+  const items: TaskqDrainRun[] = runs ?? [];
+
   return (
     <section>
-      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Watchdog log</h3>
-      <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-gray-950 p-3 text-xs text-gray-300">
-        {(data?.lines ?? []).join("\n") || "(empty)"}
-      </pre>
-      {data?.path && <p className="mt-1 font-mono text-xs text-gray-400">{data.path}</p>}
+      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Drain history</h3>
+      {items.length === 0 ? (
+        <p className="text-sm text-gray-400">No drain runs recorded yet — runs will appear here after the next drain tick.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50 text-left text-gray-500 dark:border-gray-700 dark:bg-gray-800/60">
+                <th className="px-3 py-2 font-medium">Time</th>
+                <th className="px-3 py-2 font-medium">Decision</th>
+                <th className="px-3 py-2 font-medium">Reason</th>
+                <th className="px-3 py-2 font-medium">Workers</th>
+                <th className="px-3 py-2 font-medium">Completed</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700/60">
+              {items.map((r) => (
+                <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
+                  <td className="whitespace-nowrap px-3 py-2 font-mono text-gray-600 dark:text-gray-300">
+                    {fmtRunTs(r.started_at)}
+                  </td>
+                  <td className="px-3 py-2">{decisionBadge(r.decision)}</td>
+                  <td className="px-3 py-2 text-gray-600 dark:text-gray-300">{r.reason}</td>
+                  <td className="px-3 py-2 text-gray-600 dark:text-gray-300">
+                    {r.decision === 'paused' ? '—' : `${r.jobs}/${r.max_jobs}`}
+                  </td>
+                  <td className="px-3 py-2 text-gray-600 dark:text-gray-300">
+                    {r.completed ? <span className="font-medium text-emerald-600 dark:text-emerald-400">{r.completed}</span> : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <details className="mt-3">
+        <summary className="cursor-pointer select-none text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+          Raw watchdog log
+        </summary>
+        <div className="mt-2">
+          <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-gray-950 p-3 text-xs text-gray-300">
+            {(logs?.lines ?? []).join("\n") || "(empty)"}
+          </pre>
+          {logs?.path && <p className="mt-1 font-mono text-xs text-gray-400">{logs.path}</p>}
+        </div>
+      </details>
     </section>
   );
 }
