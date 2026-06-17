@@ -3,7 +3,7 @@ import { useCopyToClipboard } from "cwip/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useRegisterBreadcrumbLabel } from "../breadcrumbs";
-import type { Step, Target } from "@shared/automation";
+import type { BrowserChoice, DetectedBrowser, Step, Target } from "@shared/automation";
 import { insertSmartWaits, type RunSpeed } from "@shared/pacing";
 import { manifestToMoments } from "@shared/timeline";
 import {
@@ -17,6 +17,7 @@ import {
   fetchCaptureManifest,
   runAutomation,
   saveAutomation,
+  sessionBrowsers,
   sessionCapture,
   sessionLaunch,
   sessionPicker,
@@ -88,6 +89,15 @@ export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {
   // Headed only: keep the browser open after the run (not just on failure).
   const [runKeepOpen, setRunKeepOpen] = usePersistentBoolean("rubato.run.keepOpen", false);
   const [runSpeed, setRunSpeed] = usePersistentString<RunSpeed>("rubato.run.speed", "off", RUN_SPEEDS);
+  const BROWSER_CHOICES = ["", "chrome", "chromium", "firefox", "edge", "webkit"] as const;
+  const [runBrowserRaw, setRunBrowserRaw] = usePersistentString<BrowserChoice | "">("rubato.run.browser", "", BROWSER_CHOICES);
+  const runBrowser: BrowserChoice | undefined = runBrowserRaw || undefined;
+  const setRunBrowser = (v: BrowserChoice | undefined) => setRunBrowserRaw(v ?? "");
+  // Browser choice for the headed build session (launch button).
+  const [buildBrowserRaw, setBuildBrowserRaw] = usePersistentString<BrowserChoice | "">("rubato.build.browser", "", BROWSER_CHOICES);
+  const buildBrowser: BrowserChoice | undefined = buildBrowserRaw || undefined;
+  const setBuildBrowser = (v: BrowserChoice | undefined) => setBuildBrowserRaw(v ?? "");
+  const [detectedBrowsers, setDetectedBrowsers] = useState<DetectedBrowser[]>([]);
   const stepper = useStepRunner();
   // A headed run's browser was left open (on failure, or because keepOpen was set).
   const [heldOpen, setHeldOpen] = useState(false);
@@ -123,6 +133,11 @@ export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {
     queryFn: () => fetchCaptureManifest(captureId as string),
     enabled: !!captureId,
   });
+
+  // Detect available browsers once on mount.
+  useEffect(() => {
+    sessionBrowsers().then(setDetectedBrowsers).catch(() => {});
+  }, []);
 
   // Hydrate the toolbar from a session that's already live (e.g. after a reload
   // mid-recording), so Record/Capture state + the moment count are restored.
@@ -259,7 +274,7 @@ export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {
   const launch = async () => {
     if (!draft.startUrl) return notify("Set a start URL first", "error");
     try {
-      await sessionLaunch(draft.startUrl);
+      await sessionLaunch(draft.startUrl, false, buildBrowser);
       setLaunched(true);
       setSessionUrl(draft.startUrl);
       recordStart.current = draftRef.current.steps.length;
@@ -400,7 +415,7 @@ export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {
   const run = async () => {
     try {
       const automation = buildAutomation();
-      await runAutomation({ automation, headless: runHeadless, keepOpen: runKeepOpen, speed: runSpeed });
+      await runAutomation({ automation, headless: runHeadless, keepOpen: runKeepOpen, speed: runSpeed, browser: runBrowser });
       notify("Run started…");
     } catch (err) {
       notify(err instanceof Error ? err.message : "run failed", "error");
@@ -452,6 +467,25 @@ export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {
               <button type="button" onClick={launch} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
                 Launch browser
               </button>
+              {detectedBrowsers.length > 0 && (
+                <Tooltip content="Which browser to open for building">
+                  <label className="flex items-center gap-1 text-xs text-gray-500">
+                    in
+                    <select
+                      value={buildBrowserRaw}
+                      onChange={(e) => setBuildBrowser((e.target.value as BrowserChoice) || undefined)}
+                      className="rounded border border-gray-300 bg-white px-1 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-950"
+                    >
+                      <option value="">default</option>
+                      {detectedBrowsers.map((b) => (
+                        <option key={b.id} value={b.id} disabled={!b.available}>
+                          {b.label}{!b.available ? " (not found)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </Tooltip>
+              )}
               {/* Start recording (and capturing screens) the instant the browser opens. */}
               <Tooltip content="Start recording your interactions into steps the moment the browser launches.">
                 <label className="flex items-center gap-1 text-xs text-gray-500">
@@ -709,6 +743,25 @@ export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {
               </select>
               </label>
             </Tooltip>
+            {detectedBrowsers.length > 0 && (
+              <Tooltip content="Which browser to run the automation in">
+                <label className="flex items-center gap-1 text-xs text-gray-500">
+                  browser
+                  <select
+                    value={runBrowserRaw}
+                    onChange={(e) => setRunBrowser((e.target.value as BrowserChoice) || undefined)}
+                    className="rounded border border-gray-300 bg-white px-1 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-950"
+                  >
+                    <option value="">default</option>
+                    {detectedBrowsers.map((b) => (
+                      <option key={b.id} value={b.id} disabled={!b.available}>
+                        {b.label}{!b.available ? " (not found)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </Tooltip>
+            )}
           </div>
           <p className="mt-1.5 text-xs text-gray-400">
             <b>Save</b> stores this under <span className="font-mono">~/.rubato/automations/</span>

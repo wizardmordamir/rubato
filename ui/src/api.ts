@@ -6,6 +6,8 @@ import type {
   Automation,
   AutomationRunRecord,
   AutomationVariable,
+  BrowserChoice,
+  DetectedBrowser,
   SessionStatus,
   StepRunnerStatus,
   Target,
@@ -900,6 +902,7 @@ export const runAutomation = (payload: {
   headless?: boolean;
   keepOpen?: boolean;
   speed?: RunSpeed;
+  browser?: BrowserChoice;
   variables?: Record<string, string>;
   /** Fan the automation out across these URLs (one parallel window each). */
   urls?: string[];
@@ -952,8 +955,11 @@ export const fetchPipelineVariables = (id: string) =>
 export const fetchExcelProjects = () => getJson<ExcelProject[]>("/api/excel-automations");
 
 // Build-session controls (the headed browser you author against).
-export const sessionLaunch = (url: string, headless = false) =>
-  postJson<{ ok: true }>("/api/session/launch", { url, headless });
+export const sessionLaunch = (url: string, headless = false, browser?: BrowserChoice) =>
+  postJson<{ ok: true }>("/api/session/launch", { url, headless, browser });
+/** Detect which browsers are available on this machine. */
+export const sessionBrowsers = () =>
+  getJson<{ browsers: DetectedBrowser[] }>("/api/session/browsers").then((r) => r.browsers);
 export const sessionGoto = (url: string) => postJson<{ ok: true }>("/api/session/goto", { url });
 export const sessionTestSelector = (target: Target) =>
   postJson<{ matchCount: number; visible: boolean }>("/api/session/test-selector", { target });

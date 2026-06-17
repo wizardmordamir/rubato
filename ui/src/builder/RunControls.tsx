@@ -3,6 +3,7 @@
 // that surfaces the held-browser banner and the run verdict. Backed by
 // useAutomationRunner — no trip to the editor required.
 
+import type { BrowserChoice, DetectedBrowser } from "@shared/automation";
 import type { RunSpeed } from "@shared/pacing";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Dropdown, Tooltip } from "../components";
@@ -27,6 +28,9 @@ export function RunControls({
   setKeepOpen,
   speed,
   setSpeed,
+  browser,
+  setBrowser,
+  browsers,
   automationId,
   className = "",
 }: {
@@ -38,6 +42,11 @@ export function RunControls({
   setKeepOpen: (v: boolean) => void;
   speed: RunSpeed;
   setSpeed: (v: RunSpeed) => void;
+  /** Currently selected browser (undefined = server default). */
+  browser: BrowserChoice | undefined;
+  setBrowser: (v: BrowserChoice | undefined) => void;
+  /** Available browsers detected on the server; shown in the picker. */
+  browsers?: DetectedBrowser[];
   /** Drives the preload form; omit for runs with no resolvable id. */
   automationId?: string;
   className?: string;
@@ -98,6 +107,10 @@ export function RunControls({
     };
   }, [open]);
 
+  const browserLabel = (b: BrowserChoice | undefined): string => {
+    if (!b) return "default";
+    return browsers?.find((d) => d.id === b)?.label ?? b;
+  };
   const mode = headless ? "headless" : keepOpen ? "headed · keep open" : "headed";
 
   return (
@@ -205,6 +218,29 @@ export function RunControls({
             </label>
           </Tooltip>
           <p className="mt-1 text-xs text-gray-400">Slowing helps you watch a headed run; off runs at full speed.</p>
+
+          <Tooltip content="Which browser to run the automation in." className="mt-2 block">
+            <label className="flex items-center gap-2">
+              <span className="text-gray-600 dark:text-gray-300">browser</span>
+              <Dropdown
+                aria-label="Browser"
+                value={browser ?? ""}
+                onChange={(v) => setBrowser((v as BrowserChoice) || undefined)}
+                options={[
+                  { value: "", label: "default (Chrome)" },
+                  ...(browsers ?? []).map((b) => ({
+                    value: b.id,
+                    label: b.available ? b.label : `${b.label} (not found)`,
+                  })),
+                ]}
+              />
+            </label>
+          </Tooltip>
+          <p className="mt-1 text-xs text-gray-400">
+            {browser
+              ? `Using ${browserLabel(browser)}. Install bundled browsers with \`bunx playwright install\`.`
+              : "Chrome or Chromium (whichever is installed). Override per run."}
+          </p>
 
           <div className="mt-3 mb-2 text-xs font-semibold tracking-wide text-gray-400 uppercase">
             Run across URLs

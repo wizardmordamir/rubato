@@ -389,6 +389,9 @@ export function ViewAutomationPage({ headerActions }: { headerActions?: ReactNod
                 setKeepOpen={runner.setKeepOpen}
                 speed={runner.speed}
                 setSpeed={runner.setSpeed}
+                browser={runner.browser}
+                setBrowser={runner.setBrowser}
+                browsers={runner.browsers}
                 automationId={data.id}
               />
               <Link to={`/automations/${data.id}/edit`} className={BTN_GHOST_CLASS}>

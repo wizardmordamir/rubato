@@ -16,12 +16,99 @@
  * run never disturbs the build session.
  */
 
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 import { type CaptureStore, captureStore as defaultCaptureStore } from '../lib/captureStore';
 import { normalizeUrl } from '../lib/url';
-import type { HostEvent, SessionStatus, Target } from '../shared/automation';
+import type { BrowserChoice, DetectedBrowser, HostEvent, SessionStatus, Target } from '../shared/automation';
 import type { CaptureManifest } from '../shared/capture';
 import { BrowserHost } from './browserHost';
 import { emit } from './events';
+
+// ── Browser detection (Bun-side, no Node subprocess required) ───────────────
+
+function playwrightCacheDir(): string {
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH) return process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (process.platform === 'darwin') return resolve(homedir(), 'Library/Caches/ms-playwright');
+  if (process.platform === 'win32') return resolve(process.env.LOCALAPPDATA ?? homedir(), 'ms-playwright');
+  return resolve(homedir(), '.cache/ms-playwright');
+}
+
+function hasBundledBrowser(prefix: string): boolean {
+  const cacheDir = playwrightCacheDir();
+  if (!existsSync(cacheDir)) return false;
+  try {
+    return readdirSync(cacheDir).some((d) => d.startsWith(prefix));
+  } catch {
+    return false;
+  }
+}
+
+function hasSystemBrowser(paths: string[]): boolean {
+  return paths.some((p) => existsSync(p));
+}
+
+const CHROME_PATHS: Record<string, string[]> = {
+  darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
+  win32: [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  ],
+  linux: ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'],
+};
+const EDGE_PATHS: Record<string, string[]> = {
+  darwin: ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'],
+  win32: [
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+  ],
+  linux: ['/usr/bin/microsoft-edge', '/usr/bin/microsoft-edge-stable'],
+};
+const FIREFOX_PATHS: Record<string, string[]> = {
+  darwin: ['/Applications/Firefox.app/Contents/MacOS/firefox'],
+  win32: [
+    'C:\\Program Files\\Mozilla Firefox\\firefox.exe',
+    'C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe',
+  ],
+  linux: ['/usr/bin/firefox'],
+};
+
+/**
+ * Detect which browsers are likely launchable on this machine, without
+ * starting the Node Playwright host. Checks common install paths for system
+ * browsers and the Playwright cache for bundled ones.
+ */
+export function detectBrowsers(): DetectedBrowser[] {
+  const platform = process.platform;
+  return [
+    {
+      id: 'chrome' as BrowserChoice,
+      label: 'Google Chrome',
+      available: hasSystemBrowser(CHROME_PATHS[platform] ?? []),
+    },
+    {
+      id: 'chromium' as BrowserChoice,
+      label: 'Chromium (bundled)',
+      available: hasBundledBrowser('chromium'),
+    },
+    {
+      id: 'firefox' as BrowserChoice,
+      label: 'Firefox',
+      available: hasSystemBrowser(FIREFOX_PATHS[platform] ?? []) || hasBundledBrowser('firefox'),
+    },
+    {
+      id: 'edge' as BrowserChoice,
+      label: 'Microsoft Edge',
+      available: hasSystemBrowser(EDGE_PATHS[platform] ?? []),
+    },
+    {
+      id: 'webkit' as BrowserChoice,
+      label: 'WebKit (bundled)',
+      available: hasBundledBrowser('webkit'),
+    },
+  ];
+}
 
 // The capture backend for this session's persisted moments. Defaults to rubato's
 // file store; a friend app points it at its own via `setSessionCaptureStore` (the
@@ -108,9 +195,14 @@ async function finalizeManifest(): Promise<void> {
 }
 
 /** Launch (or relaunch) the headed browser at a URL. */
-export async function launchSession(url: string, headless = false): Promise<void> {
+export async function launchSession(url: string, headless = false, browser?: BrowserChoice): Promise<void> {
   const host = await ensure();
-  await host.launch(headless, normalizeUrl(url));
+  await host.launch(headless, normalizeUrl(url), browser);
+}
+
+/** Detect which browsers are available on this machine (no host startup required). */
+export function detectSessionBrowsers(): DetectedBrowser[] {
+  return detectBrowsers();
 }
 
 export async function sessionGoto(url: string): Promise<void> {

@@ -15,10 +15,11 @@ import { type CaptureStore, captureStore as defaultCaptureStore } from '../lib/c
 import { captureToAutomation } from '../lib/captureToAutomation';
 import { automationToSpec } from '../lib/exportSpec';
 import { deleteManyRunArtifacts, deleteRunArtifacts } from '../lib/runArtifacts';
-import type { Automation, AutomationVariable, Target } from '../shared/automation';
+import type { Automation, AutomationVariable, BrowserChoice, Target } from '../shared/automation';
 import type { RunSpeed } from '../shared/pacing';
 import {
   closeSession,
+  detectSessionBrowsers,
   launchSession,
   sessionGoto,
   sessionHighlight,
@@ -135,6 +136,7 @@ export async function handleAutomationApi(
       headless?: boolean;
       keepOpen?: boolean;
       speed?: RunSpeed;
+      browser?: BrowserChoice;
       variables?: Record<string, string>;
       // When present + non-empty, fan the automation out across these URLs — one
       // parallel run (its own browser context/window) per URL, each with
@@ -160,6 +162,7 @@ export async function handleAutomationApi(
         headless: spec.headless,
         keepOpen: spec.keepOpen,
         speed: spec.speed,
+        browser: b.browser,
         variables: spec.variables,
         runStore: runs,
       });
@@ -244,14 +247,15 @@ export async function handleSessionApi(pathname: string, req: Request): Promise<
 
   if (action === 'url') return json({ url: await sessionUrl() });
   if (action === 'status') return json(await sessionStatus());
+  if (action === 'browsers') return json({ browsers: detectSessionBrowsers() });
 
   if (req.method !== 'POST') return jsonError('use POST', 405);
-  const b = (await readJsonBody<{ url?: string; target?: Target; on?: boolean; headless?: boolean }>(req)) ?? {};
+  const b = (await readJsonBody<{ url?: string; target?: Target; on?: boolean; headless?: boolean; browser?: BrowserChoice }>(req)) ?? {};
 
   switch (action) {
     case 'launch':
       if (!b.url) return jsonError('url required', 400);
-      await launchSession(b.url, b.headless ?? false);
+      await launchSession(b.url, b.headless ?? false, b.browser);
       return json({ ok: true });
     case 'capture':
       return json(await sessionSetCapture(!!b.on));
