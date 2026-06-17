@@ -49,12 +49,24 @@ function hasBundledChromium() {
  * Chromium but already have Chrome, so Chrome goes first; bundled Chromium is
  * only attempted as a fallback when it actually looks installed (no point
  * launching a binary that isn't there). Only errors if neither can launch.
+ *
+ * `RUBATO_BROWSER` overrides the order: `chromium` prefers the bundled browser
+ * (deterministic / zero-install distributions that ship it), `chrome` forces system
+ * Chrome only.
  */
 async function launchBrowser(headless) {
   const base = { headless, args: ["--no-first-run", "--no-default-browser-check"] };
   const bundled = { label: "bundled Chromium", options: base };
   const chrome = { label: "system Chrome", options: { ...base, channel: "chrome" } };
-  const candidates = hasBundledChromium() ? [chrome, bundled] : [chrome];
+  const pref = process.env.RUBATO_BROWSER;
+  const candidates =
+    pref === "chromium"
+      ? [bundled, chrome]
+      : pref === "chrome"
+        ? [chrome]
+        : hasBundledChromium()
+          ? [chrome, bundled]
+          : [chrome];
 
   let lastErr;
   for (let i = 0; i < candidates.length; i++) {
