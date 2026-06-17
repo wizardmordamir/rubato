@@ -329,7 +329,6 @@ export const SIDEBAR: SidebarEntry[] = [
   { kind: 'page', key: 'shell-aliases' },
   { kind: 'page', key: 'vault' },
   { kind: 'page', key: 'taskq' },
-  { kind: 'page', key: 'orchestration-processing' },
   { kind: 'page', key: 'customPages' },
   { kind: 'page', key: 'tools' },
   { kind: 'hub', key: 'docs' },

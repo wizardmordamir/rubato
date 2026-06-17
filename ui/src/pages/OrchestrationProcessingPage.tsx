@@ -344,7 +344,7 @@ export function OrchestrationProcessingPage({ embedded }: { embedded?: boolean }
           {/* KPIs */}
           <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
             <div className={`${CARD_CLASS} p-4`}>
-              <StatTile label="Tasks" value={summary.taskCount} sub={`${summary.eventCount} events`} />
+              <StatTile label="Tasks" value={summary.taskCount.toLocaleString()} sub={`${summary.eventCount.toLocaleString()} events`} />
             </div>
             <div className={`${CARD_CLASS} p-4`}>
               <StatTile label="Total tracked time" value={formatMs(summary.totalMs)} />
@@ -507,7 +507,7 @@ function CategoryTable({
                   <Badge tone="neutral">{s.group}</Badge>
                 </span>
               </td>
-              <td className="px-3 py-2 text-right tabular-nums">{s.count}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{s.count.toLocaleString()}</td>
               <td className="px-3 py-2 text-right tabular-nums">{formatMs(s.minMs)}</td>
               <td className="px-3 py-2 text-right tabular-nums">{formatMs(s.maxMs)}</td>
               <td className="px-3 py-2 text-right tabular-nums">{formatMs(s.avgMs)}</td>

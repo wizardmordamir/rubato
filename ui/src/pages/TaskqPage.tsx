@@ -451,7 +451,8 @@ function BoardSection({
 }
 
 /** Multi-select for task dependencies (`needs:`) — pick by id + title from a
- *  searchable dropdown rendered in a portal so it's never clipped by the modal. */
+ *  searchable dropdown rendered in a portal so it's never clipped by the modal.
+ *  Supports "#39" or "39" searches to find a task by its board number. */
 function NeedsSelect({
   board,
   value,
@@ -469,9 +470,15 @@ function NeedsSelect({
   const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
-  const options = board.tasks.filter((t) => t.slug && t.id !== excludeId);
-  const f = filter.trim().toLowerCase();
-  const filtered = f ? options.filter((o) => `${o.slug} ${o.title}`.toLowerCase().includes(f)) : options;
+  // All tasks can be depended on — server auto-assigns numeric slugs so every
+  // task has an addressable id. Fallback: use String(id) if slug is somehow absent.
+  const options = board.tasks.filter((t) => t.id !== excludeId);
+  const effectiveSlug = (t: TaskqTaskView) => t.slug ?? String(t.id);
+  // Strip leading "#" so "#39" searches find the task with id/slug "39".
+  const f = filter.trim().replace(/^#/, "").toLowerCase();
+  const filtered = f
+    ? options.filter((o) => `${effectiveSlug(o)} ${o.title}`.toLowerCase().includes(f))
+    : options;
   const toggle = (slug: string) => onChange(value.includes(slug) ? value.filter((s) => s !== slug) : [...value, slug]);
   const addCustom = () => {
     if (custom.trim()) {
@@ -535,31 +542,43 @@ function NeedsSelect({
             }}
           >
             {/* biome-ignore lint/a11y/noAutofocus: focusing the filter on open is the intended UX */}
-            <input autoFocus className={FIELD_CLASS} placeholder="filter by id or title…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <input autoFocus className={FIELD_CLASS} placeholder="filter by #number, id, or title…" value={filter} onChange={(e) => setFilter(e.target.value)} />
             <div className="mt-2 space-y-0.5">
-              {filtered.map((o) => (
-                <label
-                  key={o.id}
-                  title={o.body || undefined}
-                  className="flex cursor-pointer items-start gap-2 rounded p-1.5 hover:bg-gray-50 dark:hover:bg-gray-800"
-                >
-                  <input
-                    type="checkbox"
-                    checked={value.includes(o.slug as string)}
-                    onChange={() => toggle(o.slug as string)}
-                    className="mt-0.5 h-4 w-4 shrink-0"
-                  />
-                  <span className="min-w-0">
-                    <span className="font-mono text-xs text-accent">{o.slug}</span>
-                    {" "}
-                    <span className="text-sm">{o.title}</span>
-                    {o.body && <span className="block truncate text-xs text-gray-400">{o.body}</span>}
-                  </span>
-                </label>
-              ))}
+              {filtered.map((o) => {
+                const slug = effectiveSlug(o);
+                const isNumeric = slug === String(o.id);
+                return (
+                  <label
+                    key={o.id}
+                    title={o.body || undefined}
+                    className="flex cursor-pointer items-start gap-2 rounded p-1.5 hover:bg-gray-50 dark:hover:bg-gray-800"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={value.includes(slug)}
+                      onChange={() => toggle(slug)}
+                      className="mt-0.5 h-4 w-4 shrink-0"
+                    />
+                    <span className="min-w-0">
+                      {isNumeric ? (
+                        <span className="font-mono text-xs text-gray-400">#{o.id}</span>
+                      ) : (
+                        <>
+                          <span className="font-mono text-xs text-gray-400">#{o.id}</span>
+                          {" "}
+                          <span className="font-mono text-xs text-accent">{slug}</span>
+                        </>
+                      )}
+                      {" "}
+                      <span className="text-sm">{o.title}</span>
+                      {o.body && <span className="block truncate text-xs text-gray-400">{o.body}</span>}
+                    </span>
+                  </label>
+                );
+              })}
               {filtered.length === 0 && (
                 <p className="px-1 py-2 text-xs text-gray-400">
-                  No tasks with an id match. Give a task an Id to depend on it, or add a custom id below.
+                  No tasks match. Search by #number, slug id, or title.
                 </p>
               )}
             </div>
@@ -1066,37 +1085,36 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
 
       {/* Schedule decision */}
       <div className={`${CARD_CLASS} mb-2 p-3`}>
-        <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+        <div className="flex flex-wrap items-start gap-x-8 gap-y-4">
           {/* Status */}
-          <div>
+          <div className="min-w-[140px]">
             <Tooltip multiline content="The scheduling decision the next drain pass will make, based on current token bucket levels. Paused = no workers; Throttled = 1 light-model worker; Burning expiring = full capacity; Normal = full capacity.">
-              <div className="mb-0.5 cursor-help text-xs text-gray-500 underline decoration-dotted">Status</div>
+              <div className="mb-1 cursor-help text-xs font-medium text-gray-500 underline decoration-dotted">Status</div>
             </Tooltip>
-            <span className={`font-semibold ${decisionTone}`}>{decisionLabel}</span>
-            <span className="ml-2 text-xs text-gray-400">{cap.decision.reason}</span>
+            <div className={`font-semibold ${decisionTone}`}>{decisionLabel}</div>
+            <div className="mt-0.5 text-xs text-gray-400">{cap.decision.reason}</div>
             {DECISION_TOOLTIPS[decisionLabel] && (
-              <p className={`mt-1 text-xs ${decisionTone} opacity-80`}>{DECISION_TOOLTIPS[decisionLabel]}</p>
+              <div className={`mt-1.5 text-xs ${decisionTone} opacity-80`}>{DECISION_TOOLTIPS[decisionLabel]}</div>
             )}
           </div>
 
           {/* Worker count */}
-          <div>
+          <div className="min-w-[100px]">
             <Tooltip multiline content={`The next drain pass will spawn ${cap.effectiveJobs} worker${cap.effectiveJobs !== 1 ? "s" : ""} (out of ${cap.maxJobs} configured slots). Workers are one-shot processes — they claim a task, run Claude, then exit. They are NOT always-on background processes.${throttled ? ` Throttled from ${cap.maxJobs} because capacity is low.` : ""}`}>
-              <div className="mb-0.5 cursor-help text-xs text-gray-500 underline decoration-dotted">Workers (next drain)</div>
+              <div className="mb-1 cursor-help text-xs font-medium text-gray-500 underline decoration-dotted">Workers (next drain)</div>
             </Tooltip>
-            <span className="font-semibold">
-              {cap.effectiveJobs}
-              <span className="text-gray-400">/{cap.maxJobs}</span>
-            </span>
+            <div className="font-semibold">
+              {cap.effectiveJobs}<span className="text-gray-400">/{cap.maxJobs}</span>
+            </div>
             {throttled && (
-              <span className="ml-1.5 text-xs text-amber-600 dark:text-amber-400">
+              <div className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
                 throttled from {cap.maxJobs}
-              </span>
+              </div>
             )}
           </div>
 
           {/* Mode */}
-          <div>
+          <div className="min-w-[120px]">
             <Tooltip
               multiline
               content={
@@ -1105,17 +1123,15 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
                   : "Flat mode: all worker slots claim any ready task regardless of the task's model marker. The task's (model:) annotation pins which model the worker will invoke — it does NOT filter which slot picks the task. To switch to Fleet tiers mode, add fleet tier entries in Settings → Fleet tiers."
               }
             >
-              <div className="mb-0.5 cursor-help text-xs text-gray-500 underline decoration-dotted">Mode</div>
+              <div className="mb-1 cursor-help text-xs font-medium text-gray-500 underline decoration-dotted">Mode</div>
             </Tooltip>
-            <span className="text-sm font-medium">
-              {cap.fleetMode ? "Fleet tiers" : "Flat"}
-            </span>
-            <span className="ml-1.5 text-xs text-gray-400">
+            <div className="font-medium">{cap.fleetMode ? "Fleet tiers" : "Flat"}</div>
+            <div className="mt-0.5 text-xs text-gray-400">
               default: <span className="font-mono">{cap.defaultModel}</span>
-            </span>
+            </div>
             <button
               type="button"
-              className="ml-2 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              className="mt-0.5 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
               onClick={onGoToSettings}
             >
               {cap.fleetMode ? "Edit tiers ↗" : "Add tiers ↗"}
@@ -1124,11 +1140,11 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
 
           {/* Token buckets */}
           {cap.buckets.length > 0 && (
-            <div>
+            <div className="min-w-[120px]">
               <Tooltip multiline content="Claude API token usage across time windows. Drain behavior adapts automatically: below ~40% a throttle kicks in; near 0% the drain pauses entirely. Buckets reset on their own schedule (shown as '·Xh' remaining). Adjust calibration on the Usage tab.">
-                <div className="mb-0.5 cursor-help text-xs text-gray-500 underline decoration-dotted">Token capacity</div>
+                <div className="mb-1 cursor-help text-xs font-medium text-gray-500 underline decoration-dotted">Token capacity</div>
               </Tooltip>
-              <div className="flex items-center gap-3">
+              <div className="space-y-1">
                 {cap.buckets.map((b) => {
                   const pct = Math.round(b.fraction * 100);
                   const tone = b.fraction < 0.12 ? "text-red-600" : b.fraction < 0.4 ? "text-amber-600" : "text-emerald-600";
@@ -1137,13 +1153,13 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
                       key={b.key}
                       content={`${BUCKET_FULL_LABELS[b.key] ?? b.key}: ${pct}% remaining (${b.remaining.toLocaleString()} tokens left${b.resetInSeconds != null ? `, resets in ~${Math.round(b.resetInSeconds / 3600)}h` : ""})`}
                     >
-                      <span className="cursor-help text-xs">
-                        <span className="text-gray-500">{BUCKET_LABELS_SHORT[b.key] ?? b.key} </span>
+                      <div className="flex cursor-help items-center gap-2 text-xs">
+                        <span className="w-16 text-gray-500">{BUCKET_LABELS_SHORT[b.key] ?? b.key}</span>
                         <span className={`font-semibold ${tone}`}>{pct}%</span>
                         {b.resetInSeconds != null && (
-                          <span className="text-gray-400"> ·{Math.round(b.resetInSeconds / 3600)}h</span>
+                          <span className="text-gray-400">·{Math.round(b.resetInSeconds / 3600)}h</span>
                         )}
-                      </span>
+                      </div>
                     </Tooltip>
                   );
                 })}
@@ -1356,7 +1372,6 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
   const { data } = useQuery({ queryKey: ["taskq-drainer"], queryFn: fetchTaskqDrainer, refetchInterval: 5000 });
   const configQ = useQuery({ queryKey: ["taskq-config"], queryFn: fetchTaskqConfig });
   const { data: cap } = useQuery({ queryKey: ["taskq-capacity"], queryFn: fetchTaskqCapacity, refetchInterval: 8000 });
-  const { data: runsData } = useQuery({ queryKey: ["taskq-drain-runs"], queryFn: () => fetchTaskqDrainRuns(1), refetchInterval: 5000 });
   const qc = useQueryClient();
   const { notify } = useToast();
   const run = useMutation({
@@ -1399,23 +1414,25 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
 
   const s = data;
   const interval = configQ.data?.interval ?? null;
-  const lastDrainAt = runsData?.[0]?.started_at ?? null;
 
-  const [countdown, setCountdown] = useState<number | null>(null);
+  // Live countdown to the next scheduled tick.
+  const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    if (!lastDrainAt || !interval) { setCountdown(null); return; }
-    const tick = () => setCountdown(Math.max(0, interval - Math.floor((Date.now() - lastDrainAt) / 1000)));
-    tick();
-    const id = setInterval(tick, 1000);
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [lastDrainAt, interval]);
+  }, []);
+
+  const nextFireAt =
+    s?.lastFireMs != null && interval != null ? s.lastFireMs + interval * 1000 : null;
+  const msUntilNext = nextFireAt != null ? Math.max(0, nextFireAt - now) : null;
+  const nextFireTime = nextFireAt != null ? new Date(nextFireAt).toLocaleTimeString() : null;
 
   return (
     <div className={`${CARD_CLASS} mb-3 p-3`}>
       {/* Status row */}
       <div className="mb-3 flex flex-wrap items-start gap-6">
         {/* Scheduler section */}
-        <div className="min-w-[120px]">
+        <div className="min-w-[140px]">
           <div className="mb-1.5 text-xs font-medium text-gray-500">Scheduler</div>
           <Tooltip
             multiline
@@ -1444,7 +1461,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
         </div>
 
         {/* Active drain section */}
-        <div className="min-w-[120px]">
+        <div className="min-w-[160px]">
           <div className="mb-1.5 text-xs font-medium text-gray-500">Active drain</div>
           <Tooltip
             multiline
@@ -1463,9 +1480,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
             />
           </Tooltip>
           {s?.running && (
-            <div className="mt-1 text-xs text-gray-400">
-              workers are claiming tasks
-            </div>
+            <div className="mt-1 text-xs text-gray-400">workers are claiming tasks</div>
           )}
           {!s?.running && cap?.decision.paused && (
             <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
@@ -1473,12 +1488,23 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
             </div>
           )}
           {!s?.running && !cap?.decision.paused && s?.watchdogLoaded && interval != null && (
-            <div className="mt-1 text-xs text-gray-400">
-              {countdown === null
-                ? `next auto-tick in ≤${fmtInterval(interval)}`
-                : countdown === 0
-                  ? 'any moment now…'
-                  : `next tick in ${countdown}s`}
+            <div className="mt-1 space-y-0.5 text-xs text-gray-400">
+              {nextFireAt != null ? (
+                <>
+                  <div>
+                    next check at <span className="font-medium text-gray-600 dark:text-gray-300">{nextFireTime}</span>
+                  </div>
+                  <div>
+                    {msUntilNext != null && msUntilNext > 0 ? (
+                      <>in <span className="font-medium text-gray-600 dark:text-gray-300">{fmtDur(msUntilNext)}</span></>
+                    ) : (
+                      <span className="text-emerald-600 dark:text-emerald-400">due now</span>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div>next auto-tick in ≤{fmtInterval(interval)}</div>
+              )}
             </div>
           )}
         </div>

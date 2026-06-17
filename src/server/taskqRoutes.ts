@@ -92,9 +92,24 @@ async function ingestRunsFromJsonl(): Promise<void> {
   }
 }
 
+/**
+ * Auto-assign numeric slug (String(id)) to any task that lacks one, so every
+ * task is addressable as a dependency without manual `(id:X)` markers.
+ * Skips tasks whose numeric ID is already taken as another task's slug (rare).
+ * Safe to call on every board fetch — only touches slug=NULL rows.
+ */
+function backfillNumericSlugs(db: ReturnType<typeof getTaskqDb>): void {
+  db.run(
+    `UPDATE tasks SET slug = CAST(id AS TEXT)
+     WHERE slug IS NULL
+       AND NOT EXISTS (SELECT 1 FROM tasks t2 WHERE t2.slug = CAST(tasks.id AS TEXT))`,
+  );
+}
+
 /** Rebuild the whole board (tasks + needs + per-status counts + runtime data). */
 function board(): TaskqBoard {
   const db = getTaskqDb();
+  backfillNumericSlugs(db);
 
   // Lease data for claimed tasks (claimed_at keyed by task_id).
   const leases = db.query(`SELECT task_id, claimed_at FROM leases`).all() as { task_id: number; claimed_at: number }[];
@@ -142,7 +157,15 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
     const body = await readJsonBody<{ draft?: NewTask; position?: Position }>(req);
     if (!body?.draft || typeof body.draft !== 'object') return jsonError('a task { draft } is required', 400);
     try {
-      const id = addTask(getTaskqDb(), body.draft, body.position ?? { at: 'top' });
+      const db = getTaskqDb();
+      const id = addTask(db, body.draft, body.position ?? { at: 'top' });
+      // Auto-assign numeric slug if the user didn't provide one.
+      if (!body.draft.slug) {
+        db.run(
+          `UPDATE tasks SET slug = CAST(id AS TEXT) WHERE id = ? AND NOT EXISTS (SELECT 1 FROM tasks t2 WHERE t2.slug = CAST(? AS TEXT) AND t2.id <> ?)`,
+          id, id, id,
+        );
+      }
       return json({ board: board(), id });
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'add failed', 400);

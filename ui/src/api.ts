@@ -1599,6 +1599,8 @@ export interface TaskqDrainerStatus {
   watchdogLoaded: boolean;
   running: boolean;
   stopped: boolean;
+  /** Unix ms when the drain last started (from .last-fire stamp). */
+  lastFireMs?: number;
 }
 export interface TaskqCompletion {
   task_id: number;
