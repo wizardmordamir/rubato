@@ -381,7 +381,7 @@ function TaskCard({
                 Enqueue
               </button>
             )}
-            {task.status === "failed" && (
+            {(task.status === "failed" || task.status === "on_hold") && (
               <button type="button" onClick={onRequeue} className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
                 Re-queue
               </button>
