@@ -1422,8 +1422,11 @@ import type {
   ReconcileFleetResult,
   RestartResult,
   SaveFleetPreset,
+  TaskDraft,
+  TaskInsertPosition,
   WatchdogAgentResult,
   WatchdogSnapshot,
+  WorkflowBoard,
 } from "@shared/orchestration";
 
 export type {
@@ -1458,6 +1461,9 @@ export type {
   RestartResult,
   RunEntry,
   RunStatus,
+  TaskDraft,
+  TaskDraftStatus,
+  TaskInsertPosition,
   ThinkingLevel,
   WatchdogAgentResult,
   WatchdogCommand,
@@ -1475,9 +1481,18 @@ export {
   DRAIN_MODEL_IDS,
   DRAIN_MODEL_OPTIONS,
   DRAIN_SETTING_CLASS,
+  draftFromTask,
+  FLEET_MODEL_OPTIONS,
+  isTaskEditable,
   NEEDS_RESTART_FIELDS,
+  serializeTaskBlock,
+  TASK_DRAFT_STATUS_LABELS,
+  TASK_DRAFT_STATUSES,
+  TASK_ID_PATTERN,
+  TASK_MODEL_ALIASES,
   THINKING_LEVELS,
   thinkingTokensFor,
+  validateTaskDraft,
 } from "@shared/orchestration";
 
 /** The whole-page snapshot (board + history + runs + stats). */
@@ -1490,6 +1505,18 @@ export const fetchOrchestrationFile = (key: string) =>
 /** Save one file's content (creates it if absent). */
 export const saveOrchestrationFile = (key: string, content: string) =>
   postJson<OrchestrationFileDoc>(`/api/orchestration/files/${encodeURIComponent(key)}`, { content });
+
+// ── Task builder (compose/edit/delete a TASKS.md entry, race-safe) ────────────
+
+/** Create a task from a draft, inserted at the given position; returns the new board. */
+export const createOrchestrationTask = (draft: TaskDraft, position: TaskInsertPosition) =>
+  postJson<{ board: WorkflowBoard }>("/api/orchestration/tasks", { draft, position });
+/** Replace the task matched by its verbatim heading with a new draft. */
+export const updateOrchestrationTask = (anchorHeading: string, draft: TaskDraft) =>
+  patchJson<{ board: WorkflowBoard }>("/api/orchestration/tasks", { anchorHeading, draft });
+/** Delete the task matched by its verbatim heading; returns the new board. */
+export const deleteOrchestrationTask = (anchorHeading: string) =>
+  sendJson<{ board: WorkflowBoard }>("DELETE", "/api/orchestration/tasks", { anchorHeading });
 
 // ── Watchdog control + observe ────────────────────────────────────────────────
 

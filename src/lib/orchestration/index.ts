@@ -63,12 +63,32 @@ export type {
 } from '../../shared/orchestration';
 export {
   bucketTimingTrend,
+  type TaskDraft,
+  type TaskDraftStatus,
+  type TaskInsertPosition,
+  draftFromTask,
   fleetPresetId,
+  isTaskEditable,
+  serializeTaskBlock,
+  serializeTaskMarkers,
+  TASK_DRAFT_STATUS_LABELS,
+  TASK_DRAFT_STATUS_TAG,
+  TASK_DRAFT_STATUSES,
+  TASK_ID_PATTERN,
+  TASK_MODEL_ALIASES,
   THINKING_LEVELS,
   thinkingTokensFor,
+  validateTaskDraft,
   WORKFLOW_STATUS_LABELS,
   WORKFLOW_STATUSES,
 } from '../../shared/orchestration';
+export {
+  deleteTaskBlock,
+  type InsertAt,
+  insertTaskBlock,
+  replaceTaskBlock,
+  TaskConflictError,
+} from './editTasks';
 export { formatDuration, formatTokens, formatUsd } from './format';
 export { parseDurationSeconds, parseHistory } from './parseHistory';
 export { parseRunsJsonl, runEntryFromJson, summarizeRunEntries, type WorkerRunStats } from './parseRuns';

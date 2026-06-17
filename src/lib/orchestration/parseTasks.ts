@@ -28,6 +28,10 @@ function statusForTag(tag: string): WorkflowTaskStatus | undefined {
     case 'X':
       return 'done';
     case '!':
+    case 'b':
+    case 'B':
+      // `[!]` = AI-blocked (reason stamped); `[b]` = your manual hold switch.
+      // Both surface in the "blocked" group; the raw heading preserves which.
       return 'blocked';
     case '-':
       return 'not-ready';
@@ -93,6 +97,25 @@ function parseMeta(status: WorkflowTaskStatus, paren: string): WorkflowTaskMeta 
   if (modelM) meta.model = modelM[1].trim();
   const thinkM = inner.match(/\bthink(?:ing(?:level|Level)?)?:\s*([^\s)]+)/i);
   if (thinkM) meta.thinkingLevel = thinkM[1].trim().toLowerCase();
+
+  // Dependency/grouping/recurrence markers — present on ready/hold tasks (the
+  // builder round-trips these). ids are slugs `[A-Za-z0-9._-]`.
+  const idM = inner.match(/\bid:\s*([A-Za-z0-9._-]+)/i);
+  if (idM) meta.id = idM[1];
+  const needsM = inner.match(/\bneeds:\s*([A-Za-z0-9._,-]+)/i);
+  if (needsM) {
+    const ids = needsM[1]
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (ids.length) meta.needs = ids;
+  }
+  const groupM = inner.match(/\bgroup:\s*([A-Za-z0-9._-]+)/i);
+  if (groupM) meta.group = groupM[1];
+  const recurM = inner.match(/\brecur:\s*(\d+)/i);
+  if (recurM) meta.recur = Number.parseInt(recurM[1], 10);
+  const lastM = inner.match(/\blast:\s*(\d+)/i);
+  if (lastM) meta.recurLast = Number.parseInt(lastM[1], 10);
 
   return meta;
 }
