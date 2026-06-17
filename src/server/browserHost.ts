@@ -47,9 +47,14 @@ const HOST_SCRIPT =
 function resolveNode(): string | null {
   const fromEnv = process.env.RUBATO_NODE?.trim();
   if (fromEnv && existsSync(fromEnv)) return fromEnv;
+  const dir = dirname(process.execPath);
+  // `node.exe` on Windows; bare `node` elsewhere. Check both (+ a `runtime/` subdir)
+  // so a bundled Node beside the binary is found on every OS.
   const beside = [
-    resolve(dirname(process.execPath), 'node'),
-    resolve(dirname(process.execPath), 'runtime', 'node'),
+    resolve(dir, 'node'),
+    resolve(dir, 'node.exe'),
+    resolve(dir, 'runtime', 'node'),
+    resolve(dir, 'runtime', 'node.exe'),
   ].find(existsSync);
   return beside ?? Bun.which('node');
 }
