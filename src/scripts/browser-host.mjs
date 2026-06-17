@@ -250,9 +250,12 @@ async function pageHtml() {
 }
 
 /**
- * Grab a capture frame (HTML + a full-page JPEG) of the current page. JPEG keeps a
+ * Grab a capture frame (HTML + a viewport JPEG) of the current page. JPEG keeps a
  * many-screen session's bundle small; HTML is the data we mine selectors from.
  * Never throws — capture is best-effort and must not interrupt the user.
+ *
+ * Viewport-only (no fullPage) avoids the resize-restore cycle Playwright needs for
+ * full-page shots in headed browsers, which causes a visible flicker on every capture.
  */
 async function captureFrame() {
   if (!page) return null;
@@ -264,7 +267,7 @@ async function captureFrame() {
     html = undefined;
   }
   try {
-    const buf = await page.screenshot({ fullPage: true, type: "jpeg", quality: 60, timeout: 8000 });
+    const buf = await page.screenshot({ type: "jpeg", quality: 60, timeout: 8000 });
     screenshot = `data:image/jpeg;base64,${buf.toString("base64")}`;
   } catch {
     screenshot = undefined;
