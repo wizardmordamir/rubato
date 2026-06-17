@@ -3,6 +3,7 @@ import { ModalShell } from "cwip/react";
 import { useMemo, useState } from "react";
 import {
   createOrchestrationTask,
+  deriveTaskTitle,
   FLEET_MODEL_OPTIONS,
   serializeTaskBlock,
   TASK_DRAFT_STATUS_LABELS,
@@ -18,7 +19,15 @@ import {
   type WorkflowTask,
 } from "../api";
 import { Alert, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, FIELD_CLASS, Spinner } from "../components";
+import { usePersistentJson } from "../persisted";
 import { useToast } from "../toast";
+
+/** Sticky per-browser defaults for the model + thinking selects on new tasks. */
+const TASK_DEFAULTS_KEY = "rubato.taskBuilder.defaults";
+type TaskBuilderDefaults = { model?: string; thinkingLevel?: string };
+// Module-constant fallback — usePersistentJson returns this exact reference when
+// nothing is stored, so it must be stable (see persisted.ts).
+const EMPTY_DEFAULTS: TaskBuilderDefaults = {};
 
 /**
  * The Task Builder — compose or edit a `TASKS.md` entry through a form so the
@@ -64,11 +73,32 @@ export function TaskBuilderModal({
   const { notify } = useToast();
   const qc = useQueryClient();
 
+  // Sticky model + thinking defaults — new tasks start prefilled with the last
+  // values the user saved, so they can paste detail + "Add task" repeatedly.
+  const [defaults, setDefaults] = usePersistentJson<TaskBuilderDefaults>(TASK_DEFAULTS_KEY, EMPTY_DEFAULTS);
+
   const [status, setStatus] = useState<TaskDraftStatus>(initial.status);
   const [title, setTitle] = useState(initial.title);
   const [body, setBody] = useState(initial.body ?? "");
-  const [model, setModel] = useState(initial.model ?? "");
-  const [think, setThink] = useState<string>(initial.thinkingLevel ?? "");
+  const [model, setModel] = useState(initial.model ?? (mode === "create" ? (defaults.model ?? "") : ""));
+  const [think, setThink] = useState<string>(
+    initial.thinkingLevel ?? (mode === "create" ? (defaults.thinkingLevel ?? "") : ""),
+  );
+
+  const hasSavedDefaults = Boolean(defaults.model || defaults.thinkingLevel);
+  const saveDefaults = () => {
+    setDefaults({ model: model || undefined, thinkingLevel: think || undefined });
+    notify("Saved as the default model + thinking for new tasks", "success");
+  };
+  // Clears the stored defaults only; the current selection is left untouched
+  // (the toast + hint confirm the change).
+  const clearDefaults = () => {
+    setDefaults(EMPTY_DEFAULTS);
+    notify("Cleared the saved task defaults", "success");
+  };
+
+  // What gets written when the title is left blank (previewed in the placeholder).
+  const derivedTitle = useMemo(() => deriveTaskTitle(body), [body]);
   const [id, setId] = useState(initial.id ?? "");
   const [needsRaw, setNeedsRaw] = useState((initial.needs ?? []).join(", "));
   const [group, setGroup] = useState(initial.group ?? "");
@@ -199,12 +229,15 @@ export function TaskBuilderModal({
         )}
 
         <div className="md:col-span-2">
-          <Field label="Title" hint="One line — the task heading">
+          <Field
+            label="Title"
+            hint="Optional — leave blank to use the first line of the details; start typing to override"
+          >
             <input
               className={FIELD_CLASS}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. ru: add a password-strength meter to vault settings"
+              placeholder={derivedTitle || "e.g. ru: add a password-strength meter to vault settings"}
             />
           </Field>
         </div>
@@ -241,6 +274,22 @@ export function TaskBuilderModal({
             ))}
           </select>
         </Field>
+
+        <div className="md:col-span-2 -mt-2 flex flex-wrap items-center gap-2">
+          <button type="button" className={BTN_GHOST_CLASS} onClick={saveDefaults}>
+            Save model + thinking as defaults
+          </button>
+          {hasSavedDefaults && (
+            <button type="button" className={BTN_GHOST_CLASS} onClick={clearDefaults}>
+              Clear defaults
+            </button>
+          )}
+          <span className="text-xs text-gray-400">
+            {hasSavedDefaults
+              ? `New tasks start at ${defaults.model ?? "default"} / ${defaults.thinkingLevel ?? "default"} thinking`
+              : "Prefill the model + thinking on every new task"}
+          </span>
+        </div>
 
         <Field label="Id" hint="(id:X) — referenceable id so a follow-up can depend on it">
           <input

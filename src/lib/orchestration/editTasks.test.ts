@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  deriveTaskTitle,
   draftFromTask,
+  effectiveTaskTitle,
   serializeTaskBlock,
   serializeTaskMarkers,
   validateTaskDraft,
@@ -28,8 +30,14 @@ describe('validateTaskDraft', () => {
   });
 
   test('requires a non-empty single-line title', () => {
-    expect(validateTaskDraft({ status: 'ready', title: '' })).toContain('title is required');
+    expect(validateTaskDraft({ status: 'ready', title: '' })).toContain(
+      'add a title or some detail lines to derive one from',
+    );
     expect(validateTaskDraft({ status: 'ready', title: 'a\nb' })).toContain('title must be a single line');
+  });
+
+  test('accepts a blank title when the body can supply one', () => {
+    expect(validateTaskDraft({ status: 'ready', title: '', body: 'Fix the thing' })).toEqual([]);
   });
 
   test('rejects bad markers', () => {
@@ -80,6 +88,42 @@ describe('serialize', () => {
 
   test('throws on an invalid draft', () => {
     expect(() => serializeTaskBlock({ status: 'ready', title: '' })).toThrow(/invalid task draft/);
+  });
+
+  test('derives the heading title from the first line of the body when title is blank', () => {
+    const block = serializeTaskBlock({ status: 'ready', title: '', body: 'Add a meter\nmore detail here' });
+    expect(block).toBe('## [ ] Add a meter\nAdd a meter\nmore detail here');
+  });
+
+  test('an explicit title overrides the derived one', () => {
+    const block = serializeTaskBlock({ status: 'ready', title: 'Real title', body: 'first line of detail' });
+    expect(block).toBe('## [ ] Real title\nfirst line of detail');
+  });
+});
+
+describe('deriveTaskTitle / effectiveTaskTitle', () => {
+  test('uses the first non-empty line, skipping leading blanks', () => {
+    expect(deriveTaskTitle('\n\n  First real line  \nsecond')).toBe('First real line');
+  });
+
+  test('clips a run-on first line to its first sentence', () => {
+    expect(deriveTaskTitle('Do the first thing. Then the second thing happens.')).toBe('Do the first thing.');
+  });
+
+  test('passes a short terminator-less line through whole', () => {
+    expect(deriveTaskTitle('Fix the login bug')).toBe('Fix the login bug');
+  });
+
+  test('returns empty for blank/undefined bodies', () => {
+    expect(deriveTaskTitle('')).toBe('');
+    expect(deriveTaskTitle(undefined)).toBe('');
+    expect(deriveTaskTitle('   \n  ')).toBe('');
+  });
+
+  test('effectiveTaskTitle prefers an explicit title, else derives', () => {
+    expect(effectiveTaskTitle({ status: 'ready', title: 'Explicit', body: 'derived line' })).toBe('Explicit');
+    expect(effectiveTaskTitle({ status: 'ready', title: '   ', body: 'derived line' })).toBe('derived line');
+    expect(effectiveTaskTitle({ status: 'ready', title: '' })).toBe('');
   });
 });
 

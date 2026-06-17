@@ -534,6 +534,35 @@ export interface TaskInsertPosition {
 }
 
 /**
+ * Derive a one-line title from the body's detail text — the first non-empty
+ * line, clipped to its first sentence when that line is a long run-on (e.g. a
+ * pasted paragraph) so the heading stays a sensible single line. Returns `''`
+ * when there's no usable text. Lets a quick paste-and-add flow skip the title.
+ */
+export function deriveTaskTitle(body: string | undefined): string {
+  const firstLine =
+    (body ?? '')
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find(Boolean) ?? '';
+  if (!firstLine) return '';
+  // Clip a run-on first line to its first sentence (terminator + following
+  // space, or end-of-line). Short lines with no terminator pass through whole.
+  const sentence = firstLine.match(/^.*?[.!?](?=\s|$)/)?.[0];
+  return (sentence ?? firstLine).trim();
+}
+
+/**
+ * The title that will actually be written for a draft: the explicit title if
+ * the user typed one, otherwise {@link deriveTaskTitle} of the body. Single
+ * source of truth shared by validation, serialization, and the UI preview.
+ */
+export function effectiveTaskTitle(draft: TaskDraft): string {
+  const explicit = (draft.title ?? '').trim();
+  return explicit || deriveTaskTitle(draft.body);
+}
+
+/**
  * Validate a draft against the TASKS.GUIDE.md rules. Returns a list of
  * human-readable errors ( empty ⇒ valid ). Used both for live form feedback in
  * the UI and as the server's authoritative gate before writing.
@@ -542,8 +571,9 @@ export function validateTaskDraft(draft: TaskDraft): string[] {
   const errs: string[] = [];
   if (!TASK_DRAFT_STATUSES.includes(draft.status)) errs.push(`invalid status: ${draft.status}`);
 
-  const title = (draft.title ?? '').trim();
-  if (!title) errs.push('title is required');
+  // The title may be left blank and derived from the first line of the details.
+  const title = effectiveTaskTitle(draft);
+  if (!title) errs.push('add a title or some detail lines to derive one from');
   if (/[\r\n]/.test(draft.title ?? '')) errs.push('title must be a single line');
 
   if (draft.model != null && draft.model !== '' && !TASK_MODEL_ALIASES.includes(draft.model)) {
@@ -607,7 +637,7 @@ export function serializeTaskBlock(draft: TaskDraft): string {
   if (errs.length) throw new Error(`invalid task draft: ${errs.join('; ')}`);
   const tag = TASK_DRAFT_STATUS_TAG[draft.status];
   const markers = serializeTaskMarkers(draft);
-  const heading = `## [${tag}]${markers ? ` ${markers}` : ''} ${draft.title.trim()}`;
+  const heading = `## [${tag}]${markers ? ` ${markers}` : ''} ${effectiveTaskTitle(draft)}`;
   const body = (draft.body ?? '').replace(/\s+$/, '');
   return body ? `${heading}\n${body}` : heading;
 }
