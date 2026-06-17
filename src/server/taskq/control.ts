@@ -67,9 +67,14 @@ export interface CompletionRow {
   title: string;
   repo: string | null;
   commit: string | null;
+  started_at: number | null;
   ended_at: number;
   duration_s: number | null;
   summary: string | null;
+  model: string | null;
+  think: string | null;
+  fast: number;
+  body: string | null;
 }
 
 export interface TaskqHistory {
@@ -77,12 +82,14 @@ export interface TaskqHistory {
   stats: { total: number; totalDurationS: number };
 }
 
-/** Recent completed tasks + simple aggregates (from the `completions` table). */
+/** Recent completed tasks + simple aggregates (from the `completions` table + tasks JOIN for model/think). */
 export function taskqHistory(db: TaskqDb, limit = 50): TaskqHistory {
   const recent = db
     .query(
-      `SELECT task_id, title, repo, "commit", ended_at, duration_s, summary
-         FROM completions ORDER BY ended_at DESC LIMIT ?`,
+      `SELECT c.task_id, c.title, c.repo, c."commit", c.started_at, c.ended_at, c.duration_s, c.summary,
+              t.model, t.think, t.fast, t.body
+         FROM completions c LEFT JOIN tasks t ON t.id = c.task_id
+        ORDER BY c.ended_at DESC LIMIT ?`,
     )
     .all(limit) as CompletionRow[];
   const agg = db.query(`SELECT COUNT(*) AS n, COALESCE(SUM(duration_s), 0) AS d FROM completions`).get() as {

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DragHandle, DropIndicator, ModalShell, useDragReorder } from "cwip/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   answerTaskqClarification,
   calibrateTaskqBucket,
@@ -48,15 +49,18 @@ import {
 import { Alert, Badge, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLASS, PageHeading, Spinner, Tabs, Tooltip } from "../components";
 import { useConfirm } from "../confirm";
 import { useToast } from "../toast";
+import { OrchestrationProcessingPage } from "./OrchestrationProcessingPage";
 
-type TaskqTab = "board" | "workers" | "settings" | "history" | "usage";
+type TaskqTab = "board" | "workers" | "settings" | "history" | "usage" | "processing";
 const TASKQ_TABS: readonly { key: TaskqTab; label: string }[] = [
   { key: "board", label: "Board" },
   { key: "workers", label: "Workers" },
   { key: "settings", label: "Settings" },
   { key: "history", label: "History" },
   { key: "usage", label: "Usage" },
+  { key: "processing", label: "Processing" },
 ];
+const VALID_TABS = new Set<string>(["board", "workers", "settings", "history", "usage", "processing"]);
 
 /**
  * Taskq — the v2 orchestrator board + builder, backed by the SQLite queue
@@ -103,7 +107,10 @@ export function TaskqPage() {
     queryFn: fetchTaskqSectionPrefs,
   });
   const [builder, setBuilder] = useState<{ mode: "create" } | { mode: "edit"; task: TaskqTaskView } | null>(null);
-  const [tab, setTab] = useState<TaskqTab>("board");
+  const [params, setParams] = useSearchParams();
+  const rawTab = params.get("tab") ?? "board";
+  const tab: TaskqTab = VALID_TABS.has(rawTab) ? (rawTab as TaskqTab) : "board";
+  const setTab = (t: TaskqTab) => setParams(t === "board" ? {} : { tab: t }, { replace: true });
   const qc = useQueryClient();
   const { notify } = useToast();
   const confirm = useConfirm();
@@ -222,6 +229,7 @@ export function TaskqPage() {
         {tab === "settings" && <SettingsPanel />}
         {tab === "history" && <HistoryPanel />}
         {tab === "usage" && <UsagePanel />}
+        {tab === "processing" && <OrchestrationProcessingPage embedded />}
       </div>
 
       {builder && (
@@ -1835,29 +1843,172 @@ function ConfigForm({ config, interval, watchdogLoaded }: { config: TaskqConfig;
 /** Completed-task history + simple stats (from the completions table). */
 function HistoryPanel() {
   const { data } = useQuery({ queryKey: ["taskq-history"], queryFn: fetchTaskqHistory, refetchInterval: 10000 });
+  const [detail, setDetail] = useState<(typeof recent)[0] | null>(null);
   const recent = data?.recent ?? [];
-  if (recent.length === 0) return null;
-  const mins = Math.round((data?.stats.totalDurationS ?? 0) / 60);
+  if (recent.length === 0) return <p className="text-sm text-gray-400">No completed tasks yet.</p>;
+  const totalMins = Math.round((data?.stats.totalDurationS ?? 0) / 60);
   return (
     <section>
       <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
-        History <span className="text-gray-400">({data?.stats.total} done · {mins}m total)</span>
+        History <span className="text-gray-400">({data?.stats.total} done · {totalMins}m total)</span>
       </h3>
       <div className="space-y-1">
-        {recent.map((c) => (
-          <div key={`${c.task_id}-${c.ended_at}`} className={`${CARD_CLASS} flex items-center justify-between gap-3 p-2 text-xs`}>
-            <span className="min-w-0 truncate">
-              <span className="text-gray-400">#{c.task_id}</span> {c.title}
-            </span>
-            <span className="flex shrink-0 items-center gap-2 text-gray-500">
-              {c.repo && <Badge tone="neutral">{c.repo}</Badge>}
-              {c.commit && <span className="font-mono">{c.commit.slice(0, 7)}</span>}
-              {c.duration_s != null && <span>{Math.round(c.duration_s / 60)}m</span>}
-            </span>
-          </div>
-        ))}
+        {recent.map((c) => {
+          const durMins = c.duration_s != null ? Math.round(c.duration_s / 60) : null;
+          return (
+            <button
+              key={`${c.task_id}-${c.ended_at}`}
+              type="button"
+              onClick={() => setDetail(c)}
+              className={`${CARD_CLASS} flex w-full cursor-pointer items-start justify-between gap-3 p-2 text-left text-xs hover:ring-1 hover:ring-accent/30`}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="mr-1 text-gray-400">#{c.task_id}</span>
+                <span className="font-medium">{c.title}</span>
+                <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-gray-400">
+                  {c.started_at != null && <span>start {fmtTs(c.started_at)}</span>}
+                  <span>end {fmtTs(c.ended_at)}</span>
+                  {durMins != null && <span>{durMins}m</span>}
+                </span>
+              </span>
+              <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+                {c.repo && <Badge tone="neutral">{c.repo}</Badge>}
+                {c.model && (
+                  <span className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-xs text-accent">{c.model}</span>
+                )}
+                {c.think && c.think !== "off" && (
+                  <span className="rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+                    think:{c.think}
+                  </span>
+                )}
+                {!!c.fast && (
+                  <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                    fast
+                  </span>
+                )}
+                {c.commit && <span className="font-mono text-gray-500">{c.commit.slice(0, 7)}</span>}
+              </span>
+            </button>
+          );
+        })}
       </div>
+
+      {detail && (
+        <HistoryDetailModal
+          completion={detail}
+          onClose={() => setDetail(null)}
+        />
+      )}
     </section>
+  );
+}
+
+function HistoryDetailModal({
+  completion: c,
+  onClose,
+}: {
+  completion: {
+    task_id: number;
+    title: string;
+    repo: string | null;
+    commit: string | null;
+    started_at: number | null;
+    ended_at: number;
+    duration_s: number | null;
+    summary: string | null;
+    model: string | null;
+    think: string | null;
+    fast: number;
+    body: string | null;
+  };
+  onClose: () => void;
+}) {
+  const durMins = c.duration_s != null ? `${Math.round(c.duration_s / 60)}m` : null;
+  const durExact = c.duration_s != null ? `${c.duration_s}s` : null;
+  return (
+    <ModalShell size="lg" title={`Task #${c.task_id}`} subtitle={c.title} onClose={onClose}>
+      <div className="space-y-4">
+        {/* Metadata grid */}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+          <DetailCell label="Status">
+            <Badge tone="success">done</Badge>
+          </DetailCell>
+          {c.repo && (
+            <DetailCell label="Repo">
+              <span className="font-mono">{c.repo}</span>
+            </DetailCell>
+          )}
+          {c.model && (
+            <DetailCell label="Model">
+              <span className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-xs text-accent">{c.model}</span>
+            </DetailCell>
+          )}
+          {c.think && c.think !== "off" && (
+            <DetailCell label="Thinking">
+              <span className="rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+                {c.think}
+              </span>
+            </DetailCell>
+          )}
+          {!!c.fast && (
+            <DetailCell label="Fast mode">
+              <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                on
+              </span>
+            </DetailCell>
+          )}
+          {c.started_at != null && (
+            <DetailCell label="Started">
+              <span className="text-gray-700 dark:text-gray-200">{fmtTs(c.started_at)}</span>
+            </DetailCell>
+          )}
+          <DetailCell label="Ended">
+            <span className="text-gray-700 dark:text-gray-200">{fmtTs(c.ended_at)}</span>
+          </DetailCell>
+          {durMins && (
+            <DetailCell label="Duration">
+              <Tooltip content={durExact ?? ""}>
+                <span className="cursor-help text-gray-700 dark:text-gray-200">{durMins}</span>
+              </Tooltip>
+            </DetailCell>
+          )}
+          {c.commit && (
+            <DetailCell label="Commit">
+              <span className="font-mono text-gray-700 dark:text-gray-200">{c.commit}</span>
+            </DetailCell>
+          )}
+        </div>
+
+        {/* Task body */}
+        {c.body && (
+          <div>
+            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-gray-400">Task details</div>
+            <pre className="whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-sm text-gray-600 dark:bg-gray-950 dark:text-gray-300">
+              {c.body}
+            </pre>
+          </div>
+        )}
+
+        {/* AI summary */}
+        {c.summary && (
+          <div>
+            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-gray-400">AI summary</div>
+            <div className="rounded-lg bg-emerald-50 p-3 dark:bg-emerald-950/40">
+              <pre className="whitespace-pre-wrap text-sm text-emerald-800 dark:text-emerald-300">{c.summary}</pre>
+            </div>
+          </div>
+        )}
+      </div>
+    </ModalShell>
+  );
+}
+
+function DetailCell({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-0.5 text-xs text-gray-400">{label}</div>
+      <div>{children}</div>
+    </div>
   );
 }
 

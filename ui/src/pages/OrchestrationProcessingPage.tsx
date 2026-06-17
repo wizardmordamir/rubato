@@ -84,7 +84,7 @@ const REPO_OPTIONS = ["all", "cursedalchemy", "rubato", "cwip"];
 /** vscode://file/<abs> deep link — opens the path in the editor (same scheme ru uses). */
 const editorLink = (abs: string) => `vscode://file/${abs}`;
 
-export function OrchestrationProcessingPage() {
+export function OrchestrationProcessingPage({ embedded }: { embedded?: boolean } = {}) {
   const qc = useQueryClient();
   const { notify } = useToast();
   const confirm = useConfirm();
@@ -205,12 +205,65 @@ export function OrchestrationProcessingPage() {
 
   const trendData = data?.trend ?? [];
 
+  const filterControls = (
+    <div className="flex flex-wrap items-center gap-2">
+      <label className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+        From
+        <input type="date" className={`w-auto ${FIELD_CLASS}`} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+      </label>
+      <label className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+        To
+        <input type="date" className={`w-auto ${FIELD_CLASS}`} value={toDate} onChange={(e) => setToDate(e.target.value)} />
+      </label>
+      <label className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+        Repo
+        <select className={`w-auto ${FIELD_CLASS}`} value={repo} onChange={(e) => setRepo(e.target.value)}>
+          {REPO_OPTIONS.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+          {(data?.repos ?? [])
+            .filter((r) => !REPO_OPTIONS.includes(r))
+            .map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+        </select>
+      </label>
+      {(fromDate || toDate || repo !== "all") && (
+        <button
+          type="button"
+          className={BTN_GHOST_CLASS}
+          onClick={() => {
+            setFromDate("");
+            setToDate("");
+            setRepo("all");
+          }}
+        >
+          Reset filters
+        </button>
+      )}
+      <button
+        type="button"
+        className={BTN_PRIMARY_CLASS}
+        onClick={() => sync.mutate()}
+        disabled={sync.isPending}
+      >
+        {sync.isPending ? "Syncing…" : "Sync from files"}
+      </button>
+    </div>
+  );
+
   return (
     <div className="mx-auto max-w-7xl">
-      <PageHeading
-        title="Orchestration Processing"
-        actions={
-          <>
+      {embedded ? (
+        <div className="mb-4 pt-3">{filterControls}</div>
+      ) : (
+        <PageHeading
+          title="Orchestration Processing"
+          actions={
             <button
               type="button"
               className={BTN_PRIMARY_CLASS}
@@ -219,52 +272,51 @@ export function OrchestrationProcessingPage() {
             >
               {sync.isPending ? "Syncing…" : "Sync from files"}
             </button>
-          </>
-        }
-        toolbar={
-          <>
-            <label className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
-              From
-              <input type="date" className={`w-auto ${FIELD_CLASS}`} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-            </label>
-            <label className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
-              To
-              <input type="date" className={`w-auto ${FIELD_CLASS}`} value={toDate} onChange={(e) => setToDate(e.target.value)} />
-            </label>
-            <label className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
-              Repo
-              <select className={`w-auto ${FIELD_CLASS}`} value={repo} onChange={(e) => setRepo(e.target.value)}>
-                {REPO_OPTIONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-                {/* Any repos present in the data that aren't in the canonical list. */}
-                {(data?.repos ?? [])
-                  .filter((r) => !REPO_OPTIONS.includes(r))
-                  .map((r) => (
+          }
+          toolbar={
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+                From
+                <input type="date" className={`w-auto ${FIELD_CLASS}`} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+              </label>
+              <label className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+                To
+                <input type="date" className={`w-auto ${FIELD_CLASS}`} value={toDate} onChange={(e) => setToDate(e.target.value)} />
+              </label>
+              <label className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+                Repo
+                <select className={`w-auto ${FIELD_CLASS}`} value={repo} onChange={(e) => setRepo(e.target.value)}>
+                  {REPO_OPTIONS.map((r) => (
                     <option key={r} value={r}>
                       {r}
                     </option>
                   ))}
-              </select>
-            </label>
-            {(fromDate || toDate || repo !== "all") && (
-              <button
-                type="button"
-                className={BTN_GHOST_CLASS}
-                onClick={() => {
-                  setFromDate("");
-                  setToDate("");
-                  setRepo("all");
-                }}
-              >
-                Reset filters
-              </button>
-            )}
-          </>
-        }
-      />
+                  {(data?.repos ?? [])
+                    .filter((r) => !REPO_OPTIONS.includes(r))
+                    .map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {(fromDate || toDate || repo !== "all") && (
+                <button
+                  type="button"
+                  className={BTN_GHOST_CLASS}
+                  onClick={() => {
+                    setFromDate("");
+                    setToDate("");
+                    setRepo("all");
+                  }}
+                >
+                  Reset filters
+                </button>
+              )}
+            </div>
+          }
+        />
+      )}
 
       {isError && (
         <Alert tone="error" className="mb-4">

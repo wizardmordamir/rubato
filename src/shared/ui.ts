@@ -206,6 +206,7 @@ export const UI_PAGES: UiPage[] = [
     group: 'top',
     color: '#0ea5e9',
     description: 'Per-category timing analytics for agent task-runner work (SQLite-backed).',
+    mergedInto: 'taskq',
   },
   {
     key: 'customPages',

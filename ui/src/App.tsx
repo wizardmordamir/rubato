@@ -23,7 +23,6 @@ import { ShellAliasesPage } from "./pages/ShellAliasesPage";
 import { RequestsMergedPage } from "./pages/merged/RequestsMergedPage";
 import { RunsMergedPage } from "./pages/merged/RunsMergedPage";
 import { TaskqPage } from "./pages/TaskqPage";
-import { OrchestrationProcessingPage } from "./pages/OrchestrationProcessingPage";
 import { PagesPage } from "./pages/Pages/PagesPage";
 import { PipelinesPage } from "./pages/PipelinesPage";
 import { PlansPage } from "./pages/PlansPage";
@@ -71,7 +70,6 @@ const PAGE_ELEMENTS: Record<string, ReactNode> = {
   "shell-aliases": <ShellAliasesPage />,
   vault: <VaultPage />,
   taskq: <TaskqPage />,
-  "orchestration-processing": <OrchestrationProcessingPage />,
   customPages: <PagesPage />,
   tools: <ToolsPage />,
   docs: <DocsPage />,
@@ -118,6 +116,8 @@ export function App() {
         <Route path="/capture" element={<Navigate to="/automations" replace />} />
         {/* Legacy markdown orchestrator replaced by the SQLite taskq board. */}
         <Route path="/orchestration" element={<Navigate to="/taskq" replace />} />
+        {/* Orchestration Processing merged into the Orchestration (taskq) page as a tab. */}
+        <Route path="/orchestration-processing" element={<Navigate to="/taskq?tab=processing" replace />} />
         {appsOn && <Route key="app-templates" path="/apps/templates" element={<AppTemplatesPage />} />}
         {appsOn && <Route key="app-detail" path="/apps/:name" element={<AppDetailPage />} />}
         {commandsOn && <Route key="command-detail" path="/commands/:name" element={<CommandDetailPage />} />}

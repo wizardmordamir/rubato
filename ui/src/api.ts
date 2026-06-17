@@ -1605,9 +1605,14 @@ export interface TaskqCompletion {
   title: string;
   repo: string | null;
   commit: string | null;
+  started_at: number | null;
   ended_at: number;
   duration_s: number | null;
   summary: string | null;
+  model: string | null;
+  think: string | null;
+  fast: number;
+  body: string | null;
 }
 export interface TaskqHistoryResult {
   recent: TaskqCompletion[];
