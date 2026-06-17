@@ -80,7 +80,7 @@ export interface TaskqHistory {
 export function taskqHistory(db: TaskqDb, limit = 50): TaskqHistory {
   const recent = db
     .query(
-      `SELECT task_id, title, repo, "commit" AS commit, ended_at, duration_s, summary
+      `SELECT task_id, title, repo, "commit", ended_at, duration_s, summary
          FROM completions ORDER BY ended_at DESC LIMIT ?`,
     )
     .all(limit) as CompletionRow[];
