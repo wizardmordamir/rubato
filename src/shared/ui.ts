@@ -345,22 +345,12 @@ export function pageByKey(key: string): UiPage | undefined {
 }
 
 /**
- * Apps + Excel are on out of the box; so is the whole Docs hub (`docs` /
- * `system-files` / `env-compare` / `config`) — those replaced the always-available
- * CLAUDE.md + config footer icons, and the env-file compare tool is a core
- * "keep dozens of apps' .env files in sync" utility, so they stay reachable without
- * opt-in. Everything else is opt-in from Settings → Pages.
+ * All pages default to enabled. Users show/hide individual sidebar entries via the
+ * sidebar's per-row kebab menu (stored in localStorage as nav prefs). Explicit
+ * `ui.pages.<key>` in `~/.rubato/config.json` still overrides when set.
  */
-export function defaultPageEnabled(key: string): boolean {
-  return (
-    key === 'apps' ||
-    key === 'excel' ||
-    key === 'docs' ||
-    key === 'system-files' ||
-    key === 'env-compare' ||
-    key === 'config' ||
-    key === 'customPages'
-  );
+export function defaultPageEnabled(_key: string): boolean {
+  return true;
 }
 
 /** The `ui` block of the config (all optional; absent → defaults apply). */

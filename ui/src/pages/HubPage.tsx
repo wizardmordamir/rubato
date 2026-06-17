@@ -31,11 +31,7 @@ export function HubPage({ hubKey }: { hubKey: Exclude<NavGroup, "top"> }) {
       <p className="mb-5 text-sm text-gray-500 dark:text-gray-400">{hub.description}</p>
       {tiles.length === 0 ? (
         <p className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
-          No pages enabled here yet. Turn some on in{" "}
-          <Link to="/settings" className="text-accent hover:underline">
-            Settings → Pages
-          </Link>
-          .
+          No pages available here.
         </p>
       ) : (
         <HubTileGrid
