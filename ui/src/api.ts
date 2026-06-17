@@ -6,6 +6,8 @@ import type {
   Automation,
   AutomationRunRecord,
   AutomationVariable,
+  BrowserChoice,
+  DetectedBrowser,
   SessionStatus,
   StepRunnerStatus,
   Target,
@@ -900,6 +902,7 @@ export const runAutomation = (payload: {
   headless?: boolean;
   keepOpen?: boolean;
   speed?: RunSpeed;
+  browser?: BrowserChoice;
   variables?: Record<string, string>;
   /** Fan the automation out across these URLs (one parallel window each). */
   urls?: string[];
@@ -952,8 +955,11 @@ export const fetchPipelineVariables = (id: string) =>
 export const fetchExcelProjects = () => getJson<ExcelProject[]>("/api/excel-automations");
 
 // Build-session controls (the headed browser you author against).
-export const sessionLaunch = (url: string, headless = false) =>
-  postJson<{ ok: true }>("/api/session/launch", { url, headless });
+export const sessionLaunch = (url: string, headless = false, browser?: BrowserChoice) =>
+  postJson<{ ok: true }>("/api/session/launch", { url, headless, browser });
+/** Detect which browsers are available on this machine. */
+export const sessionBrowsers = () =>
+  getJson<{ browsers: DetectedBrowser[] }>("/api/session/browsers").then((r) => r.browsers);
 export const sessionGoto = (url: string) => postJson<{ ok: true }>("/api/session/goto", { url });
 export const sessionTestSelector = (target: Target) =>
   postJson<{ matchCount: number; visible: boolean }>("/api/session/test-selector", { target });
@@ -1422,8 +1428,11 @@ import type {
   ReconcileFleetResult,
   RestartResult,
   SaveFleetPreset,
+  TaskDraft,
+  TaskInsertPosition,
   WatchdogAgentResult,
   WatchdogSnapshot,
+  WorkflowBoard,
 } from "@shared/orchestration";
 
 export type {
@@ -1458,6 +1467,9 @@ export type {
   RestartResult,
   RunEntry,
   RunStatus,
+  TaskDraft,
+  TaskDraftStatus,
+  TaskInsertPosition,
   ThinkingLevel,
   WatchdogAgentResult,
   WatchdogCommand,
@@ -1475,9 +1487,18 @@ export {
   DRAIN_MODEL_IDS,
   DRAIN_MODEL_OPTIONS,
   DRAIN_SETTING_CLASS,
+  draftFromTask,
+  FLEET_MODEL_OPTIONS,
+  isTaskEditable,
   NEEDS_RESTART_FIELDS,
+  serializeTaskBlock,
+  TASK_DRAFT_STATUS_LABELS,
+  TASK_DRAFT_STATUSES,
+  TASK_ID_PATTERN,
+  TASK_MODEL_ALIASES,
   THINKING_LEVELS,
   thinkingTokensFor,
+  validateTaskDraft,
 } from "@shared/orchestration";
 
 /** The whole-page snapshot (board + history + runs + stats). */
@@ -1490,6 +1511,18 @@ export const fetchOrchestrationFile = (key: string) =>
 /** Save one file's content (creates it if absent). */
 export const saveOrchestrationFile = (key: string, content: string) =>
   postJson<OrchestrationFileDoc>(`/api/orchestration/files/${encodeURIComponent(key)}`, { content });
+
+// ── Task builder (compose/edit/delete a TASKS.md entry, race-safe) ────────────
+
+/** Create a task from a draft, inserted at the given position; returns the new board. */
+export const createOrchestrationTask = (draft: TaskDraft, position: TaskInsertPosition) =>
+  postJson<{ board: WorkflowBoard }>("/api/orchestration/tasks", { draft, position });
+/** Replace the task matched by its verbatim heading with a new draft. */
+export const updateOrchestrationTask = (anchorHeading: string, draft: TaskDraft) =>
+  patchJson<{ board: WorkflowBoard }>("/api/orchestration/tasks", { anchorHeading, draft });
+/** Delete the task matched by its verbatim heading; returns the new board. */
+export const deleteOrchestrationTask = (anchorHeading: string) =>
+  sendJson<{ board: WorkflowBoard }>("DELETE", "/api/orchestration/tasks", { anchorHeading });
 
 // ── Watchdog control + observe ────────────────────────────────────────────────
 
@@ -1654,3 +1687,63 @@ import type { ClaudeRateLimitInfo } from "@shared/orchestration";
 
 /** Probe the Anthropic API (via rubato server) for current rate-limit headers. */
 export const fetchClaudeUsage = () => getJson<ClaudeRateLimitInfo>("/api/orchestration/claude-usage");
+
+// ── Shell aliases ─────────────────────────────────────────────────────────────
+
+export interface ShellAlias {
+  id: string;
+  name: string;
+  command: string;
+  description: string;
+  tags: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShellAliasInput {
+  name: string;
+  command?: string;
+  description?: string;
+  tags?: string;
+}
+
+export interface ShellConfigInfo {
+  file: string;
+  label: string;
+  path: string;
+  exists: boolean;
+}
+
+export interface ShellConfigsResult {
+  configs: ShellConfigInfo[];
+  aliasFile: string;
+  aliasFileExists: boolean;
+}
+
+export const fetchShellAliases = () => getJson<ShellAlias[]>("/api/shell-aliases");
+export const fetchShellConfigs = () => getJson<ShellConfigsResult>("/api/shell-aliases/shell-configs");
+
+export async function createShellAlias(input: ShellAliasInput): Promise<ShellAlias> {
+  return postJson<ShellAlias>("/api/shell-aliases", input);
+}
+
+export async function updateShellAlias(id: string, patch: Partial<ShellAliasInput>): Promise<ShellAlias> {
+  const res = await fetch(`/api/shell-aliases/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`update failed → ${res.status}`);
+  return res.json();
+}
+
+export async function deleteShellAlias(id: string): Promise<void> {
+  const res = await fetch(`/api/shell-aliases/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete failed → ${res.status}`);
+}
+
+export const applyShellAliases = (configFile?: string) =>
+  postJson<{ applied: number; aliasFile: string }>("/api/shell-aliases/apply", configFile ? { configFile } : {});
+
+export const importShellAliasesFromJson = (aliases: { name: string; command: string; description?: string; tags?: string }[]) =>
+  postJson<{ imported: number; skipped: number }>("/api/shell-aliases/import", { aliases });

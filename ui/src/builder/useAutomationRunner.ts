@@ -3,9 +3,10 @@
 // persisted), fires the run, and tracks live progress off the /ws event stream
 // so callers can drop a <RunPanel> in and get a verdict + diagnostics inline.
 
+import type { BrowserChoice, DetectedBrowser } from "@shared/automation";
 import type { RunSpeed } from "@shared/pacing";
 import { useEffect, useRef, useState } from "react";
-import { type Automation, type AutomationRunRecord, closeAutomationBrowser, runAutomation } from "../api";
+import { type Automation, type AutomationRunRecord, closeAutomationBrowser, runAutomation, sessionBrowsers } from "../api";
 import { useServerEvent } from "../liveBus";
 import { usePersistentBoolean, usePersistentString } from "../persisted";
 import { useToast } from "../toast";
@@ -45,6 +46,11 @@ export interface AutomationRunner {
   /** Watch pacing applied to runs (off = full speed). */
   speed: RunSpeed;
   setSpeed: (v: RunSpeed) => void;
+  /** Which browser to use for runs (undefined = server default: Chrome → Chromium). */
+  browser: BrowserChoice | undefined;
+  setBrowser: (v: BrowserChoice | undefined) => void;
+  /** Available browsers detected on the server. */
+  browsers: DetectedBrowser[];
 }
 
 export function useAutomationRunner(): AutomationRunner {
@@ -54,11 +60,15 @@ export function useAutomationRunner(): AutomationRunner {
   const [activeName, setActiveName] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<AutomationRunRecord | null>(null);
   const [heldOpen, setHeldOpen] = useState(false);
+  const [browsers, setBrowserList] = useState<DetectedBrowser[]>([]);
   // Run options persist across reloads (localStorage) — sticky choices, shared
   // with the builder via the same keys.
   const [headless, setHeadless] = usePersistentBoolean("rubato.run.headless", true);
   const [keepOpen, setKeepOpen] = usePersistentBoolean("rubato.run.keepOpen", false);
   const [speed, setSpeed] = usePersistentString<RunSpeed>("rubato.run.speed", "off", RUN_SPEEDS);
+  const BROWSER_CHOICES = ["", "chrome", "chromium", "firefox", "edge", "webkit"] as const;
+  const [browser, setBrowserRaw] = usePersistentString<BrowserChoice | "">("rubato.run.browser", "", BROWSER_CHOICES);
+  const setBrowser = (v: BrowserChoice | undefined) => setBrowserRaw(v ?? "");
 
   // Don't strand a held-open headed browser if the user navigates away.
   const heldRef = useRef(heldOpen);
@@ -69,6 +79,11 @@ export function useAutomationRunner(): AutomationRunner {
     },
     [],
   );
+
+  // Detect available browsers once on mount.
+  useEffect(() => {
+    sessionBrowsers().then(setBrowserList).catch(() => {});
+  }, []);
 
   useServerEvent((e) => {
     switch (e.type) {
@@ -121,7 +136,7 @@ export function useAutomationRunner(): AutomationRunner {
     setResults({});
     setRunning(true);
     try {
-      await runAutomation({ automation: a, headless, keepOpen, speed, variables, urls, rows });
+      await runAutomation({ automation: a, headless, keepOpen, speed, browser: browser || undefined, variables, urls, rows });
       const fan = rows?.length || urls?.length || 0;
       notify(fan > 1 ? `Running across ${fan}…` : "Run started…");
     } catch (err) {
@@ -149,5 +164,8 @@ export function useAutomationRunner(): AutomationRunner {
     setKeepOpen,
     speed,
     setSpeed,
+    browser: browser || undefined,
+    setBrowser,
+    browsers,
   };
 }

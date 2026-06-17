@@ -14,7 +14,9 @@ import type { BrowserDriver } from '../lib/interpreter';
 import { findPackageRoot } from '../lib/pkgPaths';
 import type {
   ActionOutcome,
+  BrowserChoice,
   Condition,
+  DetectedBrowser,
   HostCommand,
   HostEvent,
   HostResponse,
@@ -266,8 +268,14 @@ export class BrowserHost implements BrowserDriver {
   }
 
   // ── build-session helpers ─────────────────────────────────────────────────
-  launch(headless: boolean, url?: string): Promise<ActionOutcome> {
-    return this.command({ cmd: 'launch', headless, url });
+  launch(headless: boolean, url?: string, browser?: BrowserChoice): Promise<ActionOutcome> {
+    return this.command({ cmd: 'launch', headless, url, browser });
+  }
+
+  async detectBrowsers(): Promise<DetectedBrowser[]> {
+    const out = await this.command({ cmd: 'detect-browsers' });
+    const r = out as unknown as { browsers?: DetectedBrowser[] };
+    return Array.isArray(r?.browsers) ? r.browsers : [];
   }
   goto(url: string): Promise<ActionOutcome> {
     return this.command({ cmd: 'goto', url });

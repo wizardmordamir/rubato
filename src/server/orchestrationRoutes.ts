@@ -23,12 +23,20 @@
  * (every action is pinned to a resolved orchestration path / known pid).
  */
 
-import type { DrainConfigPatch, FleetTier, SaveFleetPreset, ThinkingLevel } from '../shared/orchestration';
+import { TaskConflictError } from '../lib/orchestration';
+import type {
+  DrainConfigPatch,
+  FleetTier,
+  SaveFleetPreset,
+  TaskDraft,
+  TaskInsertPosition,
+  ThinkingLevel,
+} from '../shared/orchestration';
 import { DRAIN_MODEL_IDS, THINKING_LEVELS } from '../shared/orchestration';
 import { getClaudeRateLimits } from './claudeUsage';
 import type { TimingQuery } from './db';
 import { json, jsonError, readJsonBody } from './http';
-import { getOverview, listFiles, readFileDoc, writeFileDoc } from './orchestration';
+import { createTask, deleteTask, getOverview, listFiles, readFileDoc, updateTask, writeFileDoc } from './orchestration';
 import { clearStoredTimings, getEntryCategoryStats, getTimingOverview, ingestTimings } from './orchestrationTimings';
 import {
   applyDrainConfigPatch,
@@ -56,6 +64,11 @@ export async function handleOrchestrationApi(pathname: string, req: Request): Pr
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'failed to read orchestration data', 500);
     }
+  }
+
+  // ── Task builder: compose/edit/delete a TASKS.md entry ──────────────────────
+  if (pathname === '/api/orchestration/tasks') {
+    return handleTasks(req);
   }
 
   // ── Watchdog control + observe ──────────────────────────────────────────────
@@ -131,6 +144,61 @@ export async function handleOrchestrationApi(pathname: string, req: Request): Pr
   }
 
   return jsonError(`not found: ${pathname}`, 404);
+}
+
+/**
+ * Task builder sub-router (compose/edit/delete a TASKS.md entry):
+ *   POST   /api/orchestration/tasks  → create  { draft, position } → { board }
+ *   PATCH  /api/orchestration/tasks  → update  { anchorHeading, draft } → { board }
+ *   DELETE /api/orchestration/tasks  → delete  { anchorHeading } → { board }
+ *
+ * The draft is validated server-side (the authoritative gate — `validateTaskDraft`);
+ * the write goes through an in-process queue + cross-process lock + atomic rename
+ * (see `src/server/orchestration.ts`) so a concurrent worker claim is never
+ * clobbered. A vanished `anchorHeading` (the task was claimed/removed since the
+ * page loaded) returns 409 so the UI refreshes instead of overwriting live state.
+ */
+async function handleTasks(req: Request): Promise<Response> {
+  const fail = (e: unknown) =>
+    jsonError(e instanceof Error ? e.message : 'task write failed', e instanceof TaskConflictError ? 409 : 400);
+
+  if (req.method === 'POST') {
+    const body = await readJsonBody<{ draft?: TaskDraft; position?: TaskInsertPosition }>(req);
+    if (!body?.draft || typeof body.draft !== 'object') return jsonError('a task { draft } is required', 400);
+    const position: TaskInsertPosition = body.position ?? { at: 'top' };
+    try {
+      return json({ board: await createTask(body.draft, position) });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+
+  if (req.method === 'PATCH' || req.method === 'PUT') {
+    const body = await readJsonBody<{ anchorHeading?: string; draft?: TaskDraft }>(req);
+    if (typeof body?.anchorHeading !== 'string' || !body.anchorHeading) {
+      return jsonError('anchorHeading (string) is required', 400);
+    }
+    if (!body.draft || typeof body.draft !== 'object') return jsonError('a task { draft } is required', 400);
+    try {
+      return json({ board: await updateTask(body.anchorHeading, body.draft) });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+
+  if (req.method === 'DELETE') {
+    const body = await readJsonBody<{ anchorHeading?: string }>(req);
+    if (typeof body?.anchorHeading !== 'string' || !body.anchorHeading) {
+      return jsonError('anchorHeading (string) is required', 400);
+    }
+    try {
+      return json({ board: await deleteTask(body.anchorHeading) });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+
+  return jsonError('use POST, PATCH, or DELETE', 405);
 }
 
 /**

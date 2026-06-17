@@ -68,6 +68,16 @@ export interface WorkflowTaskMeta {
   model?: string;
   /** Per-task thinking-level override from a `(think:<level>)` heading marker. */
   thinkingLevel?: string;
+  /** Referenceable id from an `(id:X)` marker (so a follow-up can depend on it). */
+  id?: string;
+  /** Dependency ids from a `(needs:X,Y)` marker — blocked while any still exists. */
+  needs?: string[];
+  /** Batch group from a `(group:G)` marker — done together by one worker. */
+  group?: string;
+  /** Recurrence cadence N from a `(recur:N)` marker (standing task). */
+  recur?: number;
+  /** Last-run stamp M from a `(recur:N last:M)` marker (drainer-maintained). */
+  recurLast?: number;
 }
 
 /** The whole parsed board: tasks grouped by status, with per-group counts. */
@@ -448,6 +458,193 @@ export const DRAIN_MODEL_IDS: string[] = DRAIN_MODEL_OPTIONS.map((m) => m.id);
 
 /** The drainer's built-in default worker model (matches `drain-queue.sh`). */
 export const DEFAULT_DRAIN_MODEL = 'claude-opus-4-8';
+
+// ── Task builder (compose/edit a TASKS.md entry) ──────────────────────────────
+//
+// The Orchestration "Tasks" tab lets you author a queue entry through a form
+// instead of hand-editing markdown — so the `(markers)` syntax from
+// TASKS.GUIDE.md is always well-formed. These browser-safe helpers (no I/O)
+// validate a draft and serialize it to the canonical `## [tag] (markers) Title`
+// block; the server applies the block to TASKS.md under a lock (see
+// `src/server/orchestration.ts`), and the pure file transforms live in
+// `src/lib/orchestration/editTasks.ts`.
+
+/**
+ * Statuses the builder can author. The runtime-only tags (`[~]` claimed, `[x]`
+ * done) are never set by hand — the drainer owns them — so the form is limited
+ * to the three you actually queue with:
+ *   - `ready`     → `[ ]` claimable
+ *   - `hold`      → `[b]` your manual hold switch (won't start until flipped)
+ *   - `not-ready` → `[-]` blocked on something external
+ */
+export type TaskDraftStatus = 'ready' | 'hold' | 'not-ready';
+
+export const TASK_DRAFT_STATUSES: TaskDraftStatus[] = ['ready', 'hold', 'not-ready'];
+
+export const TASK_DRAFT_STATUS_LABELS: Record<TaskDraftStatus, string> = {
+  ready: 'Ready',
+  hold: 'Hold (blocked by you)',
+  'not-ready': 'Not ready (external dep)',
+};
+
+/** The `[tag]` char written for each draft status. */
+export const TASK_DRAFT_STATUS_TAG: Record<TaskDraftStatus, string> = {
+  ready: ' ',
+  hold: 'b',
+  'not-ready': '-',
+};
+
+/** The short model aliases a `(model:X)` marker accepts (per TASKS.GUIDE.md). */
+export const TASK_MODEL_ALIASES: string[] = FLEET_MODEL_OPTIONS.map((m) => m.alias);
+
+/** A valid id/group slug — `[A-Za-z0-9._-]` (TASKS.GUIDE.md). */
+export const TASK_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * A composable task entry. Every field except `status` + `title` is optional and
+ * maps to a heading marker; empties are simply omitted from the serialized line.
+ */
+export interface TaskDraft {
+  status: TaskDraftStatus;
+  /** The task title (one line, no newlines, no `]`-leading weirdness). */
+  title: string;
+  /** Free-form detail lines beneath the heading (kept verbatim). */
+  body?: string;
+  /** `(model:X)` — a short alias from {@link TASK_MODEL_ALIASES}. */
+  model?: string;
+  /** `(think:Y)` — a {@link ThinkingLevel}. */
+  thinkingLevel?: ThinkingLevel;
+  /** `(id:X)` — referenceable id for dependents. */
+  id?: string;
+  /** `(needs:X,Y)` — ids this task is blocked on. */
+  needs?: string[];
+  /** `(group:G)` — batch-with-one-worker group. */
+  group?: string;
+  /** `(recur:N)` — recurrence cadence (standing task). */
+  recur?: number;
+  /** `last:M` inside the recur marker — preserved verbatim on edit. */
+  recurLast?: number;
+}
+
+/** Where a new task is inserted relative to the existing board. */
+export interface TaskInsertPosition {
+  at: 'top' | 'bottom' | 'before' | 'after';
+  /** For `before`/`after`: the verbatim `rawHeading` of the anchor task. */
+  anchorHeading?: string;
+}
+
+/**
+ * Validate a draft against the TASKS.GUIDE.md rules. Returns a list of
+ * human-readable errors ( empty ⇒ valid ). Used both for live form feedback in
+ * the UI and as the server's authoritative gate before writing.
+ */
+export function validateTaskDraft(draft: TaskDraft): string[] {
+  const errs: string[] = [];
+  if (!TASK_DRAFT_STATUSES.includes(draft.status)) errs.push(`invalid status: ${draft.status}`);
+
+  const title = (draft.title ?? '').trim();
+  if (!title) errs.push('title is required');
+  if (/[\r\n]/.test(draft.title ?? '')) errs.push('title must be a single line');
+
+  if (draft.model != null && draft.model !== '' && !TASK_MODEL_ALIASES.includes(draft.model)) {
+    errs.push(`unknown model alias "${draft.model}" (use ${TASK_MODEL_ALIASES.join(', ')})`);
+  }
+  if (
+    draft.thinkingLevel != null &&
+    (draft.thinkingLevel as string) !== '' &&
+    !THINKING_LEVELS.includes(draft.thinkingLevel)
+  ) {
+    errs.push(`unknown thinking level "${draft.thinkingLevel}" (use ${THINKING_LEVELS.join(', ')})`);
+  }
+
+  if (draft.id != null && draft.id !== '' && !TASK_ID_PATTERN.test(draft.id)) {
+    errs.push(`id "${draft.id}" must match [A-Za-z0-9._-]`);
+  }
+  if (draft.group != null && draft.group !== '' && !TASK_ID_PATTERN.test(draft.group)) {
+    errs.push(`group "${draft.group}" must match [A-Za-z0-9._-]`);
+  }
+  for (const n of draft.needs ?? []) {
+    if (!TASK_ID_PATTERN.test(n)) errs.push(`needs id "${n}" must match [A-Za-z0-9._-]`);
+  }
+  if (draft.id && (draft.needs ?? []).includes(draft.id)) errs.push('a task cannot depend on its own id');
+
+  if (draft.recur != null) {
+    if (!Number.isInteger(draft.recur) || draft.recur < 1) errs.push('recur cadence must be a positive integer');
+  }
+  if (draft.recurLast != null && (!Number.isInteger(draft.recurLast) || draft.recurLast < 0)) {
+    errs.push('recur last stamp must be a non-negative integer');
+  }
+
+  return errs;
+}
+
+/**
+ * Serialize the heading marker group(s) for a draft, in canonical order:
+ * `(recur:N last:M) (id:X) (needs:X,Y) (group:G) (model:X) (think:Y)`. Returns
+ * a single space-joined string of `(...)` groups, or `''` when none apply.
+ */
+export function serializeTaskMarkers(draft: TaskDraft): string {
+  const groups: string[] = [];
+  if (draft.recur != null) {
+    groups.push(draft.recurLast != null ? `(recur:${draft.recur} last:${draft.recurLast})` : `(recur:${draft.recur})`);
+  }
+  if (draft.id) groups.push(`(id:${draft.id})`);
+  if (draft.needs?.length) groups.push(`(needs:${draft.needs.join(',')})`);
+  if (draft.group) groups.push(`(group:${draft.group})`);
+  if (draft.model) groups.push(`(model:${draft.model})`);
+  if (draft.thinkingLevel) groups.push(`(think:${draft.thinkingLevel})`);
+  return groups.join(' ');
+}
+
+/**
+ * Serialize a draft to its full markdown block: the `## [tag] (markers) Title`
+ * heading plus any body lines beneath. No trailing newline (the file writer
+ * owns inter-task spacing). Throws if the draft is invalid — call
+ * {@link validateTaskDraft} first for friendly errors.
+ */
+export function serializeTaskBlock(draft: TaskDraft): string {
+  const errs = validateTaskDraft(draft);
+  if (errs.length) throw new Error(`invalid task draft: ${errs.join('; ')}`);
+  const tag = TASK_DRAFT_STATUS_TAG[draft.status];
+  const markers = serializeTaskMarkers(draft);
+  const heading = `## [${tag}]${markers ? ` ${markers}` : ''} ${draft.title.trim()}`;
+  const body = (draft.body ?? '').replace(/\s+$/, '');
+  return body ? `${heading}\n${body}` : heading;
+}
+
+/**
+ * Seed a builder draft from a parsed task — for the Edit form. Maps the heading
+ * status back to a {@link TaskDraftStatus} (claimed/done aren't editable here)
+ * and copies the round-trippable markers from {@link WorkflowTaskMeta}.
+ */
+export function draftFromTask(task: WorkflowTask): TaskDraft {
+  const tag = task.rawHeading.match(/^##\s+\[(.)\]/)?.[1] ?? ' ';
+  const status: TaskDraftStatus = tag === '-' ? 'not-ready' : tag === 'b' || tag === 'B' || tag === '!' ? 'hold' : 'ready';
+  const m = task.meta;
+  return {
+    status,
+    title: task.title,
+    body: task.body || undefined,
+    model: m.model && TASK_MODEL_ALIASES.includes(m.model) ? m.model : undefined,
+    thinkingLevel:
+      m.thinkingLevel && THINKING_LEVELS.includes(m.thinkingLevel as ThinkingLevel)
+        ? (m.thinkingLevel as ThinkingLevel)
+        : undefined,
+    id: m.id,
+    needs: m.needs,
+    group: m.group,
+    recur: m.recur,
+    recurLast: m.recurLast,
+  };
+}
+
+/** Is a parsed task one the builder can edit (not a running/finished entry)? */
+export function isTaskEditable(task: WorkflowTask): boolean {
+  if (task.status === 'claimed' || task.status === 'done') return false;
+  // A resume/worktree stamp means the watchdog is actively shepherding it.
+  if (task.meta.worktree || task.meta.resume) return false;
+  return true;
+}
 
 /**
  * What the RUNNING drainer launched with, parsed from `runs/active-run.json`

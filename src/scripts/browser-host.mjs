@@ -19,17 +19,11 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { chromium } from "playwright";
+import { chromium, firefox, webkit } from "playwright";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const DEFAULT_TIMEOUT = 15_000;
 
-/**
- * Does Playwright's bundled Chromium *look* installed? Only a hint for ordering
- * launch attempts — it checks for a `chromium*` cache dir but can't tell a stale
- * or partial install (e.g. a leftover build from before a Playwright bump) from a
- * working one, so the launch itself must still fall back rather than trust this.
- */
 /** Playwright's default browser-cache dir, per platform (overridable via env). */
 function playwrightCacheDir() {
   if (process.env.PLAYWRIGHT_BROWSERS_PATH) return process.env.PLAYWRIGHT_BROWSERS_PATH;
@@ -38,35 +32,104 @@ function playwrightCacheDir() {
   return resolve(homedir(), ".cache/ms-playwright"); // Linux / other
 }
 
-function hasBundledChromium() {
+function hasBundledBrowser(prefix) {
   const cacheDir = playwrightCacheDir();
-  return existsSync(cacheDir) && readdirSync(cacheDir).some((d) => d.startsWith("chromium"));
+  if (!existsSync(cacheDir)) return false;
+  try {
+    return readdirSync(cacheDir).some((d) => d.startsWith(prefix));
+  } catch {
+    return false;
+  }
+}
+
+function hasBundledChromium() { return hasBundledBrowser("chromium"); }
+function hasBundledFirefox() { return hasBundledBrowser("firefox"); }
+function hasBundledWebkit() { return hasBundledBrowser("webkit"); }
+
+/** Check common system-install paths for a browser application. */
+function hasSystemBrowser(paths) {
+  return paths.some((p) => existsSync(p));
+}
+
+const SYSTEM_CHROME_PATHS = {
+  darwin: ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+  win32: [
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  ],
+  linux: ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium-browser"],
+};
+const SYSTEM_EDGE_PATHS = {
+  darwin: ["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"],
+  win32: [
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+  ],
+  linux: ["/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable"],
+};
+const SYSTEM_FIREFOX_PATHS = {
+  darwin: ["/Applications/Firefox.app/Contents/MacOS/firefox"],
+  win32: [
+    "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+    "C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe",
+  ],
+  linux: ["/usr/bin/firefox"],
+};
+
+function hasSystemChrome() { return hasSystemBrowser(SYSTEM_CHROME_PATHS[process.platform] ?? []); }
+function hasSystemEdge() { return hasSystemBrowser(SYSTEM_EDGE_PATHS[process.platform] ?? []); }
+function hasSystemFirefox() { return hasSystemBrowser(SYSTEM_FIREFOX_PATHS[process.platform] ?? []); }
+
+/**
+ * Return detected availability for all supported browsers. Used by the UI to
+ * pre-populate the browser selector with realistic options.
+ */
+function detectBrowsers() {
+  return [
+    { id: "chrome", label: "Google Chrome", available: hasSystemChrome() },
+    { id: "chromium", label: "Chromium (bundled)", available: hasBundledChromium() },
+    { id: "firefox", label: "Firefox", available: hasSystemFirefox() || hasBundledFirefox() },
+    { id: "edge", label: "Microsoft Edge", available: hasSystemEdge() },
+    { id: "webkit", label: "WebKit (bundled)", available: hasBundledWebkit() },
+  ];
 }
 
 /**
- * Launch a browser, preferring the system's installed Google Chrome
- * (`channel: "chrome"`). Many environments forbid downloading Playwright's
- * Chromium but already have Chrome, so Chrome goes first; bundled Chromium is
- * only attempted as a fallback when it actually looks installed (no point
- * launching a binary that isn't there). Only errors if neither can launch.
+ * Launch a browser. The `browser` param selects which to open; when omitted,
+ * falls back to the RUBATO_BROWSER env var, then defaults to Chrome → Chromium.
  *
- * `RUBATO_BROWSER` overrides the order: `chromium` prefers the bundled browser
- * (deterministic / zero-install distributions that ship it), `chrome` forces system
- * Chrome only.
+ * `chrome` and `edge` use system installs; `chromium`, `firefox`, and `webkit`
+ * use Playwright's bundled versions (install with `bunx playwright install <browser>`).
+ *
+ * On `chrome` / `chromium`: tries Chrome first (most likely installed), then
+ * bundled Chromium as a fallback, so a fresh machine with only Chrome still works.
  */
-async function launchBrowser(headless) {
+async function launchBrowser(headless, browser) {
   const base = { headless, args: ["--no-first-run", "--no-default-browser-check"] };
+  // Explicit browser choice wins over env var.
+  const choice = browser ?? process.env.RUBATO_BROWSER;
+
+  if (choice === "firefox") {
+    return firefox.launch({ headless });
+  }
+  if (choice === "webkit") {
+    return webkit.launch({ headless });
+  }
+  if (choice === "edge") {
+    return chromium.launch({ ...base, channel: "msedge" });
+  }
+
+  // chrome / chromium / default: try system Chrome then bundled Chromium.
   const bundled = { label: "bundled Chromium", options: base };
-  const chrome = { label: "system Chrome", options: { ...base, channel: "chrome" } };
-  const pref = process.env.RUBATO_BROWSER;
+  const chromeOpt = { label: "system Chrome", options: { ...base, channel: "chrome" } };
   const candidates =
-    pref === "chromium"
-      ? [bundled, chrome]
-      : pref === "chrome"
-        ? [chrome]
+    choice === "chromium"
+      ? [bundled, chromeOpt]
+      : choice === "chrome"
+        ? [chromeOpt]
         : hasBundledChromium()
-          ? [chrome, bundled]
-          : [chrome];
+          ? [chromeOpt, bundled]
+          : [chromeOpt];
 
   let lastErr;
   for (let i = 0; i < candidates.length; i++) {
@@ -549,11 +612,11 @@ async function checkCondition(condition, t) {
 }
 
 // ── browser lifecycle ───────────────────────────────────────────────────────
-async function launch(headless, url) {
+async function launch(headless, url, browserChoice) {
   if (browser) await closeBrowser();
   // Fresh browser: from here on, a window the user closes should end the host.
   intentionalClose = false;
-  browser = await launchBrowser(headless);
+  browser = await launchBrowser(headless, browserChoice);
   browser.on("disconnected", () => {
     if (!intentionalClose) process.exit(EXIT_BROWSER_CLOSED);
   });
@@ -992,8 +1055,10 @@ async function handle(msg) {
   const { id, cmd } = msg;
   try {
     switch (cmd) {
+      case "detect-browsers":
+        return reply(id, { browsers: detectBrowsers() });
       case "launch":
-        await launch(msg.headless, msg.url);
+        await launch(msg.headless, msg.url, msg.browser);
         return reply(id, { path: page.url() });
       case "goto":
         await page.goto(msg.url, { waitUntil: "domcontentloaded" });

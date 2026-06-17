@@ -13,7 +13,7 @@ import { currentCorrelationId } from '../lib/correlation';
 import { startDiagnostics } from '../lib/diagnostics';
 import { runAutomation } from '../lib/interpreter';
 import { ensureOutputDir } from '../lib/runStore';
-import type { Automation, AutomationRunRecord, StepResult } from '../shared/automation';
+import type { Automation, AutomationRunRecord, BrowserChoice, StepResult } from '../shared/automation';
 import { capturesFrame, type RunSpeed, smartWaitMs } from '../shared/pacing';
 import { BrowserHost } from './browserHost';
 import { setCaptureEnabled } from './debugCapture';
@@ -148,6 +148,7 @@ export async function runAutomationHeadless(
     speed?: RunSpeed;
     variables?: Record<string, string>;
     dir?: string;
+    browser?: BrowserChoice;
     /** Where the run record is persisted; defaults to the SQLite run store. */
     runStore?: RunStore;
   } = {},
@@ -199,7 +200,7 @@ export async function runAutomationHeadless(
     const outputDir = await ensureOutputDir();
 
     await host.start();
-    await host.launch(headless);
+    await host.launch(headless, undefined, opts.browser);
 
     const outcome = await runAutomation(host, automation, {
       scraped: {},

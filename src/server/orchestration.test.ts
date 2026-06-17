@@ -2,7 +2,17 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { defaultNotesDir, getOverview, listFiles, notesDir, readFileDoc, writeFileDoc } from './orchestration';
+import {
+  createTask,
+  defaultNotesDir,
+  deleteTask,
+  getOverview,
+  listFiles,
+  notesDir,
+  readFileDoc,
+  updateTask,
+  writeFileDoc,
+} from './orchestration';
 
 // Isolate the notes dir (RUBATO_NOTES_DIR) AND the claude config dir
 // (CLAUDE_CONFIG_DIR) to temp dirs so we read/write real files without touching
@@ -189,5 +199,81 @@ describe('file allowlist (read/write)', () => {
     expect(written?.path.startsWith(canonicalReal)).toBe(true);
     expect(await readFile(join(realInner, 'TASKS.md'), 'utf8')).toContain('written via link');
     await rm(realInner, { recursive: true, force: true });
+  });
+});
+
+describe('task builder mutations (race-safe TASKS.md edits)', () => {
+  const seed = async () =>
+    writeFile(
+      join(dir, 'TASKS.md'),
+      '<!-- legend -->\n\n## [ ] alpha\n\n## [ ] (id:keep) beta\nbody.\n',
+    );
+
+  test('create inserts at top by default and writes the file atomically', async () => {
+    await seed();
+    const board = await createTask({ status: 'ready', title: 'gamma' }, { at: 'top' });
+    expect(board.groups.ready[0].title).toBe('gamma');
+    const onDisk = await readFile(join(dir, 'TASKS.md'), 'utf8');
+    expect(onDisk).toContain('## [ ] gamma');
+    expect(onDisk).toContain('<!-- legend -->');
+    // The lock file is always cleaned up.
+    expect(await readFile(join(dir, 'TASKS.md.lock'), 'utf8').then(() => true).catch(() => false)).toBe(false);
+  });
+
+  test('create with markers serializes the full heading', async () => {
+    await seed();
+    const board = await createTask(
+      { status: 'hold', title: 'delta', model: 'sonnet', thinkingLevel: 'low', id: 'd', needs: ['keep'] },
+      { at: 'bottom' },
+    );
+    const t = board.tasks.find((x) => x.title === 'delta');
+    expect(t?.rawHeading).toBe('## [b] (id:d) (needs:keep) (model:sonnet) (think:low) delta');
+  });
+
+  test('before/after position relative to an anchor', async () => {
+    await seed();
+    const board = await createTask({ status: 'ready', title: 'between' }, { at: 'after', anchorHeading: '## [ ] alpha' });
+    const titles = board.tasks.map((t) => t.title);
+    expect(titles.indexOf('between')).toBe(titles.indexOf('alpha') + 1);
+  });
+
+  test('rejects a duplicate id', async () => {
+    await seed();
+    await expect(createTask({ status: 'ready', title: 'dup', id: 'keep' }, { at: 'top' })).rejects.toThrow(
+      /already used/,
+    );
+  });
+
+  test('update replaces a task in place (matched by heading)', async () => {
+    await seed();
+    const board = await updateTask('## [ ] alpha', { status: 'hold', title: 'alpha (held)' });
+    expect(board.tasks.find((t) => t.title === 'alpha (held)')?.status).toBe('blocked');
+    expect(board.tasks.find((t) => t.title === 'alpha')).toBeUndefined();
+  });
+
+  test('update on a vanished anchor throws a conflict (no clobber)', async () => {
+    await seed();
+    await expect(updateTask('## [ ] ghost', { status: 'ready', title: 'x' })).rejects.toThrow(
+      /no longer in TASKS\.md/,
+    );
+  });
+
+  test('delete removes the task', async () => {
+    await seed();
+    const board = await deleteTask('## [ ] (id:keep) beta');
+    expect(board.tasks.find((t) => t.title === 'beta')).toBeUndefined();
+    expect(board.tasks.find((t) => t.title === 'alpha')).toBeDefined();
+  });
+
+  test('concurrent creates all land (no lost updates under the lock)', async () => {
+    await seed();
+    await Promise.all(
+      Array.from({ length: 8 }, (_, i) => createTask({ status: 'ready', title: `c${i}` }, { at: 'top' })),
+    );
+    const onDisk = await readFile(join(dir, 'TASKS.md'), 'utf8');
+    for (let i = 0; i < 8; i++) expect(onDisk).toContain(`## [ ] c${i}`);
+    // Original tasks survive the barrage.
+    expect(onDisk).toContain('## [ ] alpha');
+    expect(onDisk).toContain('(id:keep) beta');
   });
 });

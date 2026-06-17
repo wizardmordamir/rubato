@@ -75,7 +75,7 @@ export function AppShell({ accent, label = appBrand(), pages, children }: AppShe
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top bar: the global content-search box (always shown) plus the mobile-only
             hamburger + brand + live dot (the sidebar carries those on desktop). */}
-        <header className="flex shrink-0 items-center gap-2 border-b border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
+        <header className="relative z-50 flex shrink-0 items-center gap-2 border-b border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
           <button
             type="button"
             aria-label="Open navigation"

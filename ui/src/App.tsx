@@ -18,6 +18,7 @@ import { AutomationBuilderPage } from "./pages/ExcelAutomations/AutomationBuilde
 import { ExcelAutomationsPage } from "./pages/ExcelAutomations/ExcelAutomationsPage";
 import { HubPage } from "./pages/HubPage";
 import { LinksPage } from "./pages/LinksPage";
+import { ShellAliasesPage } from "./pages/ShellAliasesPage";
 import { RequestsMergedPage } from "./pages/merged/RequestsMergedPage";
 import { RunsMergedPage } from "./pages/merged/RunsMergedPage";
 import { OrchestrationPage } from "./pages/OrchestrationPage";
@@ -66,6 +67,7 @@ const PAGE_ELEMENTS: Record<string, ReactNode> = {
   ask: <ChatPage />,
   board: <BoardPage />,
   links: <LinksPage />,
+  "shell-aliases": <ShellAliasesPage />,
   vault: <VaultPage />,
   orchestration: <OrchestrationPage />,
   "orchestration-processing": <OrchestrationProcessingPage />,

@@ -11,6 +11,20 @@ import type { CaptureEntry } from './capture';
  * Node subprocess (Playwright can't be driven from Bun — see browser-host.mjs).
  */
 
+/**
+ * Which browser to drive. `chrome` and `edge` use the system install;
+ * `chromium`, `firefox`, and `webkit` use Playwright's bundled versions
+ * (install with `bunx playwright install <browser>`).
+ */
+export type BrowserChoice = 'chrome' | 'chromium' | 'firefox' | 'edge' | 'webkit';
+
+/** A browser detected on this machine and whether it appears available to launch. */
+export interface DetectedBrowser {
+  id: BrowserChoice;
+  label: string;
+  available: boolean;
+}
+
 /** How to locate an element on the page. Mirrors the e2e examples' vocabulary. */
 export type TargetKind =
   | 'role' // getByRole(value, { name })  — preferred, accessible
@@ -278,7 +292,8 @@ export interface AutomationRunRecord {
 // HostEvents (no id) for picker/recorder/navigation.
 
 export type HostCommand =
-  | { id: number; cmd: 'launch'; headless: boolean; url?: string }
+  | { id: number; cmd: 'launch'; headless: boolean; url?: string; browser?: BrowserChoice }
+  | { id: number; cmd: 'detect-browsers' }
   | { id: number; cmd: 'goto'; url: string }
   | {
       id: number;

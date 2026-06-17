@@ -16,6 +16,8 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import {
+  deleteOrchestrationTask,
+  draftFromTask,
   fetchClaudeUsage,
   fetchEntryTimings,
   fetchOrchestration,
@@ -23,6 +25,7 @@ import {
   fetchOrchestrationFiles,
   fetchTimings,
   ingestTimings,
+  isTaskEditable,
   saveOrchestrationFile,
   type ClaudeRateLimitInfo,
   type HistoryEntry,
@@ -47,10 +50,12 @@ import {
   Tabs,
   Tooltip,
 } from "../components";
+import { useConfirm } from "../confirm";
 import { IconList, IconMaximize, IconMinimize } from "../icons";
 import { usePersistentBoolean } from "../persisted";
 import { getTheme } from "../theme";
 import { useToast } from "../toast";
+import { blankDraft, TaskBuilderModal } from "./TaskBuilder";
 import { WatchdogView } from "./WatchdogView";
 
 /**
@@ -170,47 +175,104 @@ export function OrchestrationPage() {
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
+/** Open builder state: composing a new task, or editing an existing one. */
+type BuilderState = { mode: "create" } | { mode: "edit"; task: WorkflowTask } | null;
+
 function TasksView({ data }: { data: OrchestrationOverview }) {
   const { board } = data;
-  if (board.total === 0) {
-    return <p className="text-gray-400">No tasks parsed from TASKS.md.</p>;
-  }
+  const [builder, setBuilder] = useState<BuilderState>(null);
+  const qc = useQueryClient();
+  const { notify } = useToast();
+  const confirm = useConfirm();
+
+  const applyBoard = (next: OrchestrationOverview["board"]) => {
+    qc.setQueryData(["orchestration"], (prev: unknown) =>
+      prev && typeof prev === "object" ? { ...(prev as object), board: next } : prev,
+    );
+    qc.invalidateQueries({ queryKey: ["orchestration"] });
+  };
+
+  const del = useMutation({
+    mutationFn: (anchorHeading: string) => deleteOrchestrationTask(anchorHeading),
+    onSuccess: (res) => {
+      applyBoard(res.board);
+      notify("Task deleted from TASKS.md", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "delete failed", "error"),
+  });
+
+  const onDelete = async (task: WorkflowTask) => {
+    if (await confirm({ prompt: `Delete "${task.title}" from TASKS.md?`, confirmText: "Delete" })) {
+      del.mutate(task.rawHeading);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {STATUS_ORDER.map((s) => (
           <Badge key={s} tone={STATUS_TONE[s]}>
             {WORKFLOW_STATUS_LABELS[s]}: {board.counts[s]}
           </Badge>
         ))}
         <Badge tone="neutral">Total: {board.total}</Badge>
+        <button type="button" className={`${BTN_PRIMARY_CLASS} ml-auto`} onClick={() => setBuilder({ mode: "create" })}>
+          + New task
+        </button>
       </div>
-      {STATUS_ORDER.filter((s) => board.groups[s].length > 0).map((s) => (
-        <section key={s}>
-          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
-            {WORKFLOW_STATUS_LABELS[s]}
-            <span className="text-gray-400">({board.groups[s].length})</span>
-          </h3>
-          <div className="space-y-2">
-            {board.groups[s].map((t, i) => (
-              <TaskCard key={`${s}-${i}`} task={t} />
-            ))}
-          </div>
-        </section>
-      ))}
+
+      {board.total === 0 ? (
+        <p className="text-gray-400">No tasks in TASKS.md yet — add one with “New task”.</p>
+      ) : (
+        STATUS_ORDER.filter((s) => board.groups[s].length > 0).map((s) => (
+          <section key={s}>
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+              {WORKFLOW_STATUS_LABELS[s]}
+              <span className="text-gray-400">({board.groups[s].length})</span>
+            </h3>
+            <div className="space-y-2">
+              {board.groups[s].map((t, i) => (
+                <TaskCard
+                  key={`${s}-${i}`}
+                  task={t}
+                  onEdit={() => setBuilder({ mode: "edit", task: t })}
+                  onDelete={() => onDelete(t)}
+                />
+              ))}
+            </div>
+          </section>
+        ))
+      )}
+
+      {builder && (
+        <TaskBuilderModal
+          mode={builder.mode}
+          board={board}
+          initial={builder.mode === "edit" ? draftFromTask(builder.task) : blankDraft()}
+          anchorHeading={builder.mode === "edit" ? builder.task.rawHeading : undefined}
+          onClose={() => setBuilder(null)}
+        />
+      )}
     </div>
   );
 }
 
-function TaskCard({ task }: { task: WorkflowTask }) {
+function TaskCard({ task, onEdit, onDelete }: { task: WorkflowTask; onEdit: () => void; onDelete: () => void }) {
   const { meta } = task;
   const [open, setOpen] = useState(false);
+  const editable = isTaskEditable(task);
   return (
     <div className={`${CARD_CLASS} p-3`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-medium">{task.title}</p>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+            {meta.model && <Badge tone="neutral">model: {meta.model}</Badge>}
+            {meta.thinkingLevel && <Badge tone="neutral">think: {meta.thinkingLevel}</Badge>}
+            {meta.id && <span>id: <span className="font-mono">{meta.id}</span></span>}
+            {meta.needs && meta.needs.length > 0 && <span>needs: <span className="font-mono">{meta.needs.join(", ")}</span></span>}
+            {meta.group && <span>group: <span className="font-mono">{meta.group}</span></span>}
+            {meta.recur != null && <span>recur: {meta.recur}</span>}
             {meta.worktree && <span>worktree: <span className="font-mono">{meta.worktree}</span></span>}
             {meta.resume && <Badge tone="neutral">resumed</Badge>}
             {meta.repo && <span>repo: <span className="font-mono">{meta.repo}</span></span>}
@@ -221,7 +283,19 @@ function TaskCard({ task }: { task: WorkflowTask }) {
             {meta.reason && <span className="text-red-600 dark:text-red-400">blocked: {meta.reason}</span>}
           </div>
         </div>
-        <Badge tone={STATUS_TONE[task.status]}>{WORKFLOW_STATUS_LABELS[task.status]}</Badge>
+        <div className="flex shrink-0 items-center gap-2">
+          {editable && (
+            <>
+              <button type="button" onClick={onEdit} className="text-xs text-accent hover:underline">
+                Edit
+              </button>
+              <button type="button" onClick={onDelete} className="text-xs text-red-600 hover:underline dark:text-red-400">
+                Delete
+              </button>
+            </>
+          )}
+          <Badge tone={STATUS_TONE[task.status]}>{WORKFLOW_STATUS_LABELS[task.status]}</Badge>
+        </div>
       </div>
       {task.body && (
         <button

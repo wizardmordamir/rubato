@@ -533,6 +533,20 @@ export function getDb(): Database {
   db.run('CREATE INDEX IF NOT EXISTS orchestration_timings_ts ON orchestration_timings(ts)');
   db.run('CREATE INDEX IF NOT EXISTS orchestration_timings_category ON orchestration_timings(category)');
   db.run('CREATE INDEX IF NOT EXISTS orchestration_timings_repo ON orchestration_timings(repo)');
+
+  // Shell aliases: saved name→command pairs managed via the Aliases page.
+  // Can be applied to the system shell config or exported to cursedalchemy.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS shell_aliases (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      command TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      tags TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
   return db;
 }
 
@@ -2645,4 +2659,95 @@ export function clearTimings(before?: number): number {
       .all(before).length;
   }
   return conn.query<{ ts: number }, []>('DELETE FROM orchestration_timings RETURNING ts').all().length;
+}
+
+// ── Shell aliases ─────────────────────────────────────────────────────────────
+
+interface ShellAliasRow {
+  id: string;
+  name: string;
+  command: string;
+  description: string;
+  tags: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ShellAlias {
+  id: string;
+  name: string;
+  command: string;
+  description: string;
+  tags: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShellAliasInput {
+  name: string;
+  command?: string;
+  description?: string;
+  tags?: string;
+}
+
+function toShellAlias(r: ShellAliasRow): ShellAlias {
+  return { id: r.id, name: r.name, command: r.command, description: r.description, tags: r.tags, createdAt: r.created_at, updatedAt: r.updated_at };
+}
+
+export function listShellAliases(): ShellAlias[] {
+  return getDb().query<ShellAliasRow, []>('SELECT * FROM shell_aliases ORDER BY name ASC').all().map(toShellAlias);
+}
+
+export function createShellAlias(input: ShellAliasInput): ShellAlias {
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  const row = getDb()
+    .query<ShellAliasRow, [string, string, string, string, string, string, string]>(
+      `INSERT INTO shell_aliases (id, name, command, description, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    )
+    .get(id, input.name, input.command ?? '', input.description ?? '', input.tags ?? '', now, now);
+  return toShellAlias(row as ShellAliasRow);
+}
+
+export function updateShellAlias(id: string, patch: Partial<ShellAliasInput>): ShellAlias | null {
+  const db = getDb();
+  const ex = db.query<ShellAliasRow, [string]>('SELECT * FROM shell_aliases WHERE id = ?').get(id);
+  if (!ex) return null;
+  const has = (k: string) => Object.hasOwn(patch, k);
+  const row = db
+    .query<ShellAliasRow, [string, string, string, string, string, string]>(
+      `UPDATE shell_aliases SET name=?, command=?, description=?, tags=?, updated_at=? WHERE id=? RETURNING *`,
+    )
+    .get(
+      has('name') ? (patch.name ?? ex.name) : ex.name,
+      has('command') ? (patch.command ?? ex.command) : ex.command,
+      has('description') ? (patch.description ?? ex.description) : ex.description,
+      has('tags') ? (patch.tags ?? ex.tags) : ex.tags,
+      new Date().toISOString(),
+      id,
+    );
+  return row ? toShellAlias(row as ShellAliasRow) : null;
+}
+
+export function deleteShellAlias(id: string): boolean {
+  return getDb().query<{ id: string }, [string]>('DELETE FROM shell_aliases WHERE id = ? RETURNING id').get(id) != null;
+}
+
+/** Import aliases from a JSON export (from cursedalchemy). Returns how many were added. */
+export function importShellAliases(aliases: { name: string; command: string; description?: string; tags?: string }[]): { imported: number; skipped: number } {
+  const db = getDb();
+  let imported = 0;
+  let skipped = 0;
+  const now = new Date().toISOString();
+  for (const a of aliases) {
+    if (!a.name?.trim() || !a.command?.trim()) { skipped++; continue; }
+    const exists = db.query<{ id: string }, [string]>('SELECT id FROM shell_aliases WHERE name = ?').get(a.name.trim());
+    if (exists) { skipped++; continue; }
+    const id = randomUUID();
+    db.query('INSERT INTO shell_aliases (id, name, command, description, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      id, a.name.trim(), a.command, a.description ?? '', a.tags ?? '', now, now,
+    );
+    imported++;
+  }
+  return { imported, skipped };
 }

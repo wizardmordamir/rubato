@@ -179,6 +179,9 @@ export function AutomationsPage({ headerActions }: { headerActions?: ReactNode }
                   setKeepOpen={runner.setKeepOpen}
                   speed={runner.speed}
                   setSpeed={runner.setSpeed}
+                  browser={runner.browser}
+                  setBrowser={runner.setBrowser}
+                  browsers={runner.browsers}
                   automationId={a.id}
                 />
                 <Tooltip multiline content="Downloads this flow as a @playwright/test .spec.ts file you can drop into another app's e2e suite and run with Playwright directly.">

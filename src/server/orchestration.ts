@@ -14,11 +14,23 @@
  * and rejected on traversal, so the client never supplies a path.
  */
 
-import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { loadConfig } from '../lib/config';
-import { aggregateStats, emptyTaskBoard, parseHistory, parseRunsJsonl, parseTaskBoard } from '../lib/orchestration';
+import {
+  aggregateStats,
+  deleteTaskBlock,
+  emptyTaskBoard,
+  insertTaskBlock,
+  parseHistory,
+  parseRunsJsonl,
+  parseTaskBoard,
+  replaceTaskBlock,
+  serializeTaskBlock,
+  TaskConflictError,
+  validateTaskDraft,
+} from '../lib/orchestration';
 import type {
   HistoryEntry,
   OrchestrationFileDoc,
@@ -26,6 +38,9 @@ import type {
   OrchestrationOverview,
   RunEntry,
   RunStatus,
+  TaskDraft,
+  TaskInsertPosition,
+  WorkflowBoard,
 } from '../shared/orchestration';
 
 /** A sane cap so an accidental huge paste can't be written to disk. */
@@ -315,4 +330,152 @@ export async function writeFileDoc(key: string, content: string): Promise<Orches
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, content, 'utf8');
   return { key: spec.key, label: spec.label, path, markdown: !!spec.markdown, exists: true, content };
+}
+
+// ── Task builder: race-safe TASKS.md mutations ────────────────────────────────
+//
+// The unattended drainer + its workers edit TASKS.md concurrently. To add/edit a
+// task without clobbering a worker's claim, every mutation:
+//   1) serializes within THIS process (an in-process promise chain), then
+//   2) takes a cross-process advisory lock (an O_EXCL `TASKS.md.lock` — stale
+//      locks from a crashed holder are reclaimed after STALE_MS), then
+//   3) re-reads the CURRENT file fresh inside the lock and applies a *surgical*
+//      transform (insert/replace/delete one task block — see
+//      `src/lib/orchestration/editTasks.ts`), so concurrent edits the worker
+//      already made are preserved, then
+//   4) writes atomically (write a temp file + `rename` over TASKS.md).
+// The only irreducible window is a worker writing during our read→rename (a few
+// ms) — the same risk the workers already share among themselves.
+
+const LOCK_STALE_MS = 15_000;
+const LOCK_TIMEOUT_MS = 8_000;
+const LOCK_RETRY_MS = 60;
+
+let tmpCounter = 0;
+/** Serializes all task mutations within this process (ordered read-modify-write). */
+let tasksChain: Promise<unknown> = Promise.resolve();
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Run `fn` after any in-flight task mutation in this process completes. */
+function enqueueTaskWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const run = tasksChain.then(fn, fn);
+  // Keep the chain alive regardless of this op's success.
+  tasksChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/** Acquire the cross-process TASKS.md lock (reclaiming a stale one); throws on timeout. */
+async function acquireTasksLock(lockPath: string): Promise<void> {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      const fh = await open(lockPath, 'wx'); // O_CREAT | O_EXCL
+      await fh.writeFile(`${process.pid} ${new Date().toISOString()}\n`);
+      await fh.close();
+      return;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      // Lock held — reclaim it if the holder is gone (stale), else wait.
+      try {
+        const st = await stat(lockPath);
+        if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+          await unlink(lockPath).catch(() => {});
+          continue;
+        }
+      } catch {
+        continue; // lock vanished between calls — retry to grab it
+      }
+      if (Date.now() > deadline) throw new Error('could not acquire TASKS.md lock (timed out)');
+      await delay(LOCK_RETRY_MS);
+    }
+  }
+}
+
+/** Write `content` to `path` atomically (temp file + rename on the same fs). */
+async function atomicWrite(path: string, content: string): Promise<void> {
+  const tmp = `${path}.${process.pid}.${++tmpCounter}.tmp`;
+  await writeFile(tmp, content, 'utf8');
+  try {
+    await rename(tmp, path);
+  } catch (e) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw e;
+  }
+}
+
+/**
+ * Apply a pure transform to the *current* TASKS.md under the lock and return the
+ * freshly-parsed board. `mutate` receives the current text (`''` if the file is
+ * absent) and returns the new text; it may throw {@link TaskConflictError} (an
+ * anchor went missing) or a validation error, both of which propagate cleanly.
+ */
+async function mutateTasks(mutate: (current: string) => string): Promise<WorkflowBoard> {
+  const dir = await notesDir();
+  await mkdir(dir, { recursive: true });
+  const file = join(dir, 'TASKS.md');
+  const lock = `${file}.lock`;
+  return enqueueTaskWrite(async () => {
+    await acquireTasksLock(lock);
+    try {
+      const current = (await readMaybe(file)) ?? '';
+      const next = mutate(current);
+      if (Buffer.byteLength(next, 'utf8') > MAX_BYTES) throw new Error(`TASKS.md too large (max ${MAX_BYTES} bytes)`);
+      if (next !== current) await atomicWrite(file, next);
+      return parseTaskBoard(next);
+    } finally {
+      await unlink(lock).catch(() => {});
+    }
+  });
+}
+
+/** Reject a `(id:X)` that another task already uses (the GUIDE wants ids unique). */
+function assertIdFree(markdown: string, id: string, exceptHeading: string | null): void {
+  const except = exceptHeading?.trim();
+  for (const t of parseTaskBoard(markdown).tasks) {
+    if (t.meta.id === id && t.rawHeading.trim() !== except) {
+      throw new Error(`id "${id}" is already used by another task`);
+    }
+  }
+}
+
+/** Validate + serialize a draft, throwing a friendly error if it's malformed. */
+function blockForDraft(draft: TaskDraft): string {
+  const errs = validateTaskDraft(draft);
+  if (errs.length) throw new Error(`invalid task: ${errs.join('; ')}`);
+  return serializeTaskBlock(draft);
+}
+
+/** Create a task from a draft, inserted at the requested position. */
+export async function createTask(draft: TaskDraft, position: TaskInsertPosition): Promise<WorkflowBoard> {
+  const block = blockForDraft(draft);
+  const at = position?.at ?? 'top';
+  if ((at === 'before' || at === 'after') && !position?.anchorHeading) {
+    throw new Error(`position '${at}' requires an anchor task`);
+  }
+  return mutateTasks((current) => {
+    if (draft.id) assertIdFree(current, draft.id, null);
+    return insertTaskBlock(current, block, at, position?.anchorHeading);
+  });
+}
+
+/** Replace an existing task (matched by its verbatim heading) with a new draft. */
+export async function updateTask(anchorHeading: string, draft: TaskDraft): Promise<WorkflowBoard> {
+  if (!anchorHeading?.trim()) throw new Error('anchorHeading is required');
+  const block = blockForDraft(draft);
+  return mutateTasks((current) => {
+    if (draft.id) assertIdFree(current, draft.id, anchorHeading);
+    return replaceTaskBlock(current, anchorHeading, block);
+  });
+}
+
+/** Delete an existing task (matched by its verbatim heading). */
+export async function deleteTask(anchorHeading: string): Promise<WorkflowBoard> {
+  if (!anchorHeading?.trim()) throw new Error('anchorHeading is required');
+  return mutateTasks((current) => deleteTaskBlock(current, anchorHeading));
 }
