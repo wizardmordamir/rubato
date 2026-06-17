@@ -15,6 +15,8 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   allBucketStates,
+  type BucketState,
+  calibrateBucket,
   type ClaimFilters,
   finishDrainRun,
   getNeeds,
@@ -85,20 +87,10 @@ async function main(): Promise<void> {
   }
   const maxJobs = perWorker.length || config.jobs;
 
-  // Token-aware scheduling: throttle/pause based on current capacity.
-  const decision = scheduleDecision(allBucketStates(db, Date.now()), { maxJobs, baseJobs: config.jobs });
-  if (decision.paused) {
-    process.stdout.write(`${ts()} taskq drain: PAUSED — ${decision.reason}\n`);
-    const pausedRunId = insertDrainRun(db, {
-      startedAt: Date.now(),
-      decision: 'paused',
-      reason: decision.reason,
-      jobs: 0,
-      maxJobs,
-    });
-    finishDrainRun(db, pausedRunId, { endedAt: Date.now(), completed: 0, failed: 0, reaped: 0 });
-    return;
-  }
+  // Token-aware scheduling: throttle based on current capacity (never pause — auto-recalibrate on success).
+  const buckets = allBucketStates(db, Date.now());
+  const exhaustedBuckets: BucketState[] = buckets.filter((b) => b.remaining <= 0);
+  const decision = scheduleDecision(buckets, { maxJobs, baseJobs: config.jobs, pauseOnExhausted: false });
   const jobs = Math.min(maxJobs, decision.recommendedJobs);
 
   const stopFile = join(taskqHome(), '.stop');
@@ -122,8 +114,20 @@ async function main(): Promise<void> {
     worker: (i) => ({ filters: perWorker[i] ?? {} }),
     shouldStop: () => existsSync(stopFile),
     onEvent: (e) => {
-      if (e.type === 'completed') process.stdout.write(`  ✓ #${e.taskId} (${e.durationS}s) by w${e.worker}\n`);
-      else if (e.type === 'failed') process.stdout.write(`  ✗ #${e.taskId}: ${e.reason}\n`);
+      if (e.type === 'completed') {
+        process.stdout.write(`  ✓ #${e.taskId} (${e.durationS}s) by w${e.worker}\n`);
+        // A task succeeded while buckets were showing 0% — the estimate was wrong.
+        // Recalibrate: anchor the session window to now with only 5% consumed so
+        // subsequent drain passes see ~95% remaining instead of blocking forever.
+        if (exhaustedBuckets.length > 0) {
+          const now = Date.now();
+          for (const b of exhaustedBuckets) {
+            calibrateBucket(db, b.key, { consumedFraction: 0.05, at: now, resetAt: now - 1 });
+            process.stdout.write(`  ↻ recalibrated ${b.key} (was 0%) → ~95% remaining\n`);
+          }
+          exhaustedBuckets.length = 0;
+        }
+      } else if (e.type === 'failed') process.stdout.write(`  ✗ #${e.taskId}: ${e.reason}\n`);
       else if (e.type === 'reaped') process.stdout.write(`  reaped ${e.count} stranded lease(s)\n`);
     },
   });

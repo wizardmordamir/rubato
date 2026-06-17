@@ -94,7 +94,7 @@ export function capacitySnapshot(db: TaskqDb, config?: TaskqConfig): CapacitySna
   const maxJobs = perWorkerFilters.length || cfg.jobs;
   const fleetMode = (cfg.fleet?.length ?? 0) > 0;
 
-  const decision = scheduleDecision(buckets, { maxJobs, baseJobs: cfg.jobs });
+  const decision = scheduleDecision(buckets, { maxJobs, baseJobs: cfg.jobs, pauseOnExhausted: false });
   const effectiveJobs = Math.min(maxJobs, decision.recommendedJobs);
 
   const workerSlots: CapacityWorkerSlot[] = Array.from({ length: maxJobs }, (_, i) => ({
