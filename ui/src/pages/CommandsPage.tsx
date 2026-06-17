@@ -411,11 +411,10 @@ function CommandDetailBody({ command }: { command: Command }) {
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="font-mono text-2xl font-bold tracking-tight">{command.name}</h2>
             <Badge tone="neutral">{command.kind}</Badge>
             {command.capture === false && <Badge tone="neutral">no capture</Badge>}
           </div>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{command.description}</p>
+          {command.description && <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{command.description}</p>}
         </div>
         <button type="button" onClick={() => setRunning(true)} className={BTN_PRIMARY_CLASS}>
           <IconPlay size={14} /> Run…

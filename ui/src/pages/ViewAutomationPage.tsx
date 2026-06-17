@@ -372,12 +372,9 @@ export function ViewAutomationPage({ headerActions }: { headerActions?: ReactNod
       {data && (
         <>
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="text-2xl font-bold tracking-tight">{data.name}</h2>
-              <div className="mt-1 text-sm text-gray-400">
-                {data.steps.length} step{data.steps.length === 1 ? "" : "s"}
-              </div>
-              {data.description && <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">{data.description}</p>}
+            <div className="min-w-0 text-sm text-gray-400">
+              {data.steps.length} step{data.steps.length === 1 ? "" : "s"}
+              {data.description && <p className="mt-1 text-gray-600 dark:text-gray-300">{data.description}</p>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <RunControls

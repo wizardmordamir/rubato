@@ -2,7 +2,7 @@ import type { AutomationStep, RevisionView, StepResult } from "cwip/excel-engine
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useRegisterBreadcrumbLabel } from "../../breadcrumbs";
-import { BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, PageHeading, Tooltip } from "../../components";
+import { BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, Tooltip } from "../../components";
 import { SpreadsheetGrid } from "../../components/SpreadsheetGrid";
 import {
   originalDownloadUrl,
@@ -176,10 +176,8 @@ export function AutomationBuilderPage() {
 
   return (
     <div>
-      <PageHeading
-        title={project.name || "Untitled"}
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex flex-wrap justify-end gap-2">
+        <div className="flex flex-wrap items-center gap-2">
             <Tooltip multiline content="Download the original uploaded file, with no steps applied.">
               <a className="text-xs text-gray-500 hover:underline" href={originalDownloadUrl(projectId)}>
                 Original
@@ -234,8 +232,8 @@ export function AutomationBuilderPage() {
               </>
             )}
           </div>
-        }
-      />
+        </div>
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(340px,400px)_1fr]">
         {/* Steps column */}
