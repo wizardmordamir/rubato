@@ -1555,7 +1555,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
             multiline
             content={
               s?.watchdogLoaded
-                ? `The launchd watchdog agent (com.taskq.drain) is loaded and active. It automatically fires a drain pass every ${interval != null ? fmtInterval(interval) : "tick"} — even when no browser window is open. Unload it to stop automatic draining (you can still trigger runs manually).`
+                ? `The launchd watchdog agent (com.taskq.drain) is loaded and active. It automatically fires a drain pass every ${interval != null ? fmtIntervalSec(interval) : "tick"} — even when no browser window is open. Unload it to stop automatic draining (you can still trigger runs manually).`
                 : "The launchd watchdog agent is NOT loaded — drain passes only run when you click 'Run now'. Load it to enable automatic periodic draining on a background timer."
             }
           >
@@ -1570,7 +1570,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
               fires every{" "}
               <Tooltip content={`launchd StartInterval = ${interval}s. Change this in Settings → Watchdog. Reload is required for the new interval to take effect.`}>
                 <span className="cursor-help border-b border-dotted border-gray-400 font-medium text-gray-600 dark:text-gray-300">
-                  {fmtInterval(interval)}
+                  {fmtIntervalSec(interval)}
                 </span>
               </Tooltip>
             </div>
@@ -1620,7 +1620,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
                   </div>
                 </>
               ) : (
-                <div>next auto-tick in ≤{fmtInterval(interval)}</div>
+                <div>next auto-tick in ≤{fmtIntervalSec(interval)}</div>
               )}
             </div>
           )}
@@ -1730,7 +1730,7 @@ function fmtDur(ms: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-function fmtInterval(seconds: number): string {
+function fmtIntervalSec(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds % 3600 === 0) return `${seconds / 3600}h`;
   if (seconds >= 60) return `${Math.floor(seconds / 60)}m`;
