@@ -20,10 +20,12 @@ import {
   deleteTask,
   getNeeds,
   listTasks,
+  modelAliasFromId,
   moveTask,
   type NewTask,
   openClarifications,
   type Position,
+  recordRun,
   releaseLease,
   setStatus,
   type TaskPatch,
@@ -50,8 +52,44 @@ import { resolveGateway } from './taskq/triage';
 import { capacitySnapshot } from './taskq/capacity';
 import { getTaskqDb } from './taskqDb';
 import { getUiPref, setUiPref } from './db';
+import { notesDir } from './orchestration';
+import { parseRunsJsonl } from '../lib/orchestration';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const SECTION_PREFS_KEY = 'taskq_section_collapse';
+
+/**
+ * Ingest completed bash-drain task results from the orchestration runs JSONL
+ * files into the usage_ledger. Each claude -p result line has a session_id that
+ * acts as a dedup key — repeated calls are safe (INSERT OR IGNORE).
+ * Fire-and-forget: never throws, errors are silently ignored.
+ */
+async function ingestRunsFromJsonl(): Promise<void> {
+  try {
+    const dir = await notesDir();
+    const runsDir = join(dir, 'orchestration', 'runs');
+    let names: string[];
+    try {
+      names = (await readdir(runsDir)).filter((n) => n.startsWith('run-') && n.endsWith('.jsonl'));
+    } catch {
+      return; // runs dir doesn't exist yet
+    }
+    const db = getTaskqDb();
+    for (const name of names) {
+      const text = await readFile(join(runsDir, name), 'utf8').catch(() => '');
+      if (!text) continue;
+      for (const entry of parseRunsJsonl(name, text)) {
+        if (!entry.sessionId || !entry.outputTokens) continue;
+        const alias = modelAliasFromId(entry.model);
+        const atMs = entry.at ? new Date(entry.at).getTime() : Date.now();
+        recordRun(db, { at: atMs, model: alias, outputTokens: entry.outputTokens, sessionId: entry.sessionId });
+      }
+    }
+  } catch {
+    // ingest is best-effort — never block the response
+  }
+}
 
 /** Rebuild the whole board (tasks + needs + per-status counts + runtime data). */
 function board(): TaskqBoard {
@@ -113,6 +151,7 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
   // Usage telemetry: GET current bucket capacities; POST a manual calibration.
   if (pathname === '/api/taskq/usage') {
     if (req.method !== 'GET') return jsonError('use GET', 405);
+    void ingestRunsFromJsonl(); // fire-and-forget; next poll sees the result
     return json({ buckets: allBucketStates(getTaskqDb(), Date.now()) });
   }
   if (pathname === '/api/taskq/usage/calibrate') {

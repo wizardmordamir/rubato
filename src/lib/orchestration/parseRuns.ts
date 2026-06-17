@@ -58,10 +58,32 @@ export function runEntryFromJson(file: string, raw: unknown, at?: string): RunEn
   const subtype = str(obj, 'subtype');
   const isError = obj.is_error === true || obj.isError === true || (subtype ? /error/i.test(subtype) : false);
 
+  // For bash drain JSONL, the top-level `model` field is absent; fall back to
+  // the modelUsage key with the most output tokens (the dominant/primary model).
+  const modelDirect = str(obj, 'model');
+  let modelResolved = modelDirect;
+  if (!modelResolved) {
+    const mu = obj.modelUsage;
+    if (mu && typeof mu === 'object') {
+      let bestId: string | undefined;
+      let bestOut = -1;
+      for (const [id, stats] of Object.entries(mu as Record<string, unknown>)) {
+        if (stats && typeof stats === 'object') {
+          const out = num(stats as Record<string, unknown>, 'outputTokens', 'output_tokens') ?? 0;
+          if (out > bestOut) {
+            bestOut = out;
+            bestId = id;
+          }
+        }
+      }
+      modelResolved = bestId;
+    }
+  }
+
   const entry: RunEntry = {
     file,
     sessionId: str(obj, 'session_id', 'sessionId'),
-    model: str(obj, 'model'),
+    model: modelResolved,
     costUsd: num(obj, 'total_cost_usd', 'totalCostUsd', 'cost_usd', 'costUsd'),
     durationMs: num(obj, 'duration_ms', 'durationMs'),
     inputTokens,
