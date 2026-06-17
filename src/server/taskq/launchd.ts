@@ -17,6 +17,8 @@ export interface TaskqLaunchdOptions {
   intervalSeconds: number;
   /** Where launchd writes stdout/stderr (under ~/.taskq by convention). */
   logDir: string;
+  /** PATH for the agent (launchd's is minimal — must reach `bun` + `claude`). */
+  path: string;
 }
 
 /** Render the launchd plist XML for the taskq watchdog. */
@@ -32,6 +34,8 @@ export function taskqLaunchdPlist(opts: TaskqLaunchdOptions): string {
     <string>run</string>
     <string>${opts.rubatoDir}/src/scripts/taskqDrain.ts</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>${opts.path}</string></dict>
   <key>StartInterval</key><integer>${opts.intervalSeconds}</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>${opts.logDir}/watchdog.out</string>

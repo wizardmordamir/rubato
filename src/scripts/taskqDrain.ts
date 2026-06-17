@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { allBucketStates, type ClaimFilters, getNeeds, listTasks, renderTasksMarkdown, scheduleDecision, taskqHome } from 'cwip/taskq';
 import { getTaskqDb } from '../server/taskqDb';
 import { loadTaskqConfig } from '../server/taskq/config';
-import { dryRunExecutor, makeClaudeExecutor } from '../server/taskq/claudeExecutor';
+import { agentPath, dryRunExecutor, makeClaudeExecutor } from '../server/taskq/claudeExecutor';
 import { taskqLaunchdPlist } from '../server/taskq/launchd';
 import { runDrain } from '../server/taskq/orchestrator';
 import { runEpicDecomposition, runTriage } from '../server/taskq/triage';
@@ -40,6 +40,7 @@ async function main(): Promise<void> {
         rubatoDir: process.cwd(),
         intervalSeconds: 300,
         logDir: taskqHome(),
+        path: agentPath(),
       }),
     );
     return;
