@@ -1681,3 +1681,63 @@ import type { ClaudeRateLimitInfo } from "@shared/orchestration";
 
 /** Probe the Anthropic API (via rubato server) for current rate-limit headers. */
 export const fetchClaudeUsage = () => getJson<ClaudeRateLimitInfo>("/api/orchestration/claude-usage");
+
+// ── Shell aliases ─────────────────────────────────────────────────────────────
+
+export interface ShellAlias {
+  id: string;
+  name: string;
+  command: string;
+  description: string;
+  tags: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShellAliasInput {
+  name: string;
+  command?: string;
+  description?: string;
+  tags?: string;
+}
+
+export interface ShellConfigInfo {
+  file: string;
+  label: string;
+  path: string;
+  exists: boolean;
+}
+
+export interface ShellConfigsResult {
+  configs: ShellConfigInfo[];
+  aliasFile: string;
+  aliasFileExists: boolean;
+}
+
+export const fetchShellAliases = () => getJson<ShellAlias[]>("/api/shell-aliases");
+export const fetchShellConfigs = () => getJson<ShellConfigsResult>("/api/shell-aliases/shell-configs");
+
+export async function createShellAlias(input: ShellAliasInput): Promise<ShellAlias> {
+  return postJson<ShellAlias>("/api/shell-aliases", input);
+}
+
+export async function updateShellAlias(id: string, patch: Partial<ShellAliasInput>): Promise<ShellAlias> {
+  const res = await fetch(`/api/shell-aliases/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`update failed → ${res.status}`);
+  return res.json();
+}
+
+export async function deleteShellAlias(id: string): Promise<void> {
+  const res = await fetch(`/api/shell-aliases/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete failed → ${res.status}`);
+}
+
+export const applyShellAliases = (configFile?: string) =>
+  postJson<{ applied: number; aliasFile: string }>("/api/shell-aliases/apply", configFile ? { configFile } : {});
+
+export const importShellAliasesFromJson = (aliases: { name: string; command: string; description?: string; tags?: string }[]) =>
+  postJson<{ imported: number; skipped: number }>("/api/shell-aliases/import", { aliases });

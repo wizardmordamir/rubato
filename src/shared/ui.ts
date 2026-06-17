@@ -176,6 +176,14 @@ export const UI_PAGES: UiPage[] = [
     description: 'Save, search & import a catalogue of URLs.',
   },
   {
+    key: 'shell-aliases',
+    path: '/shell-aliases',
+    label: 'Aliases',
+    group: 'top',
+    color: '#10b981',
+    description: 'Manage shell aliases, apply them to your shell config, and sync with cursedalchemy.',
+  },
+  {
     key: 'vault',
     path: '/vault',
     label: 'Vault',
@@ -317,6 +325,7 @@ export const SIDEBAR: SidebarEntry[] = [
   { kind: 'page', key: 'ask' },
   { kind: 'page', key: 'board' },
   { kind: 'page', key: 'links' },
+  { kind: 'page', key: 'shell-aliases' },
   { kind: 'page', key: 'vault' },
   { kind: 'page', key: 'orchestration' },
   { kind: 'page', key: 'orchestration-processing' },

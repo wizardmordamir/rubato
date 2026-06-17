@@ -106,6 +106,7 @@ import { handleExcelAutomationApi } from './excelAutomationRoutes';
 import { listOutputFiles, readOutputFile, resolveOutputFile } from './files';
 import { json, jsonError, readJsonBody } from './http';
 import { handleLinksApi } from './linksRoutes';
+import { handleShellAliasApi } from './shellAliasRoutes';
 import { handleOrchestrationApi } from './orchestrationRoutes';
 import { handlePipelineApi } from './pipelineRoutes';
 import { handlePlansApi } from './plansRoutes';
@@ -435,6 +436,9 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
 
   // Links (bookmark / link manager + bookmarks-HTML import).
   if (pathname === '/api/links' || pathname.startsWith('/api/links/')) return handleLinksApi(pathname, req);
+
+  // Shell aliases (user-defined name→command pairs, system shell config setup, ca export/import).
+  if (pathname === '/api/shell-aliases' || pathname.startsWith('/api/shell-aliases/')) return handleShellAliasApi(pathname, req);
 
   // Vault (encrypted, master-password-gated credential store).
   if (pathname === '/api/vault' || pathname.startsWith('/api/vault/')) return handleVaultApi(pathname, req);
