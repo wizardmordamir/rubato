@@ -97,6 +97,10 @@ export interface LiveInstance {
   title: string;
   repo: string | null;
   model: string | null;
+  think: string | null;
+  fast: number;
+  slug: string | null;
+  group_key: string | null;
   worker_id: string;
   worktree: string | null;
   claimed_at: number;
@@ -108,7 +112,8 @@ export interface LiveInstance {
 export function liveInstances(db: TaskqDb): LiveInstance[] {
   return db
     .query(
-      `SELECT l.task_id, t.title, t.repo, t.model, l.worker_id, l.worktree, l.claimed_at, l.heartbeat_at, l.expires_at
+      `SELECT l.task_id, t.title, t.repo, t.model, t.think, t.fast, t.slug, t.group_key,
+              l.worker_id, l.worktree, l.claimed_at, l.heartbeat_at, l.expires_at
          FROM leases l JOIN tasks t ON t.id = l.task_id
         ORDER BY l.claimed_at ASC`,
     )

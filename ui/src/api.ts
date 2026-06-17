@@ -1654,6 +1654,10 @@ export interface TaskqInstance {
   title: string;
   repo: string | null;
   model: string | null;
+  think: string | null;
+  fast: number;
+  slug: string | null;
+  group_key: string | null;
   worker_id: string;
   worktree: string | null;
   claimed_at: number;

@@ -1222,27 +1222,120 @@ function InstancesPanel() {
       {items.length === 0 ? (
         <p className="text-sm text-gray-400">No workers claimed right now.</p>
       ) : (
-        <div className="space-y-1">
-          {items.map((i) => (
-            <div key={i.task_id} className={`${CARD_CLASS} flex items-center justify-between gap-3 p-2 text-xs`}>
-              <div className="min-w-0">
-                <p className="truncate font-medium">
-                  <span className="text-gray-400">#{i.task_id}</span> {i.title}
-                </p>
-                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-gray-500">
-                  <span>worker {i.worker_id}</span>
-                  {i.model && <Badge tone="neutral">{i.model}</Badge>}
-                  {i.repo && <span>{i.repo}</span>}
-                  <span>running {fmtDur(now - i.claimed_at)}</span>
-                  <span>hb {fmtDur(now - i.heartbeat_at)} ago</span>
-                  {now > i.expires_at && <span className="text-amber-600 dark:text-amber-400">lease expired</span>}
+        <div className="space-y-3">
+          {items.map((i) => {
+            const elapsed = now - i.claimed_at;
+            const hbAgo = now - i.heartbeat_at;
+            const leaseExpired = now > i.expires_at;
+            const expiresIn = i.expires_at - now;
+            const hbStale = hbAgo > 120_000;
+            return (
+              <div key={i.task_id} className={`${CARD_CLASS} p-3`}>
+                {/* Header: running indicator + task title + elapsed badge + release */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <span className="relative mt-0.5 flex h-2 w-2 shrink-0">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+                    </span>
+                    <p className="min-w-0 truncate text-sm font-semibold">
+                      <span className="mr-1 font-normal text-gray-400">#{i.task_id}</span>
+                      {i.title}
+                    </p>
+                    <span className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                      {fmtDur(elapsed)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className={`${BTN_GHOST_CLASS} shrink-0 text-xs`}
+                    disabled={release.isPending}
+                    onClick={() => release.mutate(i.task_id)}
+                  >
+                    Release
+                  </button>
+                </div>
+
+                {/* Detail grid */}
+                <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-xs sm:grid-cols-3">
+                  <WorkerInfoCell label="Model">
+                    <span className={`font-mono font-medium ${i.model ? "text-accent" : "text-gray-400"}`}>
+                      {i.model ?? "default"}
+                    </span>
+                  </WorkerInfoCell>
+
+                  <WorkerInfoCell label="Think">
+                    <span className={
+                      i.think === "high" || i.think === "max"
+                        ? "font-medium text-violet-600 dark:text-violet-400"
+                        : i.think && i.think !== "off"
+                          ? "text-gray-700 dark:text-gray-200"
+                          : "text-gray-400"
+                    }>
+                      {i.think || "off"}
+                    </span>
+                    {!!i.fast && (
+                      <span className="ml-1.5 rounded bg-blue-100 px-1 py-0.5 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                        fast
+                      </span>
+                    )}
+                  </WorkerInfoCell>
+
+                  <WorkerInfoCell label="Started">
+                    <span className="text-gray-700 dark:text-gray-200">{fmtTs(i.claimed_at)}</span>
+                  </WorkerInfoCell>
+
+                  <WorkerInfoCell label="Lease">
+                    {leaseExpired ? (
+                      <span className="font-medium text-red-600 dark:text-red-400">
+                        expired {fmtDur(now - i.expires_at)} ago
+                      </span>
+                    ) : (
+                      <span className={expiresIn < 300_000 ? "font-medium text-amber-600 dark:text-amber-400" : "text-gray-600 dark:text-gray-300"}>
+                        {fmtDur(expiresIn)} left
+                      </span>
+                    )}
+                  </WorkerInfoCell>
+
+                  <WorkerInfoCell label="Heartbeat">
+                    <span className={hbStale ? "font-medium text-amber-600 dark:text-amber-400" : "text-gray-600 dark:text-gray-300"}>
+                      {hbStale && "⚠ "}{fmtDur(hbAgo)} ago
+                    </span>
+                  </WorkerInfoCell>
+
+                  {i.repo && (
+                    <WorkerInfoCell label="Repo">
+                      <span className="font-mono text-gray-700 dark:text-gray-200">{i.repo}</span>
+                    </WorkerInfoCell>
+                  )}
+
+                  {i.slug && (
+                    <WorkerInfoCell label="Id">
+                      <span className="font-mono text-gray-600 dark:text-gray-300">{i.slug}</span>
+                    </WorkerInfoCell>
+                  )}
+
+                  {i.group_key && (
+                    <WorkerInfoCell label="Group">
+                      <span className="font-mono text-gray-600 dark:text-gray-300">{i.group_key}</span>
+                    </WorkerInfoCell>
+                  )}
+
+                  <WorkerInfoCell label="Worker" wide>
+                    <span className="break-all font-mono text-gray-600 dark:text-gray-300">{i.worker_id}</span>
+                  </WorkerInfoCell>
+
+                  {i.worktree && (
+                    <WorkerInfoCell label="Worktree" wide>
+                      <span className="break-all font-mono text-gray-500 dark:text-gray-400">
+                        {i.worktree.replace(/^\/Users\/[^/]+/, "~")}
+                      </span>
+                    </WorkerInfoCell>
+                  )}
                 </div>
               </div>
-              <button type="button" className={BTN_GHOST_CLASS} disabled={release.isPending} onClick={() => release.mutate(i.task_id)}>
-                Release
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       <p className="mt-2 text-xs text-gray-400">
@@ -1250,6 +1343,15 @@ function InstancesPanel() {
         many run at once, set Jobs / fleet tiers in Settings.
       </p>
     </section>
+  );
+}
+
+function WorkerInfoCell({ label, children, wide }: { label: string; children: React.ReactNode; wide?: boolean }) {
+  return (
+    <div className={wide ? "col-span-2 sm:col-span-3" : ""}>
+      <div className="mb-0.5 text-gray-400">{label}</div>
+      <div>{children}</div>
+    </div>
   );
 }
 
