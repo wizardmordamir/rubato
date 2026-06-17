@@ -141,7 +141,8 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((e) => {
-  process.stderr.write(`taskq drain error: ${e instanceof Error ? e.message : String(e)}\n`);
-  process.exit(1);
-});
+if (import.meta.main)
+  main().catch((e) => {
+    process.stderr.write(`taskq drain error: ${e instanceof Error ? e.message : String(e)}\n`);
+    process.exit(1);
+  });

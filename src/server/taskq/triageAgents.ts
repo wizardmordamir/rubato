@@ -5,6 +5,7 @@
  */
 
 import type { TaskRow } from 'cwip/taskq';
+import { agentPath } from './claudeExecutor';
 import type { EpicPlan, Planner, TriageAgent, TriageVerdict } from './triage';
 
 const TRIAGE_MODEL = 'claude-haiku-4-5-20251001';
@@ -12,7 +13,11 @@ const TRIAGE_MODEL = 'claude-haiku-4-5-20251001';
 type SpawnFn = (cmd: string[]) => Promise<{ exitCode: number; stdout: string }>;
 
 const defaultSpawn: SpawnFn = async (cmd) => {
-  const proc = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'inherit' });
+  const proc = Bun.spawn(cmd, {
+    stdout: 'pipe',
+    stderr: 'inherit',
+    env: { ...process.env, PATH: agentPath() },
+  });
   const stdout = await new Response(proc.stdout).text();
   return { exitCode: await proc.exited, stdout };
 };
