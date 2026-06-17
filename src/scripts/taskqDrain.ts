@@ -13,7 +13,7 @@
 
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { allBucketStates, type ClaimFilters, getNeeds, listTasks, renderTasksMarkdown, scheduleDecision, taskqHome } from 'cwip/taskq';
+import { allBucketStates, type ClaimFilters, finishDrainRun, getNeeds, insertDrainRun, listTasks, renderTasksMarkdown, scheduleDecision, taskqHome } from 'cwip/taskq';
 import { getTaskqDb } from '../server/taskqDb';
 import { loadTaskqConfig } from '../server/taskq/config';
 import { agentPath, dryRunExecutor, makeClaudeExecutor } from '../server/taskq/claudeExecutor';
@@ -21,6 +21,11 @@ import { taskqLaunchdPlist } from '../server/taskq/launchd';
 import { runDrain } from '../server/taskq/orchestrator';
 import { runEpicDecomposition, runTriage } from '../server/taskq/triage';
 import { makePlanner, makeTriageAgent } from '../server/taskq/triageAgents';
+
+function ts(): string {
+  const d = new Date();
+  return `[${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}]`;
+}
 
 function regenerateView(db: ReturnType<typeof getTaskqDb>): void {
   const rows = listTasks(db);
@@ -46,6 +51,9 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Stamp the fire time so the UI can compute a real countdown to the next tick.
+  writeFileSync(join(taskqHome(), '.last-fire'), String(Date.now()));
+
   const config = loadTaskqConfig();
   const db = getTaskqDb();
   const dryRun = process.env.TASKQ_DRY_RUN === '1';
@@ -55,7 +63,7 @@ async function main(): Promise<void> {
   if (config.triage?.enabled && !dryRun) {
     const t = await runTriage(db, makeTriageAgent());
     const e = await runEpicDecomposition(db, makePlanner());
-    process.stdout.write(`taskq triage: ${t.graded} graded (${t.toReady} ready, ${t.toEpic} epic), ${e.decomposed} decomposed\n`);
+    process.stdout.write(`${ts()} taskq triage: ${t.graded} graded (${t.toReady} ready, ${t.toEpic} epic), ${e.decomposed} decomposed\n`);
   }
 
   // Per-worker tier filters: flatten fleet tiers into one filter per worker slot.
@@ -68,15 +76,20 @@ async function main(): Promise<void> {
   // Token-aware scheduling: throttle/pause based on current capacity.
   const decision = scheduleDecision(allBucketStates(db, Date.now()), { maxJobs, baseJobs: config.jobs });
   if (decision.paused) {
-    process.stdout.write(`taskq drain: PAUSED — ${decision.reason}\n`);
+    process.stdout.write(`${ts()} taskq drain: PAUSED — ${decision.reason}\n`);
+    const pausedRunId = insertDrainRun(db, { startedAt: Date.now(), decision: 'paused', reason: decision.reason, jobs: 0, maxJobs });
+    finishDrainRun(db, pausedRunId, { endedAt: Date.now(), completed: 0, failed: 0, reaped: 0 });
     return;
   }
   const jobs = Math.min(maxJobs, decision.recommendedJobs);
 
   const stopFile = join(taskqHome(), '.stop');
   process.stdout.write(
-    `taskq drain: ${jobs}/${maxJobs} worker(s)${dryRun ? ' [DRY RUN]' : ''} — ${decision.reason}${decision.preferLight ? ' (prefer light)' : ''}, db=${taskqHome()}\n`,
+    `${ts()} taskq drain: ${jobs}/${maxJobs} worker(s)${dryRun ? ' [DRY RUN]' : ''} — ${decision.reason}${decision.preferLight ? ' (prefer light)' : ''}, db=${taskqHome()}\n`,
   );
+
+  const drainDecision = decision.preferLight ? 'throttled' : decision.burnExpiring ? 'burning' : 'normal';
+  const drainRunId = insertDrainRun(db, { startedAt: Date.now(), decision: drainDecision, reason: decision.reason, jobs, maxJobs });
 
   const summary = await runDrain(db, {
     jobs,
@@ -91,8 +104,10 @@ async function main(): Promise<void> {
     },
   });
 
+  finishDrainRun(db, drainRunId, { endedAt: Date.now(), completed: summary.completed, failed: summary.failed, reaped: summary.reaped });
+
   regenerateView(db);
-  process.stdout.write(`taskq drain done: ${summary.completed} completed, ${summary.failed} failed, ${summary.reaped} reaped\n`);
+  process.stdout.write(`${ts()} taskq drain done: ${summary.completed} completed, ${summary.failed} failed, ${summary.reaped} reaped\n`);
 }
 
 main().catch((e) => {

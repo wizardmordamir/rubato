@@ -1602,6 +1602,8 @@ export interface TaskqDrainerStatus {
   watchdogLoaded: boolean;
   running: boolean;
   stopped: boolean;
+  /** Unix ms when the drain last started (from .last-fire stamp). */
+  lastFireMs?: number;
 }
 export interface TaskqCompletion {
   task_id: number;
@@ -1685,6 +1687,24 @@ export const releaseTaskqInstance = (taskId: number) =>
   postJson<{ board: TaskqBoard; instances: TaskqInstance[] }>(`/api/taskq/instances/${taskId}/release`, {});
 /** Tail the watchdog log. */
 export const fetchTaskqLogs = (lines = 200) => getJson<{ path: string; lines: string[] }>(`/api/taskq/logs?lines=${lines}`);
+
+/** A single drain pass audit record. */
+export interface TaskqDrainRun {
+  id: number;
+  started_at: number;
+  ended_at: number | null;
+  decision: string; // 'normal' | 'paused' | 'throttled' | 'stopped'
+  reason: string;
+  jobs: number;
+  max_jobs: number;
+  completed: number | null;
+  failed: number | null;
+  reaped: number | null;
+}
+
+/** Fetch recent drain run audit records. */
+export const fetchTaskqDrainRuns = (limit = 30) =>
+  getJson<TaskqDrainRun[]>('/api/taskq/drain-runs?limit=' + limit);
 /** Load or unload the launchd watchdog. */
 export const setTaskqWatchdog = (action: "load" | "unload") =>
   postJson<{ ok: boolean; out: string; status: TaskqDrainerStatus }>("/api/taskq/drainer/watchdog", { action });

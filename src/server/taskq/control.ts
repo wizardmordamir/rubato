@@ -19,6 +19,8 @@ export interface DrainerStatus {
   running: boolean;
   /** The graceful-stop sentinel (`~/.taskq/.stop`) is present. */
   stopped: boolean;
+  /** Unix ms timestamp when the drain last started (from `.last-fire` stamp file). */
+  lastFireMs?: number;
 }
 
 function sh(cmd: string[]): string {
@@ -31,10 +33,18 @@ function sh(cmd: string[]): string {
 }
 
 export function drainerStatus(): DrainerStatus {
+  const lastFireFile = join(taskqHome(), '.last-fire');
+  let lastFireMs: number | undefined;
+  if (existsSync(lastFireFile)) {
+    const raw = readFileSync(lastFireFile, 'utf8').trim();
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) lastFireMs = n;
+  }
   return {
     watchdogLoaded: sh(['launchctl', 'list']).includes(TASKQ_LAUNCHD_LABEL),
     running: sh(['pgrep', '-f', 'taskqDrain']).trim().length > 0,
     stopped: existsSync(join(taskqHome(), '.stop')),
+    lastFireMs,
   };
 }
 
