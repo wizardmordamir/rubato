@@ -6,6 +6,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   answerTaskqClarification,
   calibrateTaskqBucket,
+  probeTaskqCapacity,
   createTaskqTask,
   deleteTaskqTask,
   enqueueTaskqTemplate,
@@ -1012,6 +1013,19 @@ function DrainStatusBanner({ onGoToWorkers, onGoToUsage }: { onGoToWorkers: () =
     onError: (e) => notify(e instanceof Error ? e.message : "calibrate failed", "error"),
   });
 
+  // Fire a real probe to learn whether we're actually out, then auto-recalibrate.
+  const recheck = useMutation({
+    mutationFn: probeTaskqCapacity,
+    onSuccess: (r) => {
+      qc.setQueryData(["taskq-usage"], { buckets: r.buckets });
+      qc.invalidateQueries({ queryKey: ["taskq-capacity"] });
+      if (r.probe.rateLimited) notify("Probe confirms you're actually out of tokens — estimate kept", "info");
+      else if (r.reconciled.length > 0) notify("Not actually out — estimate corrected upward", "success");
+      else notify("Capacity looks fine — no change needed", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "re-check failed", "error"),
+  });
+
   const stopped = s?.stopped;
   const throttled = !stopped && cap?.decision.preferLight;
   const exhausted = cap?.buckets.filter((b) => b.fraction <= 0) ?? [];
@@ -1037,11 +1051,20 @@ function DrainStatusBanner({ onGoToWorkers, onGoToUsage }: { onGoToWorkers: () =
       actions={
         exhausted.length > 0 ? (
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className={BTN_PRIMARY_CLASS}
+              disabled={recheck.isPending}
+              onClick={() => recheck.mutate()}
+            >
+              {recheck.isPending && <Spinner />}
+              I'm not actually out — re-check
+            </button>
             {exhausted.map((b) => (
               <button
                 key={b.key}
                 type="button"
-                className={BTN_PRIMARY_CLASS}
+                className={BTN_GHOST_CLASS}
                 disabled={calibrate.isPending}
                 onClick={() => calibrate.mutate(b.key)}
               >
@@ -1069,10 +1092,9 @@ function DrainStatusBanner({ onGoToWorkers, onGoToUsage }: { onGoToWorkers: () =
               </span>
             );
           })}
-          if tasks succeed, the drain will auto-recalibrate. Or{" "}
-          <button type="button" className="underline" onClick={onGoToUsage}>
-            reset manually
-          </button>.
+          this is only a local estimate. The drain self-corrects: a real call that
+          goes through (a task, or the re-check above) proves you're not out and
+          nudges the estimate to track your true limit.
         </p>
       )}
       {exhausted.length === 0 && (

@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { TaskRow } from 'cwip/taskq';
-import { agentPath, buildWorkerPrompt, makeClaudeExecutor, parseClaudeResult } from './claudeExecutor';
+import {
+  agentPath,
+  buildWorkerPrompt,
+  isUsageLimitMessage,
+  makeClaudeExecutor,
+  parseClaudeResult,
+} from './claudeExecutor';
 import { loadTaskqConfig } from './config';
 import { TASKQ_LAUNCHD_LABEL, taskqLaunchdPlist } from './launchd';
 
@@ -98,6 +104,38 @@ describe('makeClaudeExecutor (injected spawn)', () => {
   test('nonzero exit → failure', async () => {
     const exec = makeClaudeExecutor(loadTaskqConfig(), async () => ({ exitCode: 1, stdout: '' }));
     expect((await exec(task(), { index: 0, workerId: 'w', worktree: 'wt', filters: {} })).ok).toBe(false);
+  });
+});
+
+describe('usage-limit classification', () => {
+  test('isUsageLimitMessage matches real limit phrasings, ignores ordinary failures', () => {
+    expect(isUsageLimitMessage('Claude usage limit reached. Resets at 5pm')).toBe(true);
+    expect(isUsageLimitMessage('Error: 429 Too Many Requests')).toBe(true);
+    expect(isUsageLimitMessage('overloaded_error')).toBe(true);
+    expect(isUsageLimitMessage('tsc failed with 3 errors')).toBe(false);
+    expect(isUsageLimitMessage('')).toBe(false);
+    expect(isUsageLimitMessage(null)).toBe(false);
+  });
+
+  test('parseClaudeResult flags a usage-limit error as rateLimited', () => {
+    const r = parseClaudeResult(
+      JSON.stringify({ subtype: 'error', is_error: true, result: 'Claude usage limit reached.' }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.rateLimited).toBe(true);
+  });
+
+  test('parseClaudeResult does NOT flag an ordinary failure', () => {
+    const r = parseClaudeResult(JSON.stringify({ subtype: 'error', is_error: true, result: 'could not find file' }));
+    expect(r.ok).toBe(false);
+    expect(r.rateLimited).toBe(false);
+  });
+
+  test('parseClaudeResult success is never rateLimited', () => {
+    const r = parseClaudeResult(JSON.stringify({ subtype: 'success', result: 'done', usage: { output_tokens: 10 } }));
+    expect(r.ok).toBe(true);
+    expect(r.rateLimited).toBe(false);
+    expect(r.outputTokens).toBe(10);
   });
 });
 

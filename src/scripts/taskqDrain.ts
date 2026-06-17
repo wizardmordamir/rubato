@@ -16,7 +16,6 @@ import { join } from 'node:path';
 import {
   allBucketStates,
   type BucketState,
-  calibrateBucket,
   type ClaimFilters,
   finishDrainRun,
   getNeeds,
@@ -26,17 +25,23 @@ import {
   scheduleDecision,
   taskqHome,
 } from 'cwip/taskq';
-import { agentPath, dryRunExecutor, makeClaudeExecutor } from '../server/taskq/claudeExecutor';
+import { agentPath, dryRunExecutor, makeClaudeExecutor, probeClaudeCapacity } from '../server/taskq/claudeExecutor';
 import { loadTaskqConfig } from '../server/taskq/config';
 import { taskqLaunchdPlist } from '../server/taskq/launchd';
 import { runDrain } from '../server/taskq/orchestrator';
 import { runEpicDecomposition, runTriage } from '../server/taskq/triage';
 import { makePlanner, makeTriageAgent } from '../server/taskq/triageAgents';
+import { reconcileUsageObservation } from '../server/taskq/usageReconcile';
 import { getTaskqDb } from '../server/taskqDb';
 
 function ts(): string {
   const d = new Date();
   return `[${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}]`;
+}
+
+/** Echo any adaptive recalibrations the reconciler made (no-op when nothing moved). */
+function logReconcile(actions: ReturnType<typeof reconcileUsageObservation>): void {
+  for (const a of actions) process.stdout.write(`  ↻ ${a.key}: ${a.reason}\n`);
 }
 
 function regenerateView(db: ReturnType<typeof getTaskqDb>): void {
@@ -89,7 +94,7 @@ async function main(): Promise<void> {
 
   // Token-aware scheduling: throttle based on current capacity (never pause — auto-recalibrate on success).
   const buckets = allBucketStates(db, Date.now());
-  const exhaustedBuckets: BucketState[] = buckets.filter((b) => b.remaining <= 0);
+  const wasExhausted: BucketState[] = buckets.filter((b) => b.remaining <= 0);
   const decision = scheduleDecision(buckets, { maxJobs, baseJobs: config.jobs, pauseOnExhausted: false });
   const jobs = Math.min(maxJobs, decision.recommendedJobs);
 
@@ -116,21 +121,35 @@ async function main(): Promise<void> {
     onEvent: (e) => {
       if (e.type === 'completed') {
         process.stdout.write(`  ✓ #${e.taskId} (${e.durationS}s) by w${e.worker}\n`);
-        // A task succeeded while buckets were showing 0% — the estimate was wrong.
-        // Recalibrate: anchor the session window to now with only 5% consumed so
-        // subsequent drain passes see ~95% remaining instead of blocking forever.
-        if (exhaustedBuckets.length > 0) {
-          const now = Date.now();
-          for (const b of exhaustedBuckets) {
-            calibrateBucket(db, b.key, { consumedFraction: 0.05, at: now, resetAt: now - 1 });
-            process.stdout.write(`  ↻ recalibrated ${b.key} (was 0%) → ~95% remaining\n`);
-          }
-          exhaustedBuckets.length = 0;
-        }
-      } else if (e.type === 'failed') process.stdout.write(`  ✗ #${e.taskId}: ${e.reason}\n`);
-      else if (e.type === 'reaped') process.stdout.write(`  reaped ${e.count} stranded lease(s)\n`);
+        // A real call went through → we are NOT out of tokens. Adaptively learn:
+        // if any bucket was reading exhausted, grow its limit + re-anchor so the
+        // estimate stops blocking and tracks reality more closely next time.
+        logReconcile(reconcileUsageObservation(db, 'not-exhausted'));
+      } else if (e.type === 'failed') {
+        process.stdout.write(`  ✗ #${e.taskId}: ${e.reason}\n`);
+        // A genuine usage-limit error confirms we ARE out (shrink the estimate so
+        // it predicts the wall sooner). Any other failure still proves the call
+        // reached the API → treat it as a not-exhausted signal.
+        logReconcile(reconcileUsageObservation(db, e.rateLimited ? 'exhausted' : 'not-exhausted'));
+      } else if (e.type === 'reaped') process.stdout.write(`  reaped ${e.count} stranded lease(s)\n`);
     },
   });
+
+  // Empty-queue self-heal: nothing ran to give us a signal, yet the estimate
+  // says we're out. Fire ONE cheap probe to find out for real, then reconcile —
+  // so a stuck "0% remaining" corrects itself without waiting for a task.
+  if (!dryRun && wasExhausted.length > 0 && summary.completed + summary.failed === 0) {
+    process.stdout.write(`${ts()} estimate read 0% but nothing ran — probing real capacity…\n`);
+    const probe = await probeClaudeCapacity();
+    if (probe.rateLimited) {
+      process.stdout.write(`  · probe confirms usage limit (${probe.detail}) — leaving estimate exhausted\n`);
+      logReconcile(reconcileUsageObservation(db, 'exhausted'));
+    } else if (probe.ok) {
+      logReconcile(reconcileUsageObservation(db, 'not-exhausted'));
+    } else {
+      process.stdout.write(`  · probe inconclusive (${probe.detail}) — estimate unchanged\n`);
+    }
+  }
 
   finishDrainRun(db, drainRunId, {
     endedAt: Date.now(),

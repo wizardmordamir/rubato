@@ -75,6 +75,28 @@ interface ClaudeEnvelope {
   usage?: { output_tokens?: number; input_tokens?: number };
 }
 
+/**
+ * Recognise a genuine Max-plan / API usage-or-rate-limit failure in a result
+ * string, as opposed to any other task failure. Used to distinguish "we really
+ * are out of tokens" (respect the limit) from "the call went through fine, the
+ * task just didn't finish" (proof we are NOT out → recalibrate the estimate).
+ */
+export function isUsageLimitMessage(s: string | null | undefined): boolean {
+  if (!s) return false;
+  const t = s.toLowerCase();
+  return (
+    t.includes('usage limit') ||
+    t.includes('rate limit') ||
+    t.includes('rate_limit') ||
+    t.includes('limit reached') ||
+    t.includes('too many requests') ||
+    t.includes('quota') ||
+    t.includes('overloaded') ||
+    t.includes('exceeded your') ||
+    /\b429\b/.test(t)
+  );
+}
+
 /** Parse the `--output-format json` envelope into a {@link TaskResult}. */
 export function parseClaudeResult(stdout: string): TaskResult {
   const trimmed = stdout.trim();
@@ -95,7 +117,15 @@ export function parseClaudeResult(stdout: string): TaskResult {
       }
     }
   }
-  if (!env) return { ok: false, reason: 'could not parse claude -p JSON result' };
+  if (!env) {
+    // Unparseable output is still telling: if the raw text shouts a usage limit,
+    // classify it so the estimate can react instead of guessing.
+    return {
+      ok: false,
+      reason: 'could not parse claude -p JSON result',
+      rateLimited: isUsageLimitMessage(stdout),
+    };
+  }
   const ok = env.subtype === 'success' && !env.is_error;
   const summary = (env.result ?? '').replace(/\s+/g, ' ').trim().slice(0, 280);
   return {
@@ -103,6 +133,7 @@ export function parseClaudeResult(stdout: string): TaskResult {
     summary: summary || undefined,
     reason: ok ? undefined : summary || env.subtype || 'run did not succeed',
     outputTokens: env.usage?.output_tokens,
+    rateLimited: !ok && isUsageLimitMessage(`${summary} ${env.subtype ?? ''}`),
   };
 }
 
@@ -132,7 +163,8 @@ export function makeClaudeExecutor(config: TaskqConfig, spawn: SpawnFn = default
     const think = thinkLevel ? THINK_TOKENS[thinkLevel] : undefined;
     if (think) env.MAX_THINKING_TOKENS = String(think);
     const { exitCode, stdout } = await spawn(cmd, cwd, env);
-    if (exitCode !== 0) return { ok: false, reason: `claude -p exited ${exitCode}` };
+    if (exitCode !== 0)
+      return { ok: false, reason: `claude -p exited ${exitCode}`, rateLimited: isUsageLimitMessage(stdout) };
     return parseClaudeResult(stdout);
   };
 }
@@ -143,6 +175,47 @@ const defaultSpawn: SpawnFn = async (cmd, cwd, env) => {
   const stdout = await new Response(proc.stdout).text();
   return { exitCode: await proc.exited, stdout };
 };
+
+/** What a capacity probe learned about the account's true limit state. */
+export interface CapacityProbe {
+  /** True only when a genuine usage-limit error came back (we really are out). */
+  rateLimited: boolean;
+  /** True when the probe call completed without a usage-limit error. */
+  ok: boolean;
+  /** Raw detail for logs. */
+  detail: string;
+}
+
+/**
+ * Fire ONE trivial `claude -p` call (cheapest model) purely to learn whether the
+ * subscription is actually out of tokens — the only authoritative signal for the
+ * Max-plan session/weekly limits, which the API headers don't expose. Used to
+ * self-heal a stuck "0% remaining" reading when there's no real task to ride on
+ * (empty queue, or a user-triggered re-check). Never throws.
+ */
+export async function probeClaudeCapacity(spawn: SpawnFn = defaultSpawn): Promise<CapacityProbe> {
+  try {
+    const cmd = [
+      'claude',
+      '-p',
+      'Reply with exactly: ok',
+      '--model',
+      MODEL_IDS.haiku,
+      '--output-format',
+      'json',
+      '--dangerously-skip-permissions',
+    ];
+    const { exitCode, stdout } = await spawn(cmd, process.cwd(), { PATH: agentPath() });
+    const rateLimited = isUsageLimitMessage(stdout);
+    if (rateLimited) return { rateLimited: true, ok: false, detail: 'usage-limit error on probe' };
+    if (exitCode !== 0) return { rateLimited: false, ok: false, detail: `probe exited ${exitCode}` };
+    const res = parseClaudeResult(stdout);
+    return { rateLimited: !!res.rateLimited, ok: res.ok, detail: res.summary ?? res.reason ?? 'probe completed' };
+  } catch (e) {
+    // A spawn/exec failure tells us nothing about capacity — report inconclusive.
+    return { rateLimited: false, ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 /** A no-op executor for dry-run validation — logs + reports success, no agent. */
 export const dryRunExecutor: TaskExecutor = async (task, ctx) => {

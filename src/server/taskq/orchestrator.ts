@@ -30,6 +30,12 @@ export interface TaskResult {
   reason?: string;
   /** Output tokens the run consumed (recorded into the usage ledger when known). */
   outputTokens?: number;
+  /**
+   * True only when the failure was a genuine usage/rate-limit error. Lets the
+   * drain tell "we are really out of tokens" (respect it) from "the call worked,
+   * the task just failed" (proof we are NOT out → recalibrate the estimate).
+   */
+  rateLimited?: boolean;
 }
 
 /** Runs one assigned task to completion (spawn an agent, etc.). */
@@ -47,7 +53,7 @@ export type DrainEvent =
   | { type: 'reaped'; count: number }
   | { type: 'claimed'; worker: number; task: TaskRow }
   | { type: 'completed'; worker: number; taskId: number; durationS: number }
-  | { type: 'failed'; worker: number; taskId: number; reason: string }
+  | { type: 'failed'; worker: number; taskId: number; reason: string; rateLimited?: boolean }
   | { type: 'idle'; worker: number }
   | { type: 'error'; worker: number; taskId: number; error: string };
 
@@ -127,7 +133,13 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
         } else {
           failTask(db, task.id, res.reason ?? 'task failed', now());
           summary.failed++;
-          emit({ type: 'failed', worker: index, taskId: task.id, reason: res.reason ?? 'task failed' });
+          emit({
+            type: 'failed',
+            worker: index,
+            taskId: task.id,
+            reason: res.reason ?? 'task failed',
+            rateLimited: res.rateLimited,
+          });
         }
       } catch (e) {
         clearInterval(hb);

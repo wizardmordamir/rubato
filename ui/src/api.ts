@@ -1588,6 +1588,17 @@ export const calibrateTaskqBucket = (input: {
   limitUnits?: number;
   resetAt?: number;
 }) => postJson<{ buckets: BucketState[] }>("/api/taskq/usage/calibrate", input);
+/**
+ * Self-heal the usage estimate: fire a real probe to learn whether we're actually
+ * out of tokens, then auto-recalibrate. No manual numbers — used by the
+ * "I'm not actually out — re-check" button.
+ */
+export const probeTaskqCapacity = () =>
+  postJson<{
+    probe: { rateLimited: boolean; ok: boolean; detail: string };
+    reconciled: { key: string; reason: string; limitUnits: number }[];
+    buckets: BucketState[];
+  }>("/api/taskq/usage/probe", {});
 /** Open clarification gateways (the Input Queue). */
 export const fetchTaskqClarifications = () =>
   getJson<{ clarifications: OpenClarification[] }>("/api/taskq/clarifications");

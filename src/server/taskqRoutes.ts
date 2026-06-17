@@ -45,6 +45,7 @@ import { getUiPref, setUiPref } from './db';
 import { json, jsonError, readJsonBody } from './http';
 import { notesDir } from './orchestration';
 import { capacitySnapshot } from './taskq/capacity';
+import { probeClaudeCapacity } from './taskq/claudeExecutor';
 import { loadTaskqConfig, saveTaskqConfig, type TaskqConfigPatch } from './taskq/config';
 import {
   currentInterval,
@@ -58,6 +59,7 @@ import {
   taskqHistory,
 } from './taskq/control';
 import { resolveGateway } from './taskq/triage';
+import { reconcileUsageObservation } from './taskq/usageReconcile';
 import { getTaskqDb } from './taskqDb';
 
 const SECTION_PREFS_KEY = 'taskq_section_collapse';
@@ -220,6 +222,23 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       return json({ buckets: allBucketStates(getTaskqDb(), Date.now()) });
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'calibrate failed', 400);
+    }
+  }
+
+  // Self-heal: fire ONE real probe to learn whether we're actually out of tokens,
+  // then adaptively recalibrate the estimate. The "I'm not actually out — re-check"
+  // button (and the empty-queue path in the drainer) hit this. No manual numbers.
+  if (pathname === '/api/taskq/usage/probe') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    try {
+      const probe = await probeClaudeCapacity();
+      const db = getTaskqDb();
+      let actions: ReturnType<typeof reconcileUsageObservation> = [];
+      if (probe.rateLimited) actions = reconcileUsageObservation(db, 'exhausted');
+      else if (probe.ok) actions = reconcileUsageObservation(db, 'not-exhausted');
+      return json({ probe, reconciled: actions, buckets: allBucketStates(db, Date.now()) });
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'probe failed', 500);
     }
   }
 
