@@ -8,6 +8,7 @@ import {
   calibrateTaskqBucket,
   createTaskqTask,
   deleteTaskqTask,
+  enqueueTaskqTemplate,
   fetchTaskqBoard,
   fetchTaskqCapacity,
   fetchTaskqClarifications,
@@ -143,6 +144,14 @@ export function TaskqPage() {
       setTaskqSectionCollapsed({ [v.status]: v.collapsed }),
     onSuccess: (r) => qc.setQueryData(["taskq-section-prefs"], r),
   });
+  const enqueue = useMutation({
+    mutationFn: (id: number) => enqueueTaskqTemplate(id),
+    onSuccess: (r) => {
+      apply(r.board);
+      notify("Template enqueued as a new task", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "enqueue failed", "error"),
+  });
 
   /** Commit a within-status reorder: optimistic local order + a before/after move. */
   const onReorder = (curBoard: TaskqBoard, sectionStatus: TaskqStatus, newIds: number[]) => {
@@ -214,6 +223,7 @@ export function TaskqPage() {
                   onHold={(t) =>
                     status.mutate(t.status === "on_hold" ? { id: t.id, status: "ready" } : { id: t.id, status: "on_hold" })
                   }
+                  onEnqueue={(t) => enqueue.mutate(t.id)}
                 />
               ))
             )}
@@ -261,28 +271,40 @@ function fmtIso(iso: string | null | undefined): string {
   return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+/** Format a recurrence interval (ms) as a human-readable string. */
+function fmtInterval(ms: number): string {
+  if (ms >= 7 * 24 * 3600_000 && ms % (7 * 24 * 3600_000) === 0) return `${ms / (7 * 24 * 3600_000)}w`;
+  if (ms >= 24 * 3600_000 && ms % (24 * 3600_000) === 0) return `${ms / (24 * 3600_000)}d`;
+  if (ms >= 3600_000 && ms % 3600_000 === 0) return `${ms / 3600_000}h`;
+  return `${Math.round(ms / 60_000)}m`;
+}
+
 function TaskCard({
   task,
   onEdit,
   onDelete,
   onHold,
+  onEnqueue,
   dragHandle,
 }: {
   task: TaskqTaskView;
   onEdit: () => void;
   onDelete: () => void;
   onHold: () => void;
+  onEnqueue: () => void;
   /** A drag-grip element (from the section's useDragReorder), when reorderable. */
   dragHandle?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const editable = task.status !== "claimed" && task.status !== "done";
+  const isTemplate = task.is_template === 1;
   const markers = [
     task.model && `model:${task.model}`,
     task.think && `think:${task.think}`,
     task.slug && `id:${task.slug}`,
     task.needs.length > 0 && `needs:${task.needs.join(",")}`,
     task.group_key && `group:${task.group_key}`,
+    task.recur_interval_ms != null && `every:${fmtInterval(task.recur_interval_ms)}`,
     task.recur_n != null && `recur:${task.recur_n}`,
     task.repo && `repo:${task.repo}`,
   ].filter(Boolean) as string[];
@@ -310,6 +332,14 @@ function TaskCard({
         </span>
       );
     }
+    if (task.recur_interval_ms != null && task.recur_next_at != null) {
+      return (
+        <span className="flex flex-wrap gap-x-3">
+          <span>created {fmtIso(task.created_at)}</span>
+          <span>next run {fmtTs(task.recur_next_at)}</span>
+        </span>
+      );
+    }
     return <span>created {fmtIso(task.created_at)}</span>;
   })();
 
@@ -321,6 +351,11 @@ function TaskCard({
           <div className="min-w-0">
             <p className="font-medium">
               <span className="mr-1 text-gray-400">#{task.id}</span>
+              {isTemplate && (
+                <span className="mr-1.5 rounded bg-violet-100 px-1.5 py-0.5 text-xs font-semibold uppercase text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
+                  template
+                </span>
+              )}
               {task.title}
             </p>
             {markers.length > 0 && (
@@ -336,6 +371,11 @@ function TaskCard({
             {task.note && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">note: {task.note}</p>}
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {isTemplate && (
+              <button type="button" onClick={onEnqueue} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                Enqueue
+              </button>
+            )}
             {editable && (
               <>
                 <button type="button" onClick={onEdit} className="text-xs text-accent hover:underline">
@@ -388,6 +428,7 @@ function BoardSection({
   onEdit,
   onDelete,
   onHold,
+  onEnqueue,
 }: {
   status: TaskqStatus;
   tasks: TaskqTaskView[];
@@ -399,6 +440,7 @@ function BoardSection({
   onEdit: (t: TaskqTaskView) => void;
   onDelete: (t: TaskqTaskView) => void;
   onHold: (t: TaskqTaskView) => void;
+  onEnqueue: (t: TaskqTaskView) => void;
 }) {
   const ids = tasks.map((t) => String(t.id));
   const dr = useDragReorder({ ids, axis: "y", onReorder: (next) => onReorder(next.map(Number)) });
@@ -418,7 +460,7 @@ function BoardSection({
         <div {...(canDrag ? dr.containerProps : {})} className="space-y-2">
           {tasks.map((t) => {
             if (!canDrag) {
-              return <TaskCard key={t.id} task={t} onEdit={() => onEdit(t)} onDelete={() => onDelete(t)} onHold={() => onHold(t)} />;
+              return <TaskCard key={t.id} task={t} onEdit={() => onEdit(t)} onDelete={() => onDelete(t)} onHold={() => onHold(t)} onEnqueue={() => onEnqueue(t)} />;
             }
             const idStr = String(t.id);
             const ip = dr.getItemProps(idStr);
@@ -437,6 +479,7 @@ function BoardSection({
                   onEdit={() => onEdit(t)}
                   onDelete={() => onDelete(t)}
                   onHold={() => onHold(t)}
+                  onEnqueue={() => onEnqueue(t)}
                   dragHandle={<DragHandle handleProps={dr.getHandleProps(idStr)} label={`Reorder ${t.title}`} />}
                 />
               </div>
@@ -633,6 +676,32 @@ function TaskqBuilderModal({
   onSaved: (board: TaskqBoard) => void;
 }) {
   const { notify } = useToast();
+  type Scheduling = "oneshot" | "time" | "template";
+
+  function initialScheduling(t?: TaskqTaskView): Scheduling {
+    if (t?.is_template === 1) return "template";
+    if (t?.recur_interval_ms != null) return "time";
+    return "oneshot";
+  }
+
+  function initialIntervalN(t?: TaskqTaskView): string {
+    if (t?.recur_interval_ms == null) return "1";
+    const ms = t.recur_interval_ms;
+    if (ms >= 7 * 24 * 3600_000 && ms % (7 * 24 * 3600_000) === 0) return String(ms / (7 * 24 * 3600_000));
+    if (ms >= 24 * 3600_000 && ms % (24 * 3600_000) === 0) return String(ms / (24 * 3600_000));
+    if (ms >= 3600_000 && ms % 3600_000 === 0) return String(ms / 3600_000);
+    return String(Math.round(ms / 60_000));
+  }
+
+  function initialIntervalUnit(t?: TaskqTaskView): string {
+    if (t?.recur_interval_ms == null) return "hours";
+    const ms = t.recur_interval_ms;
+    if (ms >= 7 * 24 * 3600_000 && ms % (7 * 24 * 3600_000) === 0) return "weeks";
+    if (ms >= 24 * 3600_000 && ms % (24 * 3600_000) === 0) return "days";
+    if (ms >= 3600_000 && ms % 3600_000 === 0) return "hours";
+    return "minutes";
+  }
+
   const [statusV, setStatusV] = useState<TaskqStatus>(task?.status ?? "ready");
   const [title, setTitle] = useState(task?.title ?? "");
   const [body, setBody] = useState(task?.body ?? "");
@@ -642,15 +711,19 @@ function TaskqBuilderModal({
   const [repo, setRepo] = useState(task?.repo ?? "");
   const [needs, setNeeds] = useState<string[]>(task?.needs ?? []);
   const [group, setGroup] = useState(task?.group_key ?? "");
-  const [recurring, setRecurring] = useState(task?.recur_n != null);
-  const [recurN, setRecurN] = useState(task?.recur_n != null ? String(task.recur_n) : "10");
+  const [scheduling, setScheduling] = useState<Scheduling>(initialScheduling(task));
+  const [intervalN, setIntervalN] = useState(initialIntervalN(task));
+  const [intervalUnit, setIntervalUnit] = useState(initialIntervalUnit(task));
   const [note, setNote] = useState(task?.note ?? "");
   const [posAt, setPosAt] = useState<TaskqPosition["at"]>("top");
   const [posAnchor, setPosAnchor] = useState<number | "">(board.tasks[0]?.id ?? "");
 
+  const unitMs: Record<string, number> = { minutes: 60_000, hours: 3600_000, days: 86400_000, weeks: 604800_000 };
+  const intervalMs = scheduling === "time" ? (Number.parseInt(intervalN, 10) || 1) * (unitMs[intervalUnit] ?? 3600_000) : undefined;
+
   const draft: TaskqNewTask = {
     title,
-    status: statusV,
+    status: scheduling === "template" ? "on_hold" : statusV,
     body: body.trim() || undefined,
     model: model || undefined,
     think: think || undefined,
@@ -658,7 +731,8 @@ function TaskqBuilderModal({
     repo: repo.trim() || undefined,
     needs,
     group_key: group.trim() || undefined,
-    recur_n: recurring ? Number.parseInt(recurN, 10) || undefined : undefined,
+    recur_interval_ms: intervalMs,
+    is_template: scheduling === "template",
     note: note.trim() || undefined,
   };
 
@@ -676,7 +750,7 @@ function TaskqBuilderModal({
       return (
         await updateTaskqTask(task.id, {
           title,
-          status: statusV,
+          status: scheduling === "template" ? "on_hold" : statusV,
           body,
           model,
           think,
@@ -685,7 +759,8 @@ function TaskqBuilderModal({
           needs,
           group_key: group,
           note,
-          ...(recurring ? { recur_n: Number.parseInt(recurN, 10) || undefined } : {}),
+          recur_interval_ms: intervalMs ?? null,
+          is_template: scheduling === "template",
         })
       ).board;
     },
@@ -805,14 +880,45 @@ function TaskqBuilderModal({
           <input className={FIELD_CLASS} value={group} onChange={(e) => setGroup(e.target.value)} placeholder="vault" />
         </Field>
 
-        <Field label="Recurring">
-          <div className="flex items-center gap-2">
-            <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="h-4 w-4" />
-            <span className="text-sm text-gray-500">every</span>
-            <input type="number" min={1} className={`${FIELD_CLASS} w-20`} value={recurN} onChange={(e) => setRecurN(e.target.value)} disabled={!recurring} />
-            <span className="text-sm text-gray-500">done</span>
-          </div>
-        </Field>
+        <div className="md:col-span-2">
+          <Field label="Scheduling" hint="Run on a fixed schedule, or save as a template to enqueue manually.">
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-3">
+                {(["oneshot", "time", "template"] as Scheduling[]).map((s) => (
+                  <label key={s} className="flex cursor-pointer items-center gap-1.5 text-sm">
+                    <input type="radio" name="scheduling" value={s} checked={scheduling === s} onChange={() => setScheduling(s)} className="h-4 w-4" />
+                    {s === "oneshot" && "One-shot (run once)"}
+                    {s === "time" && "Recurring schedule"}
+                    {s === "template" && "Saved template (manual enqueue)"}
+                  </label>
+                ))}
+              </div>
+              {scheduling === "time" && (
+                <div className="flex items-center gap-2 pl-6">
+                  <span className="text-sm text-gray-500">every</span>
+                  <input
+                    type="number"
+                    min={1}
+                    className={`${FIELD_CLASS} w-20`}
+                    value={intervalN}
+                    onChange={(e) => setIntervalN(e.target.value)}
+                  />
+                  <select className={`${FIELD_CLASS} w-32`} value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
+                    <option value="minutes">minutes</option>
+                    <option value="hours">hours</option>
+                    <option value="days">days</option>
+                    <option value="weeks">weeks</option>
+                  </select>
+                </div>
+              )}
+              {scheduling === "template" && (
+                <p className="pl-6 text-xs text-gray-400">
+                  The template stays saved; clicking <strong>Enqueue</strong> sends a fresh copy to the worker queue.
+                </p>
+              )}
+            </div>
+          </Field>
+        </div>
         <Field label="Note (why on-hold/blocked)">
           <input className={FIELD_CLASS} value={note} onChange={(e) => setNote(e.target.value)} />
         </Field>

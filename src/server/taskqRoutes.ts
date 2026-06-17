@@ -11,6 +11,7 @@
  *   DELETE /api/taskq/tasks/:id            → { board }
  *   POST   /api/taskq/tasks/:id/status     → { status, note? } → { board }
  *   POST   /api/taskq/tasks/:id/move       → { position } → { board }
+ *   POST   /api/taskq/tasks/:id/enqueue    → clone a template into a ready one-shot → { board, id }
  */
 
 import {
@@ -19,6 +20,7 @@ import {
   calibrateBucket,
   deleteTask,
   getNeeds,
+  getTask,
   listTasks,
   modelAliasFromId,
   moveTask,
@@ -292,6 +294,34 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       return json({ board: board(), clarifications: openClarifications(getTaskqDb()) });
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'answer failed', 400);
+    }
+  }
+
+  // Enqueue: clone a template into a ready one-shot task.
+  const enqm = pathname.match(/^\/api\/taskq\/tasks\/(\d+)\/enqueue$/);
+  if (enqm) {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    const id = Number(enqm[1]);
+    try {
+      const db = getTaskqDb();
+      const tmpl = getTask(db, id);
+      if (!tmpl) return jsonError(`task ${id} not found`, 404);
+      if (!tmpl.is_template) return jsonError('task is not a template', 400);
+      const copy: NewTask = {
+        title: tmpl.title,
+        status: 'ready',
+        body: tmpl.body ?? undefined,
+        model: tmpl.model ?? undefined,
+        think: tmpl.think ?? undefined,
+        repo: tmpl.repo ?? undefined,
+        group_key: tmpl.group_key ?? undefined,
+        note: undefined,
+        is_template: false,
+      };
+      const newId = addTask(db, copy, { at: 'bottom' });
+      return json({ board: board(), id: newId });
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'enqueue failed', 400);
     }
   }
 
