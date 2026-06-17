@@ -382,13 +382,13 @@ function CaptureRow({
         </button>
       </Tooltip>
       {showSharing && (
-        <Tooltip multiline content="Copies this capture as a shareable text string to your clipboard, to paste into someone's "Import string" box. If a seed is set above, the string is AES-encrypted and they need the same seed to import it.">
+        <Tooltip multiline content="Copies this capture as a shareable text string to your clipboard, to paste into someone's &ldquo;Import string&rdquo; box. If a seed is set above, the string is AES-encrypted and they need the same seed to import it.">
           <button type="button" onClick={onCopyString} className={BTN_GHOST_CLASS}>
             Copy string
           </button>
         </Tooltip>
       )}
-      <Tooltip multiline content="Downloads this capture as a shippable .gz bundle file (HTML + screenshots), to inspect elsewhere or load on another machine via "Import capture…".">
+      <Tooltip multiline content='Downloads this capture as a shippable .gz bundle file (HTML + screenshots), to inspect elsewhere or load on another machine via "Import capture…".'>
         <a className={BTN_GHOST_CLASS} href={captureExportUrl(c.id)}>
           ↓ Export
         </a>
