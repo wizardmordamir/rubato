@@ -186,6 +186,13 @@ export interface UiBranding {
   /** Brand name — sets the browser tab `<title>` AND the in-app wordmark (the
    *  sidebar/header text), so the UI says your app's name instead of "rubato". */
   brand?: string;
+  /**
+   * Whether to show the global search bar in the top header. Defaults to `true`.
+   * Set to `false` for minimal apps that don't need content search (e.g. a single-
+   * page QA studio). When false, the header is hidden on desktop (mobile still shows
+   * the hamburger/brand/live-dot drawer control).
+   */
+  showSearch?: boolean;
 }
 
 /**
@@ -253,7 +260,7 @@ function escapeHtml(s: string): string {
 
 /** True if branding actually changes anything (so an empty `ui` is a no-op). */
 function hasBranding(ui?: UiBranding): ui is UiBranding {
-  return !!ui && (!!ui.accent || !!ui.brand);
+  return !!ui && (!!ui.accent || !!ui.brand || ui.showSearch === false);
 }
 
 /**
@@ -286,6 +293,10 @@ export function injectBranding(html: string, ui: UiBranding): string {
     // …and the in-app wordmark: a <meta> the prebuilt chrome reads (see ui appBrand),
     // so the sidebar/header say the friend app's name, not "rubato" — no SPA rebuild.
     const meta = `<meta name="app-brand" content="${brand}">`;
+    out = out.includes('</head>') ? out.replace('</head>', `${meta}</head>`) : `${meta}${out}`;
+  }
+  if (ui.showSearch === false) {
+    const meta = `<meta name="app-search" content="0">`;
     out = out.includes('</head>') ? out.replace('</head>', `${meta}</head>`) : `${meta}${out}`;
   }
   return out;

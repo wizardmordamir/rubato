@@ -7,7 +7,7 @@
 // sidebar no longer carries its own search box. The mobile drawer + hamburger live
 // in App.tsx.
 
-import { type NavGroup, NAV_HUBS, pagesInGroup, SIDEBAR, type UiPage } from "@shared/ui";
+import { type NavGroup, pagesInGroup, SIDEBAR, type UiPage } from "@shared/ui";
 import { useQuery } from "@tanstack/react-query";
 import { type NavEntry, type NavPrefsActions, SideNav as CwipSideNav } from "cwip/react";
 import { Link, useLocation } from "react-router-dom";
@@ -15,7 +15,7 @@ import { fetchUi } from "../api";
 import { appBrand } from "../brand";
 import { Tooltip } from "../components";
 import { IconFileText, IconSliders, IconX } from "../icons";
-import { resolveSidebarEntry } from "../navMeta";
+import { PAGE_ICONS, resolveSidebarEntry } from "../navMeta";
 import { useNavPrefs } from "../navPrefs";
 import { ThemeToggle } from "../ThemeToggle";
 import { useLive } from "../useLive";
@@ -69,12 +69,31 @@ export function SideNav({
 
   // Resolve SIDEBAR → eligible entries (drop entries whose page/hub has nothing
   // enabled); hide/color/active are resolved here, the cwip SideNav orders + hides.
+  // A hub with exactly one enabled page is collapsed to a direct page link so it
+  // doesn't force an unnecessary hub landing page (e.g. a QA app with only Browser).
   const entries: NavEntry[] = [];
   for (const sidebarEntry of SIDEBAR) {
     const r = resolveSidebarEntry(sidebarEntry);
     if (!r) continue;
     if (r.kind === "page" && !enabled[r.id]) continue;
-    if (r.kind === "hub" && !pagesInGroup(r.id as Exclude<NavGroup, "top">).some((p) => enabled[p.key])) continue;
+    if (r.kind === "hub") {
+      const hubPages = pagesInGroup(r.id as Exclude<NavGroup, "top">).filter((p) => enabled[p.key]);
+      if (hubPages.length === 0) continue;
+      if (hubPages.length === 1) {
+        // Only one page in this hub — bypass the hub and link directly to the page.
+        const p = hubPages[0];
+        entries.push({
+          id: p.key,
+          label: p.label,
+          href: p.path,
+          icon: PAGE_ICONS[p.key],
+          active: isActive(p.key, "page", p.path),
+          color: prefs.colors[p.key] ?? p.color,
+          hidden: prefs.hidden.includes(p.key),
+        });
+        continue;
+      }
+    }
     entries.push({
       id: r.id,
       label: r.label,

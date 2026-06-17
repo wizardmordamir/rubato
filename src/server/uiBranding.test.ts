@@ -47,4 +47,13 @@ describe('injectBranding', () => {
   test('empty branding is a no-op', () => {
     expect(injectBranding(HTML, {})).toBe(HTML);
   });
+
+  test('showSearch:false injects the app-search meta', () => {
+    expect(injectBranding(HTML, { showSearch: false })).toContain('<meta name="app-search" content="0">');
+  });
+
+  test('showSearch:true does not inject the app-search meta', () => {
+    expect(injectBranding(HTML, { showSearch: true })).not.toContain('app-search');
+    expect(injectBranding(HTML, { showSearch: true })).toBe(HTML);
+  });
 });

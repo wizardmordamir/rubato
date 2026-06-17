@@ -10,7 +10,7 @@ import type { UiPage } from "@shared/ui";
 import { ScrollToTopButton } from "cwip/react";
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { appBrand } from "../brand";
+import { appBrand, appShowSearch } from "../brand";
 import { AppBreadcrumbs } from "../breadcrumbs";
 import { Tooltip } from "../components";
 import { HeaderSearch } from "../components/HeaderSearch";
@@ -33,11 +33,17 @@ export interface AppShellProps {
   label?: string;
   /** Nav items to show. Omit to use the server-reported page set (rubato default). */
   pages?: UiPage[];
+  /**
+   * Whether to show the global search bar. Defaults to the value injected by the
+   * server (via `<meta name="app-search" content="0">` when false, absent → true).
+   * Pass explicitly to override the meta when building an own SPA.
+   */
+  showSearch?: boolean;
   /** Routed content — the app's `<Routes>`. */
   children: ReactNode;
 }
 
-export function AppShell({ accent, label = appBrand(), pages, children }: AppShellProps) {
+export function AppShell({ accent, label = appBrand(), pages, showSearch = appShowSearch(), children }: AppShellProps) {
   const live = useLive();
 
   // Mobile nav drawer: hidden off-canvas below `md`, always-on static at `md+`.
@@ -73,9 +79,13 @@ export function AppShell({ accent, label = appBrand(), pages, children }: AppShe
       )}
       <SideNav navOpen={navOpen} onClose={closeNav} pages={pages} brand={label} />
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Top bar: the global content-search box (always shown) plus the mobile-only
-            hamburger + brand + live dot (the sidebar carries those on desktop). */}
-        <header className="relative z-50 flex shrink-0 items-center gap-2 border-b border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
+        {/* Top bar: the global content-search box (when enabled) plus the mobile-only
+            hamburger + brand + live dot (the sidebar carries those on desktop). When
+            search is disabled the header has no desktop content, so it hides on md+
+            (still shows on mobile for the drawer controls). */}
+        <header
+          className={`relative z-50 flex shrink-0 items-center gap-2 border-b border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900${showSearch ? "" : " md:hidden"}`}
+        >
           <button
             type="button"
             aria-label="Open navigation"
@@ -88,7 +98,7 @@ export function AppShell({ accent, label = appBrand(), pages, children }: AppShe
           <Tooltip content={`live: ${live}`}>
             <span className={`ml-1 inline-block h-2 w-2 shrink-0 rounded-full md:hidden ${DOT[live]}`} />
           </Tooltip>
-          <HeaderSearch />
+          {showSearch && <HeaderSearch />}
         </header>
         <main className="flex-1 overflow-auto p-4 sm:p-6 md:p-8">
           <ScrollToTopButton />
