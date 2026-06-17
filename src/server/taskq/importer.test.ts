@@ -8,6 +8,8 @@ const SAMPLE = `<!-- legend -->
 ## [ ] (model:sonnet) (think:med) (id:one) ca first ready task
 body one.
 
+<!-- ===== SECTION BANNER that parseTaskBoard would otherwise swallow ===== -->
+
 ## [b] (model:opus) held task
 why held.
 
@@ -40,6 +42,7 @@ describe('importTasksMd', () => {
     expect(first?.model).toBe('sonnet');
     expect(first?.think).toBe('medium'); // 'med' normalized
     expect(first?.repo).toBe('ca'); // inferred from leading token
+    expect(first?.body).toBe('body one.'); // trailing <!-- banner --> trimmed
 
     expect(tasks.find((t) => t.title === 'held task')?.status).toBe('on_hold');
     expect(tasks.find((t) => t.title === 'ai blocked task')?.status).toBe('failed');

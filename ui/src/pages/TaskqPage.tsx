@@ -48,7 +48,12 @@ const STATUS_TONE: Record<TaskqStatus, "neutral" | "accent" | "success" | "error
 };
 
 export function TaskqPage() {
-  const { data, isLoading, isError, error } = useQuery({ queryKey: ["taskq"], queryFn: fetchTaskqBoard });
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["taskq"],
+    queryFn: fetchTaskqBoard,
+    // Poll while work is in flight so claimed/running status shows live.
+    refetchInterval: (q) => (q.state.data?.counts.claimed ? 4000 : false),
+  });
   const [builder, setBuilder] = useState<{ mode: "create" } | { mode: "edit"; task: TaskqTaskView } | null>(null);
   const qc = useQueryClient();
   const { notify } = useToast();

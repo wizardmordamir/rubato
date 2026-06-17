@@ -45,6 +45,18 @@ function statusFor(task: WorkflowTask): TaskStatus | null {
   }
 }
 
+/**
+ * Trim a parsed task body at the first HTML `<!--` banner line. `parseTaskBoard`
+ * ends a body only at the next heading/rule, so a task directly followed by a
+ * `<!-- … -->` section banner swallows it — strip that (and trailing blanks).
+ */
+function cleanBody(body: string): string | undefined {
+  const lines = body.split('\n');
+  const cut = lines.findIndex((l) => l.trimStart().startsWith('<!--'));
+  const kept = (cut === -1 ? lines : lines.slice(0, cut)).join('\n').replace(/\s+$/, '');
+  return kept || undefined;
+}
+
 /** Best-effort repo from a leading `ca `/`ru `/`cwip ` token in the title. */
 function repoFor(title: string): string | undefined {
   const m = title.match(/^\s*(ca|ru|cwip)\b/i);
@@ -79,7 +91,7 @@ export function importTasksMd(db: TaskqDb, markdown: string): ImportResult {
     const draft: NewTask = {
       title: task.title,
       status,
-      body: task.body || undefined,
+      body: cleanBody(task.body),
       slug,
       needs: task.meta.needs,
       group_key: task.meta.group,
