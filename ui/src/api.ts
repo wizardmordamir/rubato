@@ -1583,6 +1583,37 @@ export const answerTaskqClarification = (taskId: number, answer: string) =>
     { answer },
   );
 
+export interface TaskqDrainerStatus {
+  watchdogLoaded: boolean;
+  running: boolean;
+  stopped: boolean;
+}
+export interface TaskqCompletion {
+  task_id: number;
+  title: string;
+  repo: string | null;
+  commit: string | null;
+  ended_at: number;
+  duration_s: number | null;
+  summary: string | null;
+}
+export interface TaskqHistoryResult {
+  recent: TaskqCompletion[];
+  stats: { total: number; totalDurationS: number };
+}
+
+/** Recent completed tasks + aggregates. */
+export const fetchTaskqHistory = () => getJson<TaskqHistoryResult>("/api/taskq/history");
+/** Drainer status (watchdog loaded? running? stop-sentinel set?). */
+export const fetchTaskqDrainer = () => getJson<TaskqDrainerStatus>("/api/taskq/drainer");
+/** Spawn a drain pass now. */
+export const runTaskqDrainer = () => postJson<{ ok: boolean; status: TaskqDrainerStatus }>("/api/taskq/drainer/run", {});
+/** Set the graceful-stop sentinel. */
+export const stopTaskqDrainer = () => postJson<{ ok: boolean; status: TaskqDrainerStatus }>("/api/taskq/drainer/stop", {});
+/** Clear the stop sentinel. */
+export const resumeTaskqDrainer = () =>
+  postJson<{ ok: boolean; status: TaskqDrainerStatus }>("/api/taskq/drainer/resume", {});
+
 // ── Watchdog control + observe ────────────────────────────────────────────────
 
 /** The live watchdog snapshot (config + status + instances + problems + logs + …). */

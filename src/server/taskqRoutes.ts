@@ -32,6 +32,7 @@ import {
 } from 'cwip/taskq';
 import type { TaskqBoard } from '../shared/taskq';
 import { json, jsonError, readJsonBody } from './http';
+import { drainerStatus, runDrainerNow, setDrainerStop, taskqHistory } from './taskq/control';
 import { resolveGateway } from './taskq/triage';
 import { getTaskqDb } from './taskqDb';
 
@@ -91,6 +92,28 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'calibrate failed', 400);
     }
+  }
+
+  // History: recent completed tasks + aggregates.
+  if (pathname === '/api/taskq/history') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    return json(taskqHistory(getTaskqDb()));
+  }
+
+  // Drainer status + control (replaces the old Watchdog tab).
+  if (pathname === '/api/taskq/drainer') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    return json(drainerStatus());
+  }
+  if (pathname === '/api/taskq/drainer/run') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    runDrainerNow();
+    return json({ ok: true, status: drainerStatus() });
+  }
+  if (pathname === '/api/taskq/drainer/stop' || pathname === '/api/taskq/drainer/resume') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    setDrainerStop(pathname.endsWith('/stop'));
+    return json({ ok: true, status: drainerStatus() });
   }
 
   // Input Queue: open clarification gateways + answering one (releases children).

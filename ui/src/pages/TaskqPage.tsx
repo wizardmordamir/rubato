@@ -8,9 +8,14 @@ import {
   deleteTaskqTask,
   fetchTaskqBoard,
   fetchTaskqClarifications,
+  fetchTaskqDrainer,
+  fetchTaskqHistory,
   fetchTaskqUsage,
   moveTaskqTask,
+  resumeTaskqDrainer,
+  runTaskqDrainer,
   setTaskqStatus,
+  stopTaskqDrainer,
   type TaskqBucketState,
   TASKQ_AUTHORABLE_STATUSES,
   TASKQ_MODEL_ALIASES,
@@ -103,6 +108,7 @@ export function TaskqPage() {
         <Badge tone="neutral">Total: {board.total}</Badge>
       </div>
 
+      <DrainerControl />
       <UsagePanel />
       <InputQueuePanel />
 
@@ -138,6 +144,7 @@ export function TaskqPage() {
             </section>
           ))
         )}
+        <HistoryPanel />
       </div>
 
       {builder && (
@@ -516,6 +523,95 @@ function UsagePanel() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Drainer status + control (replaces the old Watchdog tab). */
+function DrainerControl() {
+  const { data } = useQuery({ queryKey: ["taskq-drainer"], queryFn: fetchTaskqDrainer, refetchInterval: 5000 });
+  const qc = useQueryClient();
+  const { notify } = useToast();
+  const run = useMutation({
+    mutationFn: runTaskqDrainer,
+    onSuccess: (r) => {
+      qc.setQueryData(["taskq-drainer"], r.status);
+      notify("Drain pass started", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "failed", "error"),
+  });
+  const stop = useMutation({
+    mutationFn: stopTaskqDrainer,
+    onSuccess: (r) => {
+      qc.setQueryData(["taskq-drainer"], r.status);
+      notify("Graceful stop set — workers exit between tasks", "success");
+    },
+  });
+  const resume = useMutation({
+    mutationFn: resumeTaskqDrainer,
+    onSuccess: (r) => {
+      qc.setQueryData(["taskq-drainer"], r.status);
+      notify("Resumed", "success");
+    },
+  });
+
+  const s = data;
+  const dot = (on: boolean, label: string, tone: string) => (
+    <span className={`flex items-center gap-1 text-xs ${tone}`}>
+      <span className={`inline-block h-2 w-2 rounded-full ${on ? "bg-current" : "bg-gray-300 dark:bg-gray-600"}`} />
+      {label}
+    </span>
+  );
+  return (
+    <div className={`${CARD_CLASS} mb-3 flex flex-wrap items-center justify-between gap-3 p-3`}>
+      <div className="flex flex-wrap items-center gap-4">
+        {dot(!!s?.watchdogLoaded, s?.watchdogLoaded ? "Watchdog loaded" : "Watchdog off", s?.watchdogLoaded ? "text-emerald-600" : "text-gray-400")}
+        {dot(!!s?.running, s?.running ? "Draining now" : "Idle", s?.running ? "text-accent" : "text-gray-400")}
+        {s?.stopped && dot(true, "Stop sentinel set", "text-amber-600")}
+      </div>
+      <div className="flex items-center gap-2">
+        <button type="button" className={BTN_GHOST_CLASS} onClick={() => run.mutate()} disabled={run.isPending || s?.running}>
+          Run now
+        </button>
+        {s?.stopped ? (
+          <button type="button" className={BTN_GHOST_CLASS} onClick={() => resume.mutate()} disabled={resume.isPending}>
+            Resume
+          </button>
+        ) : (
+          <button type="button" className={BTN_GHOST_CLASS} onClick={() => stop.mutate()} disabled={stop.isPending}>
+            Graceful stop
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Completed-task history + simple stats (from the completions table). */
+function HistoryPanel() {
+  const { data } = useQuery({ queryKey: ["taskq-history"], queryFn: fetchTaskqHistory, refetchInterval: 10000 });
+  const recent = data?.recent ?? [];
+  if (recent.length === 0) return null;
+  const mins = Math.round((data?.stats.totalDurationS ?? 0) / 60);
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+        History <span className="text-gray-400">({data?.stats.total} done · {mins}m total)</span>
+      </h3>
+      <div className="space-y-1">
+        {recent.map((c) => (
+          <div key={`${c.task_id}-${c.ended_at}`} className={`${CARD_CLASS} flex items-center justify-between gap-3 p-2 text-xs`}>
+            <span className="min-w-0 truncate">
+              <span className="text-gray-400">#{c.task_id}</span> {c.title}
+            </span>
+            <span className="flex shrink-0 items-center gap-2 text-gray-500">
+              {c.repo && <Badge tone="neutral">{c.repo}</Badge>}
+              {c.commit && <span className="font-mono">{c.commit.slice(0, 7)}</span>}
+              {c.duration_s != null && <span>{Math.round(c.duration_s / 60)}m</span>}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
