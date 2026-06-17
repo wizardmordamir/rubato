@@ -1147,16 +1147,6 @@ const BUCKET_LABELS_SHORT: Record<string, string> = {
   weekly_sonnet: "Sonnet",
 };
 
-const DECISION_TOOLTIPS: Record<string, string> = {
-  Paused:
-    "One or more token buckets are exhausted. The drain will not spawn new workers until capacity recovers. Check the Usage tab for details or wait for the bucket to reset.",
-  Throttled:
-    "Token capacity is low. The drain will use a single worker this pass and prefer lighter models (Haiku/Sonnet) over Opus to conserve tokens.",
-  "Burning expiring":
-    "You have tokens that expire soon. The drain is running at full capacity to use them before they reset.",
-  Normal: "Token capacity is healthy. The drain will run at the configured number of workers.",
-};
-
 const BUCKET_FULL_LABELS: Record<string, string> = {
   session_5h: "5-hour session",
   weekly_total: "weekly total",
@@ -1206,19 +1196,16 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
           {/* Status */}
           <div className="min-w-[140px]">
             <Tooltip multiline content="The scheduling decision the next drain pass will make, based on current token bucket levels. Paused = no workers; Throttled = 1 light-model worker; Burning expiring = full capacity; Normal = full capacity.">
-              <div className="mb-1 cursor-help text-xs font-medium text-gray-500 underline decoration-dotted">Status</div>
+              <div className="mb-1 cursor-help text-xs font-medium uppercase tracking-wide text-gray-500 underline decoration-dotted">Status</div>
             </Tooltip>
             <div className={`font-semibold ${decisionTone}`}>{decisionLabel}</div>
-            <div className="mt-0.5 text-xs text-gray-400">{cap.decision.reason}</div>
-            {DECISION_TOOLTIPS[decisionLabel] && (
-              <div className={`mt-1.5 text-xs ${decisionTone} opacity-80`}>{DECISION_TOOLTIPS[decisionLabel]}</div>
-            )}
+            <div className="mt-0.5 min-w-0 break-words text-xs text-gray-500 dark:text-gray-400">{cap.decision.reason}</div>
           </div>
 
           {/* Worker count */}
           <div className="min-w-[100px]">
             <Tooltip multiline content={`The next drain pass will spawn ${cap.effectiveJobs} worker${cap.effectiveJobs !== 1 ? "s" : ""} (out of ${cap.maxJobs} configured slots). Workers are one-shot processes — they claim a task, run Claude, then exit. They are NOT always-on background processes.${throttled ? ` Throttled from ${cap.maxJobs} because capacity is low.` : ""}`}>
-              <div className="mb-1 cursor-help text-xs font-medium text-gray-500 underline decoration-dotted">Workers (next drain)</div>
+              <div className="mb-1 cursor-help text-xs font-medium uppercase tracking-wide text-gray-500 underline decoration-dotted">Workers (next drain)</div>
             </Tooltip>
             <div className="font-semibold">
               {cap.effectiveJobs}<span className="text-gray-400">/{cap.maxJobs}</span>
@@ -1240,15 +1227,15 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
                   : "Flat mode: all worker slots claim any ready task regardless of the task's model marker. The task's (model:) annotation pins which model the worker will invoke — it does NOT filter which slot picks the task. To switch to Fleet tiers mode, add fleet tier entries in Settings → Fleet tiers."
               }
             >
-              <div className="mb-1 cursor-help text-xs font-medium text-gray-500 underline decoration-dotted">Mode</div>
+              <div className="mb-1 cursor-help text-xs font-medium uppercase tracking-wide text-gray-500 underline decoration-dotted">Mode</div>
             </Tooltip>
             <div className="font-medium">{cap.fleetMode ? "Fleet tiers" : "Flat"}</div>
-            <div className="mt-0.5 text-xs text-gray-400">
-              default: <span className="font-mono">{cap.defaultModel}</span>
+            <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              default: <span className="font-mono text-gray-700 dark:text-gray-300">{cap.defaultModel}</span>
             </div>
             <button
               type="button"
-              className="mt-0.5 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              className="mt-1 text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
               onClick={onGoToSettings}
             >
               {cap.fleetMode ? "Edit tiers ↗" : "Add tiers ↗"}
@@ -1259,7 +1246,7 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
           {cap.buckets.length > 0 && (
             <div className="min-w-[120px]">
               <Tooltip multiline content="Claude API token usage across time windows. Drain behavior adapts automatically: below ~40% a throttle kicks in; near 0% the drain pauses entirely. Buckets reset on their own schedule (shown as '·Xh' remaining). Adjust calibration on the Usage tab.">
-                <div className="mb-1 cursor-help text-xs font-medium text-gray-500 underline decoration-dotted">Token capacity</div>
+                <div className="mb-1 cursor-help text-xs font-medium uppercase tracking-wide text-gray-500 underline decoration-dotted">Token capacity</div>
               </Tooltip>
               <div className="space-y-1">
                 {cap.buckets.map((b) => {
@@ -1532,6 +1519,17 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
   const s = data;
   const interval = configQ.data?.interval ?? null;
 
+  // Track the first moment we see the watchdog loaded — used as a countdown anchor
+  // when lastFireMs is null (watchdog just loaded, drain hasn't fired yet this session).
+  const firstLoadedAt = useRef<number | null>(null);
+  useEffect(() => {
+    if (s?.watchdogLoaded) {
+      if (firstLoadedAt.current === null) firstLoadedAt.current = Date.now();
+    } else {
+      firstLoadedAt.current = null;
+    }
+  }, [s?.watchdogLoaded]);
+
   // Live countdown to the next scheduled tick.
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -1540,7 +1538,11 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
   }, []);
 
   const nextFireAt =
-    s?.lastFireMs != null && interval != null ? s.lastFireMs + interval * 1000 : null;
+    s?.lastFireMs != null && interval != null
+      ? s.lastFireMs + interval * 1000
+      : firstLoadedAt.current != null && interval != null
+        ? firstLoadedAt.current + interval * 1000
+        : null;
   const msUntilNext = nextFireAt != null ? Math.max(0, nextFireAt - now) : null;
   const nextFireTime = nextFireAt != null ? new Date(nextFireAt).toLocaleTimeString() : null;
 
@@ -1550,7 +1552,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
       <div className="mb-3 flex flex-wrap items-start gap-6">
         {/* Scheduler section */}
         <div className="min-w-[140px]">
-          <div className="mb-1.5 text-xs font-medium text-gray-500">Scheduler</div>
+          <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Scheduler</div>
           <Tooltip
             multiline
             content={
@@ -1579,7 +1581,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
 
         {/* Active drain section */}
         <div className="min-w-[160px]">
-          <div className="mb-1.5 text-xs font-medium text-gray-500">Active drain</div>
+          <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Active drain</div>
           <Tooltip
             multiline
             content={
@@ -1620,7 +1622,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
                   </div>
                 </>
               ) : (
-                <div>next auto-tick in ≤{fmtIntervalSec(interval)}</div>
+                <div>fires every <span className="font-medium text-gray-600 dark:text-gray-300">{fmtIntervalSec(interval)}</span></div>
               )}
             </div>
           )}
@@ -1629,7 +1631,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
         {/* Stop sentinel section */}
         {s?.stopped && (
           <div className="min-w-[120px]">
-            <div className="mb-1.5 text-xs font-medium text-gray-500">Stop signal</div>
+            <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Stop signal</div>
             <Tooltip
               multiline
               content="The graceful-stop sentinel (.stop file in ~/.taskq/) is set. Running workers will finish their current task and then exit — no new tasks are claimed. The watchdog will still fire ticks but the drain will exit early when it sees this file. Click 'Resume' to clear it and let workers claim tasks again."
