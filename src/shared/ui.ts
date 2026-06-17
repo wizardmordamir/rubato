@@ -200,6 +200,14 @@ export const UI_PAGES: UiPage[] = [
     description: 'Configure, track & manage the unattended task-queue workflows.',
   },
   {
+    key: 'taskq',
+    path: '/taskq',
+    label: 'Taskq',
+    group: 'top',
+    color: '#6366f1',
+    description: 'SQLite-backed task queue board + builder (v2 orchestrator).',
+  },
+  {
     key: 'orchestration-processing',
     path: '/orchestration-processing',
     label: 'Orchestration Processing',
@@ -328,6 +336,7 @@ export const SIDEBAR: SidebarEntry[] = [
   { kind: 'page', key: 'shell-aliases' },
   { kind: 'page', key: 'vault' },
   { kind: 'page', key: 'orchestration' },
+  { kind: 'page', key: 'taskq' },
   { kind: 'page', key: 'orchestration-processing' },
   { kind: 'page', key: 'customPages' },
   { kind: 'page', key: 'tools' },

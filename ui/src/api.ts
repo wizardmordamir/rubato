@@ -1526,6 +1526,43 @@ export const updateOrchestrationTask = (anchorHeading: string, draft: TaskDraft)
 export const deleteOrchestrationTask = (anchorHeading: string) =>
   sendJson<{ board: WorkflowBoard }>("DELETE", "/api/orchestration/tasks", { anchorHeading });
 
+// ── Taskq (v2 orchestrator — SQLite-backed board CRUD) ───────────────────────
+export type {
+  NewTask as TaskqNewTask,
+  Position as TaskqPosition,
+  TaskPatch as TaskqPatch,
+  TaskqBoard,
+  TaskqTaskView,
+  TaskRow as TaskqRow,
+  TaskStatus as TaskqStatus,
+} from "@shared/taskq";
+export {
+  TASKQ_AUTHORABLE_STATUSES,
+  TASKQ_MODEL_ALIASES,
+  TASKQ_STATUS_LABELS,
+  TASKQ_STATUSES,
+  TASKQ_THINK_LEVELS,
+} from "@shared/taskq";
+import type { NewTask, Position, TaskPatch, TaskqBoard, TaskStatus } from "@shared/taskq";
+
+/** The whole board (tasks + per-status counts). */
+export const fetchTaskqBoard = () => getJson<TaskqBoard>("/api/taskq");
+/** Create a task at a position (default top); returns the new board + id. */
+export const createTaskqTask = (draft: NewTask, position?: Position) =>
+  postJson<{ board: TaskqBoard; id: number }>("/api/taskq/tasks", { draft, position });
+/** Patch a task by id. */
+export const updateTaskqTask = (id: number, patch: TaskPatch) =>
+  patchJson<{ board: TaskqBoard }>(`/api/taskq/tasks/${id}`, { patch });
+/** Delete a task by id. */
+export const deleteTaskqTask = (id: number) =>
+  sendJson<{ board: TaskqBoard }>("DELETE", `/api/taskq/tasks/${id}`, {});
+/** Set a task's status (+ optional note). */
+export const setTaskqStatus = (id: number, status: TaskStatus, note?: string) =>
+  postJson<{ board: TaskqBoard }>(`/api/taskq/tasks/${id}/status`, { status, note });
+/** Re-position a task. */
+export const moveTaskqTask = (id: number, position: Position) =>
+  postJson<{ board: TaskqBoard }>(`/api/taskq/tasks/${id}/move`, { position });
+
 // ── Watchdog control + observe ────────────────────────────────────────────────
 
 /** The live watchdog snapshot (config + status + instances + problems + logs + …). */

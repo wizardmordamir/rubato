@@ -108,6 +108,7 @@ import { json, jsonError, readJsonBody } from './http';
 import { handleLinksApi } from './linksRoutes';
 import { handleShellAliasApi } from './shellAliasRoutes';
 import { handleOrchestrationApi } from './orchestrationRoutes';
+import { handleTaskqApi } from './taskqRoutes';
 import { handlePipelineApi } from './pipelineRoutes';
 import { handlePlansApi } from './plansRoutes';
 import { handleRallyApi } from './rallyRoutes';
@@ -462,6 +463,11 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
   // Tasks_Completed.md history, runs/*.jsonl, + allowlisted config/doc editor).
   if (pathname === '/api/orchestration' || pathname.startsWith('/api/orchestration/')) {
     return handleOrchestrationApi(pathname, req);
+  }
+
+  // Taskq (v2 orchestrator): SQLite-backed task board CRUD (cwip/taskq engine).
+  if (pathname === '/api/taskq' || pathname.startsWith('/api/taskq/')) {
+    return handleTaskqApi(pathname, req);
   }
 
   // Dashboard (per-app status aggregation + tagging).

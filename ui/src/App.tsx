@@ -22,6 +22,7 @@ import { ShellAliasesPage } from "./pages/ShellAliasesPage";
 import { RequestsMergedPage } from "./pages/merged/RequestsMergedPage";
 import { RunsMergedPage } from "./pages/merged/RunsMergedPage";
 import { OrchestrationPage } from "./pages/OrchestrationPage";
+import { TaskqPage } from "./pages/TaskqPage";
 import { OrchestrationProcessingPage } from "./pages/OrchestrationProcessingPage";
 import { PagesPage } from "./pages/Pages/PagesPage";
 import { PipelinesPage } from "./pages/PipelinesPage";
@@ -70,6 +71,7 @@ const PAGE_ELEMENTS: Record<string, ReactNode> = {
   "shell-aliases": <ShellAliasesPage />,
   vault: <VaultPage />,
   orchestration: <OrchestrationPage />,
+  taskq: <TaskqPage />,
   "orchestration-processing": <OrchestrationProcessingPage />,
   customPages: <PagesPage />,
   tools: <ToolsPage />,
