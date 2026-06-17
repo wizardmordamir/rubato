@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DragHandle, DropIndicator, ModalShell, useDragReorder } from "cwip/react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   answerTaskqClarification,
   calibrateTaskqBucket,
@@ -10,10 +11,12 @@ import {
   fetchTaskqClarifications,
   fetchTaskqDrainer,
   fetchTaskqHistory,
+  fetchTaskqSectionPrefs,
   fetchTaskqUsage,
   moveTaskqTask,
   resumeTaskqDrainer,
   runTaskqDrainer,
+  setTaskqSectionCollapsed,
   setTaskqStatus,
   stopTaskqDrainer,
   type TaskqBucketState,
@@ -93,6 +96,10 @@ export function TaskqPage() {
     // Poll while work is in flight so claimed/running status shows live.
     refetchInterval: (q) => (q.state.data?.counts.claimed ? 4000 : false),
   });
+  const { data: sectionPrefsData } = useQuery({
+    queryKey: ["taskq-section-prefs"],
+    queryFn: fetchTaskqSectionPrefs,
+  });
   const [builder, setBuilder] = useState<{ mode: "create" } | { mode: "edit"; task: TaskqTaskView } | null>(null);
   const [tab, setTab] = useState<TaskqTab>("board");
   const qc = useQueryClient();
@@ -122,6 +129,11 @@ export function TaskqPage() {
       qc.invalidateQueries({ queryKey: ["taskq"] }); // revert optimistic order
     },
   });
+  const toggleCollapse = useMutation({
+    mutationFn: (v: { status: TaskqStatus; collapsed: boolean }) =>
+      setTaskqSectionCollapsed({ [v.status]: v.collapsed }),
+    onSuccess: (r) => qc.setQueryData(["taskq-section-prefs"], r),
+  });
 
   /** Commit a within-status reorder: optimistic local order + a before/after move. */
   const onReorder = (curBoard: TaskqBoard, sectionStatus: TaskqStatus, newIds: number[]) => {
@@ -144,6 +156,7 @@ export function TaskqPage() {
   if (isError)
     return <Alert tone="error">Failed to load: {error instanceof Error ? error.message : "unknown error"}</Alert>;
   const board = data as TaskqBoard;
+  const sectionPrefs = sectionPrefsData?.prefs ?? {};
 
   return (
     <div className="flex h-full flex-col">
@@ -172,7 +185,7 @@ export function TaskqPage() {
             </div>
             <InputQueuePanel />
             {board.total === 0 ? (
-              <p className="text-gray-400">No tasks yet — add one with “New task”.</p>
+              <p className="text-gray-400">No tasks yet — add one with "New task".</p>
             ) : (
               TASKQ_STATUSES.filter((s) => board.tasks.some((t) => t.status === s)).map((s) => (
                 <BoardSection
@@ -181,6 +194,8 @@ export function TaskqPage() {
                   tasks={board.tasks.filter((t) => t.status === s)}
                   count={board.counts[s]}
                   reorderable={REORDERABLE.has(s)}
+                  collapsed={!!sectionPrefs[s]}
+                  onToggleCollapse={() => toggleCollapse.mutate({ status: s, collapsed: !sectionPrefs[s] })}
                   onReorder={(ids) => onReorder(board, s, ids)}
                   onEdit={(t) => setBuilder({ mode: "edit", task: t })}
                   onDelete={async (t) => {
@@ -222,6 +237,18 @@ export function TaskqPage() {
   );
 }
 
+/** Format an epoch-ms timestamp as a short local date+time string. */
+function fmtTs(ms: number | null | undefined): string {
+  if (ms == null) return "—";
+  return new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Format an ISO timestamp string (from the tasks table) as a short date+time. */
+function fmtIso(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function TaskCard({
   task,
   onEdit,
@@ -247,6 +274,33 @@ function TaskCard({
     task.recur_n != null && `recur:${task.recur_n}`,
     task.repo && `repo:${task.repo}`,
   ].filter(Boolean) as string[];
+
+  // Time metadata row varies by status.
+  const timeMeta: React.ReactNode = (() => {
+    if (task.status === "claimed" && task.claimed_at != null) {
+      return (
+        <span className="flex flex-wrap gap-x-3">
+          <span>created {fmtIso(task.created_at)}</span>
+          <span>started {fmtTs(task.claimed_at)}</span>
+          <span>running {fmtDur(Date.now() - task.claimed_at)}</span>
+        </span>
+      );
+    }
+    if (task.status === "done") {
+      const durStr = task.duration_s != null ? `${Math.round(task.duration_s / 60)}m` : null;
+      return (
+        <span className="flex flex-wrap gap-x-3">
+          <span>created {fmtIso(task.created_at)}</span>
+          {task.started_at != null && <span>started {fmtTs(task.started_at)}</span>}
+          {task.ended_at != null && <span>done {fmtTs(task.ended_at)}</span>}
+          {durStr && <span>took {durStr}</span>}
+          {task.commit && <span className="font-mono">{task.commit.slice(0, 7)}</span>}
+        </span>
+      );
+    }
+    return <span>created {fmtIso(task.created_at)}</span>;
+  })();
+
   return (
     <div className={`group ${CARD_CLASS} flex gap-2 p-3`}>
       {dragHandle}
@@ -266,6 +320,7 @@ function TaskCard({
                 ))}
               </div>
             )}
+            <div className="mt-1 text-xs text-gray-400">{timeMeta}</div>
             {task.note && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">note: {task.note}</p>}
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -284,15 +339,25 @@ function TaskCard({
             )}
           </div>
         </div>
-        {task.body && (
+        {(task.body || (task.status === "done" && task.summary)) && (
           <button type="button" onClick={() => setOpen((o) => !o)} className="mt-2 text-xs text-accent hover:underline">
             {open ? "Hide details" : "Show details"}
           </button>
         )}
-        {open && task.body && (
-          <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-gray-50 p-2 text-xs text-gray-600 dark:bg-gray-950 dark:text-gray-300">
-            {task.body}
-          </pre>
+        {open && (
+          <div className="mt-2 space-y-2">
+            {task.body && (
+              <pre className="whitespace-pre-wrap rounded-lg bg-gray-50 p-2 text-xs text-gray-600 dark:bg-gray-950 dark:text-gray-300">
+                {task.body}
+              </pre>
+            )}
+            {task.status === "done" && task.summary && (
+              <div className="rounded-lg bg-emerald-50 p-2 dark:bg-emerald-950/40">
+                <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">AI summary</p>
+                <pre className="whitespace-pre-wrap text-xs text-emerald-800 dark:text-emerald-300">{task.summary}</pre>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -305,6 +370,8 @@ function BoardSection({
   tasks,
   count,
   reorderable,
+  collapsed,
+  onToggleCollapse,
   onReorder,
   onEdit,
   onDelete,
@@ -314,6 +381,8 @@ function BoardSection({
   tasks: TaskqTaskView[];
   count: number;
   reorderable: boolean;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
   onReorder: (ids: number[]) => void;
   onEdit: (t: TaskqTaskView) => void;
   onDelete: (t: TaskqTaskView) => void;
@@ -321,47 +390,54 @@ function BoardSection({
 }) {
   const ids = tasks.map((t) => String(t.id));
   const dr = useDragReorder({ ids, axis: "y", onReorder: (next) => onReorder(next.map(Number)) });
-  const canDrag = reorderable && tasks.length > 1;
+  const canDrag = reorderable && tasks.length > 1 && !collapsed;
   return (
     <section>
-      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+      <button
+        type="button"
+        onClick={onToggleCollapse}
+        className="mb-2 flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+      >
+        <span className={`text-xs transition-transform ${collapsed ? "" : "rotate-90"}`}>▶</span>
         {TASKQ_STATUS_LABELS[status]} <span className="text-gray-400">({count})</span>
-        {canDrag && <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder priority</span>}
-      </h3>
-      <div {...(canDrag ? dr.containerProps : {})} className="space-y-2">
-        {tasks.map((t) => {
-          if (!canDrag) {
-            return <TaskCard key={t.id} task={t} onEdit={() => onEdit(t)} onDelete={() => onDelete(t)} onHold={() => onHold(t)} />;
-          }
-          const idStr = String(t.id);
-          const ip = dr.getItemProps(idStr);
-          return (
-            <div
-              key={t.id}
-              data-drag-id={ip["data-drag-id"]}
-              style={ip.style}
-              onClickCapture={ip.onClickCapture}
-              className={`relative ${ip.isDragging ? "opacity-70" : ""}`}
-            >
-              {ip.insertBefore && <DropIndicator orientation="horizontal" side="start" />}
-              {ip.insertAfter && <DropIndicator orientation="horizontal" side="end" />}
-              <TaskCard
-                task={t}
-                onEdit={() => onEdit(t)}
-                onDelete={() => onDelete(t)}
-                onHold={() => onHold(t)}
-                dragHandle={<DragHandle handleProps={dr.getHandleProps(idStr)} label={`Reorder ${t.title}`} />}
-              />
-            </div>
-          );
-        })}
-      </div>
+        {!collapsed && canDrag && <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder priority</span>}
+      </button>
+      {!collapsed && (
+        <div {...(canDrag ? dr.containerProps : {})} className="space-y-2">
+          {tasks.map((t) => {
+            if (!canDrag) {
+              return <TaskCard key={t.id} task={t} onEdit={() => onEdit(t)} onDelete={() => onDelete(t)} onHold={() => onHold(t)} />;
+            }
+            const idStr = String(t.id);
+            const ip = dr.getItemProps(idStr);
+            return (
+              <div
+                key={t.id}
+                data-drag-id={ip["data-drag-id"]}
+                style={ip.style}
+                onClickCapture={ip.onClickCapture}
+                className={`relative ${ip.isDragging ? "opacity-70" : ""}`}
+              >
+                {ip.insertBefore && <DropIndicator orientation="horizontal" side="start" />}
+                {ip.insertAfter && <DropIndicator orientation="horizontal" side="end" />}
+                <TaskCard
+                  task={t}
+                  onEdit={() => onEdit(t)}
+                  onDelete={() => onDelete(t)}
+                  onHold={() => onHold(t)}
+                  dragHandle={<DragHandle handleProps={dr.getHandleProps(idStr)} label={`Reorder ${t.title}`} />}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
 
 /** Multi-select for task dependencies (`needs:`) — pick by id + title from a
- *  searchable dropdown (with a body preview on hover), or type a custom id. */
+ *  searchable dropdown rendered in a portal so it's never clipped by the modal. */
 function NeedsSelect({
   board,
   value,
@@ -376,6 +452,9 @@ function NeedsSelect({
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [custom, setCustom] = useState("");
+  const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
   const options = board.tasks.filter((t) => t.slug && t.id !== excludeId);
   const f = filter.trim().toLowerCase();
   const filtered = f ? options.filter((o) => `${o.slug} ${o.title}`.toLowerCase().includes(f)) : options;
@@ -386,39 +465,61 @@ function NeedsSelect({
       setCustom("");
     }
   };
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className={`${FIELD_CLASS} flex min-h-[2.4rem] flex-wrap items-center gap-1 text-left`}
-      >
-        {value.length === 0 ? (
-          <span className="text-gray-400">select dependencies…</span>
-        ) : (
-          value.map((s) => (
-            <span key={s} className="inline-flex items-center gap-1 rounded bg-accent/15 px-1.5 py-0.5 text-xs text-accent">
-              {s}
-              <span
-                role="button"
-                tabIndex={-1}
-                aria-label={`remove ${s}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggle(s);
-                }}
-                className="cursor-pointer hover:opacity-70"
-              >
-                ✕
-              </span>
-            </span>
-          ))
-        )}
-      </button>
-      {open && (
+
+  const openDropdown = useCallback(() => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      // Position below button; if close to bottom of screen, flip up.
+      const spaceBelow = window.innerHeight - r.bottom;
+      const dropHeight = Math.min(320, window.innerHeight * 0.5);
+      const top = spaceBelow >= dropHeight ? r.bottom + 4 : r.top - dropHeight - 4;
+      setDropRect({ top, left: r.left, width: r.width });
+    }
+    setOpen(true);
+    setFilter("");
+  }, []);
+
+  // Reposition on scroll/resize while open.
+  useEffect(() => {
+    if (!open) return;
+    const update = () => {
+      if (btnRef.current) {
+        const r = btnRef.current.getBoundingClientRect();
+        const spaceBelow = window.innerHeight - r.bottom;
+        const dropHeight = Math.min(320, window.innerHeight * 0.5);
+        const top = spaceBelow >= dropHeight ? r.bottom + 4 : r.top - dropHeight - 4;
+        setDropRect({ top, left: r.left, width: r.width });
+      }
+    };
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [open]);
+
+  const dropdown = open && dropRect
+    ? createPortal(
         <>
-          <button type="button" aria-label="close dropdown" className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
-          <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-lg border border-gray-200 bg-white p-2 shadow-lg dark:border-gray-700 dark:bg-gray-900">
+          <button
+            type="button"
+            aria-label="close dropdown"
+            className="fixed inset-0 cursor-default"
+            style={{ zIndex: 9998 }}
+            onClick={() => setOpen(false)}
+          />
+          <div
+            className="overflow-auto rounded-lg border border-gray-200 bg-white p-2 shadow-lg dark:border-gray-700 dark:bg-gray-900"
+            style={{
+              position: "fixed",
+              zIndex: 9999,
+              top: dropRect.top,
+              left: dropRect.left,
+              width: Math.max(dropRect.width, 300),
+              maxHeight: Math.min(320, window.innerHeight * 0.5),
+            }}
+          >
             {/* biome-ignore lint/a11y/noAutofocus: focusing the filter on open is the intended UX */}
             <input autoFocus className={FIELD_CLASS} placeholder="filter by id or title…" value={filter} onChange={(e) => setFilter(e.target.value)} />
             <div className="mt-2 space-y-0.5">
@@ -426,16 +527,18 @@ function NeedsSelect({
                 <label
                   key={o.id}
                   title={o.body || undefined}
-                  className="flex cursor-pointer items-start gap-2 rounded p-1 hover:bg-gray-50 dark:hover:bg-gray-800"
+                  className="flex cursor-pointer items-start gap-2 rounded p-1.5 hover:bg-gray-50 dark:hover:bg-gray-800"
                 >
                   <input
                     type="checkbox"
                     checked={value.includes(o.slug as string)}
                     onChange={() => toggle(o.slug as string)}
-                    className="mt-1 h-4 w-4 shrink-0"
+                    className="mt-0.5 h-4 w-4 shrink-0"
                   />
                   <span className="min-w-0">
-                    <span className="font-mono text-xs text-accent">{o.slug}</span> <span className="text-sm">{o.title}</span>
+                    <span className="font-mono text-xs text-accent">{o.slug}</span>
+                    {" "}
+                    <span className="text-sm">{o.title}</span>
                     {o.body && <span className="block truncate text-xs text-gray-400">{o.body}</span>}
                   </span>
                 </label>
@@ -464,8 +567,42 @@ function NeedsSelect({
               </button>
             </div>
           </div>
-        </>
-      )}
+        </>,
+        document.body,
+      )
+    : null;
+
+  return (
+    <div className="relative">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={open ? () => setOpen(false) : openDropdown}
+        className={`${FIELD_CLASS} flex min-h-[2.4rem] flex-wrap items-center gap-1 text-left`}
+      >
+        {value.length === 0 ? (
+          <span className="text-gray-400">select dependencies…</span>
+        ) : (
+          value.map((s) => (
+            <span key={s} className="inline-flex items-center gap-1 rounded bg-accent/15 px-1.5 py-0.5 text-xs text-accent">
+              {s}
+              <span
+                role="button"
+                tabIndex={-1}
+                aria-label={`remove ${s}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggle(s);
+                }}
+                className="cursor-pointer hover:opacity-70"
+              >
+                ✕
+              </span>
+            </span>
+          ))
+        )}
+      </button>
+      {dropdown}
     </div>
   );
 }
@@ -870,7 +1007,7 @@ function InstancesPanel() {
         </div>
       )}
       <p className="mt-2 text-xs text-gray-400">
-        Release returns a task to “ready” (drops the lease). To stop ALL work, use Graceful stop above. To cap how
+        Release returns a task to "ready" (drops the lease). To stop ALL work, use Graceful stop above. To cap how
         many run at once, set Jobs / fleet tiers in Settings.
       </p>
     </section>

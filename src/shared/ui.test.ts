@@ -17,5 +17,5 @@ test('resolvePages enables all pages with no config and respects an explicit off
 
 test('resolvePages propagates merged-page on to its parent', () => {
   // `services` is mergedInto `requests` — an explicit on for services enables requests.
-  expect(resolvePages({ pages: { requests: false, services: true } })['requests']).toBe(true);
+  expect(resolvePages({ pages: { requests: false, services: true } }).requests).toBe(true);
 });

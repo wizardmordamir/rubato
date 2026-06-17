@@ -1679,6 +1679,12 @@ export const setTaskqWatchdog = (action: "load" | "unload") =>
 /** Set the watchdog tick interval (seconds). */
 export const setTaskqInterval = (seconds: number) =>
   postJson<{ ok: boolean; out: string; interval: number }>("/api/taskq/drainer/interval", { seconds });
+/** Get persisted board section collapse state. */
+export const fetchTaskqSectionPrefs = () =>
+  getJson<{ prefs: Record<string, boolean> }>("/api/taskq/section-prefs");
+/** Patch one or more board section collapse states. */
+export const setTaskqSectionCollapsed = (patch: Record<string, boolean>) =>
+  postJson<{ prefs: Record<string, boolean> }>("/api/taskq/section-prefs", patch);
 
 // ── Watchdog control + observe ────────────────────────────────────────────────
 

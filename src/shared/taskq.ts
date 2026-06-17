@@ -8,9 +8,27 @@ import type { TaskRow, TaskStatus } from 'cwip/taskq';
 
 export type { BucketState, NewTask, OpenClarification, Position, TaskPatch, TaskRow, TaskStatus, ThinkLevel } from 'cwip/taskq';
 
-/** A task row plus its resolved `needs:` slugs. */
+/** A task row plus its resolved `needs:` slugs and optional runtime data. */
 export interface TaskqTaskView extends TaskRow {
   needs: string[];
+  /** For claimed tasks: epoch-ms when the lease was taken. */
+  claimed_at?: number | null;
+  /** For done tasks: epoch-ms when the run started. */
+  started_at?: number | null;
+  /** For done tasks: epoch-ms when the run ended. */
+  ended_at?: number | null;
+  /** For done tasks: run duration in seconds. */
+  duration_s?: number | null;
+  /** For done tasks: AI-generated completion summary. */
+  summary?: string | null;
+  /** For done tasks: git commit sha. */
+  commit?: string | null;
+}
+
+/** Persisted UI preferences for a board section (collapse state). */
+export interface TaskqSectionPref {
+  status: TaskStatus;
+  collapsed: boolean;
 }
 
 /** The whole board: every task (priority order) + per-status counts. */

@@ -47,11 +47,40 @@ import {
 } from './taskq/control';
 import { resolveGateway } from './taskq/triage';
 import { getTaskqDb } from './taskqDb';
+import { getUiPref, setUiPref } from './db';
 
-/** Rebuild the whole board (tasks + needs + per-status counts). */
+const SECTION_PREFS_KEY = 'taskq_section_collapse';
+
+/** Rebuild the whole board (tasks + needs + per-status counts + runtime data). */
 function board(): TaskqBoard {
   const db = getTaskqDb();
-  const tasks = listTasks(db).map((t) => ({ ...t, needs: getNeeds(db, t.id) }));
+
+  // Lease data for claimed tasks (claimed_at keyed by task_id).
+  const leases = db.query(`SELECT task_id, claimed_at FROM leases`).all() as { task_id: number; claimed_at: number }[];
+  const leaseByTaskId = new Map(leases.map((l) => [l.task_id, l.claimed_at]));
+
+  // Most-recent completion row per done task.
+  type CompRow = { task_id: number; started_at: number | null; ended_at: number; duration_s: number | null; summary: string | null; commit: string | null };
+  const completions = db
+    .query(`SELECT task_id, started_at, ended_at, duration_s, summary, "commit" FROM completions ORDER BY ended_at DESC`)
+    .all() as CompRow[];
+  const completionByTaskId = new Map<number, CompRow>();
+  for (const c of completions) {
+    if (!completionByTaskId.has(c.task_id)) completionByTaskId.set(c.task_id, c);
+  }
+
+  const tasks = listTasks(db).map((t) => {
+    const base = { ...t, needs: getNeeds(db, t.id) };
+    if (t.status === 'claimed') {
+      return { ...base, claimed_at: leaseByTaskId.get(t.id) ?? null };
+    }
+    if (t.status === 'done') {
+      const c = completionByTaskId.get(t.id);
+      if (c) return { ...base, started_at: c.started_at, ended_at: c.ended_at, duration_s: c.duration_s, summary: c.summary, commit: c.commit };
+    }
+    return base;
+  });
+
   const counts = Object.fromEntries(TASK_STATUSES.map((s) => [s, 0])) as Record<TaskStatus, number>;
   for (const t of tasks) counts[t.status] = (counts[t.status] ?? 0) + 1;
   return { tasks, counts, total: tasks.length };
@@ -171,6 +200,23 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
     if (req.method !== 'POST') return jsonError('use POST', 405);
     releaseLease(getTaskqDb(), Number(rel[1]));
     return json({ board: board(), instances: liveInstances(getTaskqDb()) });
+  }
+
+  // Section collapse preferences: GET returns Record<status, boolean>, POST accepts a patch.
+  if (pathname === '/api/taskq/section-prefs') {
+    if (req.method === 'GET') {
+      const raw = getUiPref(SECTION_PREFS_KEY);
+      return json({ prefs: raw ? JSON.parse(raw) : {} });
+    }
+    if (req.method === 'POST') {
+      const body = await readJsonBody<Record<string, boolean>>(req);
+      if (!body || typeof body !== 'object') return jsonError('a prefs object is required', 400);
+      const current = JSON.parse(getUiPref(SECTION_PREFS_KEY) ?? '{}') as Record<string, boolean>;
+      const merged = { ...current, ...body };
+      setUiPref(SECTION_PREFS_KEY, JSON.stringify(merged));
+      return json({ prefs: merged });
+    }
+    return jsonError('use GET or POST', 405);
   }
 
   // Tail the watchdog log.

@@ -557,7 +557,28 @@ export function getDb(): Database {
       updated_at INTEGER NOT NULL
     )
   `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS ui_prefs (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
   return db;
+}
+
+/** Get a UI preference by key (returns null if not set). */
+export function getUiPref(key: string): string | null {
+  const row = getDb().query<{ value: string }, [string]>(`SELECT value FROM ui_prefs WHERE key = ?`).get(key);
+  return row?.value ?? null;
+}
+
+/** Set a UI preference (upsert). */
+export function setUiPref(key: string, value: string): void {
+  getDb()
+    .query<unknown, [string, string]>(
+      `INSERT INTO ui_prefs (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run(key, value);
 }
 
 interface RunRow {
