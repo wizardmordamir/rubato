@@ -14,6 +14,8 @@
 
 import {
   addTask,
+  allBucketStates,
+  calibrateBucket,
   deleteTask,
   getNeeds,
   listTasks,
@@ -25,6 +27,7 @@ import {
   TASK_STATUSES,
   type TaskStatus,
   updateTask,
+  USAGE_BUCKETS,
 } from 'cwip/taskq';
 import type { TaskqBoard } from '../shared/taskq';
 import { json, jsonError, readJsonBody } from './http';
@@ -58,6 +61,33 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       return json({ board: board(), id });
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'add failed', 400);
+    }
+  }
+
+  // Usage telemetry: GET current bucket capacities; POST a manual calibration.
+  if (pathname === '/api/taskq/usage') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    return json({ buckets: allBucketStates(getTaskqDb(), Date.now()) });
+  }
+  if (pathname === '/api/taskq/usage/calibrate') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    const body = await readJsonBody<{ key?: string; consumedFraction?: number; limitUnits?: number; resetAt?: number }>(req);
+    if (!body?.key || !(USAGE_BUCKETS as readonly string[]).includes(body.key)) {
+      return jsonError(`key must be one of ${USAGE_BUCKETS.join(', ')}`, 400);
+    }
+    if (typeof body.consumedFraction !== 'number' || body.consumedFraction < 0 || body.consumedFraction > 1) {
+      return jsonError('consumedFraction must be 0–1', 400);
+    }
+    try {
+      calibrateBucket(getTaskqDb(), body.key, {
+        consumedFraction: body.consumedFraction,
+        at: Date.now(),
+        limitUnits: body.limitUnits,
+        resetAt: body.resetAt,
+      });
+      return json({ buckets: allBucketStates(getTaskqDb(), Date.now()) });
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'calibrate failed', 400);
     }
   }
 

@@ -9,7 +9,17 @@
  * fake and the real `claude -p` executor lives in `claudeExecutor.ts`.
  */
 
-import { claimNext, completeTask, type ClaimFilters, failTask, heartbeat, reapExpired, type TaskqDb, type TaskRow } from 'cwip/taskq';
+import {
+  claimNext,
+  type ClaimFilters,
+  completeTask,
+  failTask,
+  heartbeat,
+  reapExpired,
+  recordRun,
+  type TaskqDb,
+  type TaskRow,
+} from 'cwip/taskq';
 
 /** What a worker did with a task. */
 export interface TaskResult {
@@ -18,6 +28,8 @@ export interface TaskResult {
   summary?: string;
   /** Failure reason (when !ok) — stamped on the task's `note`. */
   reason?: string;
+  /** Output tokens the run consumed (recorded into the usage ledger when known). */
+  outputTokens?: number;
 }
 
 /** Runs one assigned task to completion (spawn an agent, etc.). */
@@ -109,6 +121,7 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
         if (res.ok) {
           const durationS = Math.round((now() - startedAt) / 1000);
           completeTask(db, task.id, { commit: res.commit, summary: res.summary, startedAt, durationS }, now());
+          if (res.outputTokens) recordRun(db, { at: now(), model: task.model, outputTokens: res.outputTokens });
           summary.completed++;
           emit({ type: 'completed', worker: index, taskId: task.id, durationS });
         } else {

@@ -13,7 +13,7 @@
 
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type ClaimFilters, getNeeds, listTasks, renderTasksMarkdown, taskqHome } from 'cwip/taskq';
+import { allBucketStates, type ClaimFilters, getNeeds, listTasks, renderTasksMarkdown, scheduleDecision, taskqHome } from 'cwip/taskq';
 import { getTaskqDb } from '../server/taskqDb';
 import { loadTaskqConfig } from '../server/taskq/config';
 import { dryRunExecutor, makeClaudeExecutor } from '../server/taskq/claudeExecutor';
@@ -53,10 +53,20 @@ async function main(): Promise<void> {
   if (config.fleet?.length) {
     for (const tier of config.fleet) for (let i = 0; i < tier.jobs; i++) perWorker.push({ models: tier.models });
   }
-  const jobs = perWorker.length || config.jobs;
+  const maxJobs = perWorker.length || config.jobs;
+
+  // Token-aware scheduling: throttle/pause based on current capacity.
+  const decision = scheduleDecision(allBucketStates(db, Date.now()), { maxJobs, baseJobs: config.jobs });
+  if (decision.paused) {
+    process.stdout.write(`taskq drain: PAUSED — ${decision.reason}\n`);
+    return;
+  }
+  const jobs = Math.min(maxJobs, decision.recommendedJobs);
 
   const stopFile = join(taskqHome(), '.stop');
-  process.stdout.write(`taskq drain: ${jobs} worker(s)${dryRun ? ' [DRY RUN]' : ''}, db=${taskqHome()}\n`);
+  process.stdout.write(
+    `taskq drain: ${jobs}/${maxJobs} worker(s)${dryRun ? ' [DRY RUN]' : ''} — ${decision.reason}${decision.preferLight ? ' (prefer light)' : ''}, db=${taskqHome()}\n`,
+  );
 
   const summary = await runDrain(db, {
     jobs,

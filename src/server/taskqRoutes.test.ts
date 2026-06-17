@@ -68,4 +68,18 @@ describe('taskq routes', () => {
     const res = await call('POST', `/api/taskq/tasks/${id}/status`, { status: 'bogus' });
     expect(res.status).toBe(400);
   });
+
+  test('usage: GET buckets + calibrate', async () => {
+    const buckets = (await (await call('GET', '/api/taskq/usage')).json()) as { buckets: { key: string; fraction: number }[] };
+    expect(buckets.buckets.length).toBe(3);
+
+    const cal = await call('POST', '/api/taskq/usage/calibrate', { key: 'session_5h', consumedFraction: 0.75, resetAt: Date.now() + 3600_000 });
+    expect(cal.status).toBe(200);
+    const after = (await cal.json()) as { buckets: { key: string; fraction: number }[] };
+    const s = after.buckets.find((b) => b.key === 'session_5h');
+    expect(Math.round((s?.fraction ?? 0) * 100)).toBe(25); // 75% consumed → 25% left
+
+    const bad = await call('POST', '/api/taskq/usage/calibrate', { key: 'nope', consumedFraction: 0.5 });
+    expect(bad.status).toBe(400);
+  });
 });

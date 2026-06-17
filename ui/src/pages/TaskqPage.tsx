@@ -2,11 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ModalShell } from "cwip/react";
 import { useMemo, useState } from "react";
 import {
+  calibrateTaskqBucket,
   createTaskqTask,
   deleteTaskqTask,
   fetchTaskqBoard,
+  fetchTaskqUsage,
   moveTaskqTask,
   setTaskqStatus,
+  type TaskqBucketState,
   TASKQ_AUTHORABLE_STATUSES,
   TASKQ_MODEL_ALIASES,
   TASKQ_STATUS_LABELS,
@@ -92,6 +95,8 @@ export function TaskqPage() {
         ))}
         <Badge tone="neutral">Total: {board.total}</Badge>
       </div>
+
+      <UsagePanel />
 
       <div className="min-h-0 flex-1 space-y-6 overflow-auto">
         {board.total === 0 ? (
@@ -418,6 +423,91 @@ function TaskqBuilderModal({
         </Field>
       </div>
     </ModalShell>
+  );
+}
+
+const BUCKET_LABELS: Record<string, string> = {
+  session_5h: "Session (5h)",
+  weekly_total: "Weekly total",
+  weekly_sonnet: "Weekly Sonnet",
+};
+
+/** Token-usage capacities + a manual /usage calibration form (the dependable telemetry). */
+function UsagePanel() {
+  const { data } = useQuery({ queryKey: ["taskq-usage"], queryFn: fetchTaskqUsage });
+  const qc = useQueryClient();
+  const { notify } = useToast();
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState("session_5h");
+  const [pct, setPct] = useState("0");
+  const [resetH, setResetH] = useState("");
+
+  const calibrate = useMutation({
+    mutationFn: () =>
+      calibrateTaskqBucket({
+        key,
+        consumedFraction: Math.max(0, Math.min(1, Number(pct) / 100)),
+        resetAt: resetH ? Date.now() + Number(resetH) * 3600_000 : undefined,
+      }),
+    onSuccess: (r) => {
+      qc.setQueryData(["taskq-usage"], r);
+      notify("Calibrated", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "calibrate failed", "error"),
+  });
+
+  const buckets = data?.buckets ?? [];
+  return (
+    <div className={`${CARD_CLASS} mb-3 p-3`}>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-wrap gap-4">
+          {buckets.map((b: TaskqBucketState) => {
+            const pctRemain = Math.round(b.fraction * 100);
+            const tone = b.fraction < 0.12 ? "text-red-600" : b.fraction < 0.4 ? "text-amber-600" : "text-emerald-600";
+            return (
+              <div key={b.key} className="text-xs">
+                <div className="text-gray-500">{BUCKET_LABELS[b.key] ?? b.key}</div>
+                <div className={`font-semibold ${tone}`}>
+                  {pctRemain}% left
+                  {b.resetInSeconds != null && (
+                    <span className="ml-1 font-normal text-gray-400">· resets {Math.round(b.resetInSeconds / 3600)}h</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {buckets.length === 0 && <span className="text-xs text-gray-400">No usage data — calibrate from /usage.</span>}
+        </div>
+        <button type="button" onClick={() => setOpen((o) => !o)} className="text-xs text-accent hover:underline">
+          {open ? "Close" : "Calibrate"}
+        </button>
+      </div>
+      {open && (
+        <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-gray-200 pt-3 dark:border-gray-700">
+          <label className="text-xs">
+            <span className="mb-1 block text-gray-500">Bucket</span>
+            <select className={`${FIELD_CLASS} w-40`} value={key} onChange={(e) => setKey(e.target.value)}>
+              {Object.entries(BUCKET_LABELS).map(([k, l]) => (
+                <option key={k} value={k}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs">
+            <span className="mb-1 block text-gray-500">Consumed %</span>
+            <input type="number" min={0} max={100} className={`${FIELD_CLASS} w-24`} value={pct} onChange={(e) => setPct(e.target.value)} />
+          </label>
+          <label className="text-xs">
+            <span className="mb-1 block text-gray-500">Resets in (h)</span>
+            <input type="number" min={0} className={`${FIELD_CLASS} w-24`} value={resetH} onChange={(e) => setResetH(e.target.value)} />
+          </label>
+          <button type="button" className={BTN_PRIMARY_CLASS} onClick={() => calibrate.mutate()} disabled={calibrate.isPending}>
+            {calibrate.isPending && <Spinner />}Save reading
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

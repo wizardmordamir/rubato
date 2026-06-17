@@ -1528,6 +1528,7 @@ export const deleteOrchestrationTask = (anchorHeading: string) =>
 
 // ── Taskq (v2 orchestrator — SQLite-backed board CRUD) ───────────────────────
 export type {
+  BucketState as TaskqBucketState,
   NewTask as TaskqNewTask,
   Position as TaskqPosition,
   TaskPatch as TaskqPatch,
@@ -1543,7 +1544,7 @@ export {
   TASKQ_STATUSES,
   TASKQ_THINK_LEVELS,
 } from "@shared/taskq";
-import type { NewTask, Position, TaskPatch, TaskqBoard, TaskStatus } from "@shared/taskq";
+import type { BucketState, NewTask, Position, TaskPatch, TaskqBoard, TaskStatus } from "@shared/taskq";
 
 /** The whole board (tasks + per-status counts). */
 export const fetchTaskqBoard = () => getJson<TaskqBoard>("/api/taskq");
@@ -1562,6 +1563,15 @@ export const setTaskqStatus = (id: number, status: TaskStatus, note?: string) =>
 /** Re-position a task. */
 export const moveTaskqTask = (id: number, position: Position) =>
   postJson<{ board: TaskqBoard }>(`/api/taskq/tasks/${id}/move`, { position });
+/** Current token-usage bucket capacities. */
+export const fetchTaskqUsage = () => getJson<{ buckets: BucketState[] }>("/api/taskq/usage");
+/** Manually calibrate a usage bucket from a /usage reading. */
+export const calibrateTaskqBucket = (input: {
+  key: string;
+  consumedFraction: number;
+  limitUnits?: number;
+  resetAt?: number;
+}) => postJson<{ buckets: BucketState[] }>("/api/taskq/usage/calibrate", input);
 
 // ── Watchdog control + observe ────────────────────────────────────────────────
 
