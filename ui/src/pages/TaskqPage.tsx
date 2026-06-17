@@ -192,6 +192,7 @@ export function TaskqPage() {
               ))}
               <Badge tone="neutral">Total: {board.total}</Badge>
             </div>
+            <DrainStatusBanner onGoToWorkers={() => setTab("workers")} onGoToUsage={() => setTab("usage")} />
             <InputQueuePanel />
             {board.total === 0 ? (
               <p className="text-gray-400">No tasks yet — add one with "New task".</p>
@@ -826,6 +827,103 @@ const BUCKET_LABELS: Record<string, string> = {
   weekly_sonnet: "Weekly Sonnet",
 };
 
+/**
+ * Banner shown on the Board tab when the drain is blocked from running.
+ * The Workers tab already has CapacityPanel for the full detail view; this
+ * surfaces the critical "nothing is happening" signal where users actually look.
+ */
+function DrainStatusBanner({ onGoToWorkers, onGoToUsage }: { onGoToWorkers: () => void; onGoToUsage: () => void }) {
+  const { data: cap } = useQuery({ queryKey: ["taskq-capacity"], queryFn: fetchTaskqCapacity, refetchInterval: 8000 });
+  const { data: s } = useQuery({ queryKey: ["taskq-drainer"], queryFn: fetchTaskqDrainer, refetchInterval: 5000 });
+  const qc = useQueryClient();
+  const { notify } = useToast();
+
+  const calibrate = useMutation({
+    mutationFn: (key: string) => calibrateTaskqBucket({ key, consumedFraction: 0, resetAt: undefined }),
+    onSuccess: (r) => {
+      qc.setQueryData(["taskq-usage"], r);
+      qc.invalidateQueries({ queryKey: ["taskq-capacity"] });
+      notify("Calibrated to 0% consumed — drain will resume on next tick", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "calibrate failed", "error"),
+  });
+
+  const paused = cap?.decision.paused;
+  const stopped = s?.stopped;
+  const throttled = !paused && !stopped && cap?.decision.preferLight;
+
+  if (!paused && !stopped && !throttled) return null;
+
+  if (paused) {
+    const exhausted = cap!.buckets.filter((b) => b.fraction <= 0);
+    return (
+      <Alert
+        tone="error"
+        title="Drain paused — token capacity shows 0%"
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {exhausted.map((b) => (
+              <button
+                key={b.key}
+                type="button"
+                className={BTN_PRIMARY_CLASS}
+                disabled={calibrate.isPending}
+                onClick={() => calibrate.mutate(b.key)}
+              >
+                {calibrate.isPending && <Spinner />}
+                Reset {BUCKET_LABELS[b.key] ?? b.key} to 100%
+              </button>
+            ))}
+            <button type="button" className={BTN_GHOST_CLASS} onClick={onGoToUsage}>
+              Usage tab ↗
+            </button>
+          </div>
+        }
+      >
+        <p className="mb-1">
+          The watchdog is firing, but each drain pass immediately exits — no tasks are being claimed.
+          {exhausted.map((b) => {
+            const h = b.resetInSeconds != null ? Math.ceil(b.resetInSeconds / 3600) : null;
+            return (
+              <span key={b.key}>
+                {" "}
+                <strong>{BUCKET_LABELS[b.key] ?? b.key}</strong> shows 0% remaining
+                {h != null ? ` (auto-resets in ~${h}h)` : ""}.
+              </span>
+            );
+          })}
+        </p>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          If Claude.ai shows low usage (e.g. "0% consumed"), the local calibration is stale from a prior session.
+          Click <strong>Reset to 100%</strong> above, or go to the Usage tab to enter your actual remaining %.
+        </p>
+      </Alert>
+    );
+  }
+
+  if (stopped) {
+    return (
+      <Alert tone="warning" title="Drain stopped — graceful stop is active">
+        Workers won't claim new tasks until you resume.{" "}
+        <button type="button" className="font-medium underline" onClick={onGoToWorkers}>
+          Go to Workers tab
+        </button>{" "}
+        and click Resume.
+      </Alert>
+    );
+  }
+
+  return (
+    <Alert tone="warning" title="Drain throttled — low token capacity">
+      Running 1 light-model worker per pass to conserve tokens.{" "}
+      <button type="button" className="underline" onClick={onGoToWorkers}>
+        Workers tab
+      </button>{" "}
+      for details and calibration.
+    </Alert>
+  );
+}
+
 /** Token-usage capacities + a manual /usage calibration form (the dependable telemetry). */
 function UsagePanel() {
   const { data } = useQuery({ queryKey: ["taskq-usage"], queryFn: fetchTaskqUsage });
@@ -1255,6 +1353,7 @@ function StatusDot({
 function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
   const { data } = useQuery({ queryKey: ["taskq-drainer"], queryFn: fetchTaskqDrainer, refetchInterval: 5000 });
   const configQ = useQuery({ queryKey: ["taskq-config"], queryFn: fetchTaskqConfig });
+  const { data: cap } = useQuery({ queryKey: ["taskq-capacity"], queryFn: fetchTaskqCapacity, refetchInterval: 8000 });
   const qc = useQueryClient();
   const { notify } = useToast();
   const run = useMutation({
@@ -1339,17 +1438,28 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
             content={
               s?.running
                 ? "A taskqDrain process is actively running right now — it is claiming ready tasks and spawning Claude workers. This state is ephemeral: the process starts, works through the queue, and exits. The watchdog scheduler (if loaded) will restart it on the next tick."
-                : "No drain is running right now. The queue is idle. If the watchdog is loaded, a new drain pass will start automatically on the next scheduler tick. You can also trigger one immediately with 'Run now'."
+                : cap?.decision.paused
+                  ? `No drain is running. The token capacity shows 0% remaining (${cap.decision.reason}) — each watchdog tick fires a drain pass that immediately exits without claiming any tasks. Recalibrate the bucket on the Usage tab, or wait for auto-reset.`
+                  : "No drain is running right now. The queue is idle. If the watchdog is loaded, a new drain pass will start automatically on the next scheduler tick. You can also trigger one immediately with 'Run now'."
             }
           >
-            <StatusDot on={!!s?.running} label={s?.running ? "Draining now" : "Idle"} color={s?.running ? "accent" : "gray"} />
+            <StatusDot
+              on={!!s?.running}
+              label={s?.running ? "Draining now" : cap?.decision.paused ? "Idle (token limit)" : "Idle"}
+              color={s?.running ? "accent" : cap?.decision.paused ? "amber" : "gray"}
+            />
           </Tooltip>
           {s?.running && (
             <div className="mt-1 text-xs text-gray-400">
               workers are claiming tasks
             </div>
           )}
-          {!s?.running && s?.watchdogLoaded && interval != null && (
+          {!s?.running && cap?.decision.paused && (
+            <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              passes exit immediately
+            </div>
+          )}
+          {!s?.running && !cap?.decision.paused && s?.watchdogLoaded && interval != null && (
             <div className="mt-1 text-xs text-gray-400">
               next auto-tick in ≤{fmtInterval(interval)}
             </div>
