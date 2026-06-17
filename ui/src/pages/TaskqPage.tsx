@@ -8,6 +8,7 @@ import {
   createTaskqTask,
   deleteTaskqTask,
   fetchTaskqBoard,
+  fetchTaskqCapacity,
   fetchTaskqClarifications,
   fetchTaskqDrainer,
   fetchTaskqHistory,
@@ -20,6 +21,7 @@ import {
   setTaskqStatus,
   stopTaskqDrainer,
   type TaskqBucketState,
+  type TaskqCapacity,
   TASKQ_AUTHORABLE_STATUSES,
   TASKQ_MODEL_ALIASES,
   TASKQ_STATUS_LABELS,
@@ -212,6 +214,7 @@ export function TaskqPage() {
         {tab === "workers" && (
           <div className="space-y-4">
             <DrainerControl />
+            <CapacityPanel />
             <InstancesPanel />
             <LogsPanel />
           </div>
@@ -891,6 +894,242 @@ function UsagePanel() {
         </div>
       )}
     </div>
+  );
+}
+
+const BUCKET_LABELS_SHORT: Record<string, string> = {
+  session_5h: "Session",
+  weekly_total: "Weekly",
+  weekly_sonnet: "Sonnet",
+};
+
+/**
+ * Capacity panel — shows the schedule decision the next drain pass would make,
+ * which worker slots exist, and which ready tasks can/cannot be claimed.
+ */
+function CapacityPanel() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["taskq-capacity"],
+    queryFn: fetchTaskqCapacity,
+    refetchInterval: 8000,
+  });
+
+  if (isLoading || !data) return null;
+  const cap: TaskqCapacity = data;
+
+  const decisionTone =
+    cap.decision.paused
+      ? "text-red-600 dark:text-red-400"
+      : cap.decision.preferLight
+        ? "text-amber-600 dark:text-amber-400"
+        : cap.decision.burnExpiring
+          ? "text-blue-600 dark:text-blue-400"
+          : "text-emerald-600 dark:text-emerald-400";
+
+  const decisionLabel = cap.decision.paused
+    ? "Paused"
+    : cap.decision.preferLight
+      ? "Throttled"
+      : cap.decision.burnExpiring
+        ? "Burning expiring"
+        : "Normal";
+
+  const throttled = cap.effectiveJobs < cap.maxJobs;
+
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Drain capacity</h3>
+
+      {/* Schedule decision */}
+      <div className={`${CARD_CLASS} mb-2 p-3`}>
+        <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
+          {/* Status */}
+          <div>
+            <div className="mb-0.5 text-xs text-gray-500">Status</div>
+            <span className={`font-semibold ${decisionTone}`}>{decisionLabel}</span>
+            <span className="ml-2 text-xs text-gray-400">{cap.decision.reason}</span>
+          </div>
+
+          {/* Worker count */}
+          <div>
+            <div className="mb-0.5 text-xs text-gray-500">Workers (next drain)</div>
+            <span className="font-semibold">
+              {cap.effectiveJobs}
+              <span className="text-gray-400">/{cap.maxJobs}</span>
+            </span>
+            {throttled && (
+              <span className="ml-1.5 text-xs text-amber-600 dark:text-amber-400">
+                throttled from {cap.maxJobs}
+              </span>
+            )}
+          </div>
+
+          {/* Mode */}
+          <div>
+            <div className="mb-0.5 text-xs text-gray-500">Mode</div>
+            <span className="text-sm">
+              {cap.fleetMode ? "Fleet tiers" : "Flat"}
+            </span>
+            <span className="ml-1.5 text-xs text-gray-400">
+              default: <span className="font-mono">{cap.defaultModel}</span>
+            </span>
+          </div>
+
+          {/* Token buckets */}
+          {cap.buckets.length > 0 && (
+            <div>
+              <div className="mb-0.5 text-xs text-gray-500">Token capacity</div>
+              <div className="flex items-center gap-3">
+                {cap.buckets.map((b) => {
+                  const pct = Math.round(b.fraction * 100);
+                  const tone = b.fraction < 0.12 ? "text-red-600" : b.fraction < 0.4 ? "text-amber-600" : "text-emerald-600";
+                  return (
+                    <span key={b.key} className="text-xs">
+                      <span className="text-gray-500">{BUCKET_LABELS_SHORT[b.key] ?? b.key} </span>
+                      <span className={`font-semibold ${tone}`}>{pct}%</span>
+                      {b.resetInSeconds != null && (
+                        <span className="text-gray-400"> ·{Math.round(b.resetInSeconds / 3600)}h</span>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Paused explanation */}
+        {cap.decision.paused && (
+          <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+            Token limit exhausted — drain is paused. Calibrate usage on the Usage tab or wait for reset.
+          </p>
+        )}
+
+        {/* preferLight note */}
+        {cap.decision.preferLight && !cap.decision.paused && (
+          <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+            Low capacity: drain will use 1 worker and prefer light models this pass.
+          </p>
+        )}
+      </div>
+
+      {/* Worker slots */}
+      <div className={`${CARD_CLASS} mb-2 p-3`}>
+        <div className="mb-1 text-xs font-medium text-gray-500">
+          Worker slots ({cap.maxJobs} configured
+          {cap.fleetMode ? " via fleet tiers" : " flat"})
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {cap.workerSlots.map((s) => (
+            <span
+              key={s.index}
+              className="inline-flex items-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-800"
+            >
+              <span className="text-gray-400">w{s.index}</span>
+              <span className="font-mono">
+                {s.models === null ? <span className="text-gray-500">any</span> : s.models.join(",")}
+              </span>
+            </span>
+          ))}
+        </div>
+        {!cap.fleetMode && (
+          <p className="mt-1 text-xs text-gray-400">
+            Flat mode: all slots claim any ready task regardless of model.
+            A task's <span className="font-mono">model:</span> marker pins the model the worker will invoke,
+            not which slot claims it.
+          </p>
+        )}
+      </div>
+
+      {/* Ready task eligibility */}
+      <div className={`${CARD_CLASS} p-3`}>
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-xs font-medium text-gray-500">
+            Ready tasks ({cap.totalReady}
+            {cap.unservableReady > 0 && (
+              <span className="ml-1 font-semibold text-red-600 dark:text-red-400">
+                · {cap.unservableReady} unclaimable
+              </span>
+            )}
+            )
+          </div>
+        </div>
+
+        {cap.totalReady === 0 ? (
+          <p className="text-xs text-gray-400">No ready tasks — queue is empty or all tasks are blocked/on hold.</p>
+        ) : (
+          <div className="space-y-1">
+            {cap.readyTasks.map((t) => {
+              const canClaim = t.claimableBySlots.length > 0;
+              const allSlots = t.claimableBySlots.length === cap.maxJobs;
+              return (
+                <div
+                  key={t.id}
+                  className={`flex items-start gap-2 rounded p-2 text-xs ${
+                    canClaim ? "bg-gray-50 dark:bg-gray-800/50" : "bg-red-50 dark:bg-red-950/30"
+                  }`}
+                >
+                  <span className="mt-0.5 shrink-0">
+                    {canClaim ? (
+                      <span className="text-emerald-600 dark:text-emerald-400">✓</span>
+                    ) : (
+                      <span className="text-red-600 dark:text-red-400">✗</span>
+                    )}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-gray-400">#{t.id} </span>
+                    <span className="font-medium">{t.title}</span>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-gray-500">
+                      {/* Model resolution */}
+                      <span>
+                        {t.model ? (
+                          <>
+                            <span className="font-mono text-accent">{t.model}</span>
+                            <span className="text-gray-400"> (pinned)</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-gray-400">no model pin → </span>
+                            <span className="font-mono">{t.effectiveModel}</span>
+                            <span className="text-gray-400"> (default)</span>
+                          </>
+                        )}
+                      </span>
+                      {t.repo && <span>{t.repo}</span>}
+                      {/* Claimability */}
+                      {canClaim ? (
+                        allSlots ? (
+                          <span className="text-emerald-600 dark:text-emerald-400">
+                            claimable by all {cap.maxJobs} slot{cap.maxJobs > 1 ? "s" : ""}
+                          </span>
+                        ) : (
+                          <span className="text-emerald-600 dark:text-emerald-400">
+                            claimable by slot{t.claimableBySlots.length > 1 ? "s" : ""}{" "}
+                            {t.claimableBySlots.map((i) => `w${i}`).join(", ")}
+                          </span>
+                        )
+                      ) : (
+                        <span className="font-medium text-red-600 dark:text-red-400">
+                          {t.unclaimableReason}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {cap.maxJobs > 0 && cap.totalReady > 0 && cap.totalReady < cap.maxJobs && (
+          <p className="mt-2 text-xs text-gray-400">
+            {cap.totalReady} ready task{cap.totalReady > 1 ? "s" : ""} · {cap.maxJobs} slots — only{" "}
+            {cap.totalReady} worker{cap.totalReady > 1 ? "s" : ""} will run (others exit idle immediately).
+            Workers are per-drain-pass, not always-on processes.
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 

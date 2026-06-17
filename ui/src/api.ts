@@ -1686,6 +1686,54 @@ export const fetchTaskqSectionPrefs = () =>
 export const setTaskqSectionCollapsed = (patch: Record<string, boolean>) =>
   postJson<{ prefs: Record<string, boolean> }>("/api/taskq/section-prefs", patch);
 
+export interface TaskqCapacityScheduleDecision {
+  paused: boolean;
+  recommendedJobs: number;
+  preferLight: boolean;
+  burnExpiring: boolean;
+  reason: string;
+}
+
+export interface TaskqCapacityWorkerSlot {
+  index: number;
+  /** null = flat mode (any task); otherwise the fleet tier's model aliases */
+  models: string[] | null;
+}
+
+export interface TaskqCapacityReadyTask {
+  id: number;
+  title: string;
+  /** The model marker on the task (null = no pin). */
+  model: string | null;
+  /** What model the worker will actually pass to claude -p: task.model ?? config.model */
+  effectiveModel: string;
+  repo: string | null;
+  /** Worker slot indices (0-based) that can claim this task. */
+  claimableBySlots: number[];
+  /** Set when no slot can claim this task. */
+  unclaimableReason?: string;
+}
+
+export interface TaskqCapacity {
+  defaultModel: string;
+  configuredJobs: number;
+  fleetMode: boolean;
+  decision: TaskqCapacityScheduleDecision;
+  /** Total worker slots (fleet total or config.jobs). */
+  maxJobs: number;
+  /** min(maxJobs, decision.recommendedJobs) — workers the next drain will spawn. */
+  effectiveJobs: number;
+  workerSlots: TaskqCapacityWorkerSlot[];
+  totalReady: number;
+  /** Ready tasks no slot can claim (model mismatch). */
+  unservableReady: number;
+  readyTasks: TaskqCapacityReadyTask[];
+  buckets: { key: string; fraction: number; remaining: number; resetInSeconds?: number }[];
+}
+
+/** Capacity snapshot: schedule decision + ready-task eligibility for the next drain. */
+export const fetchTaskqCapacity = () => getJson<TaskqCapacity>("/api/taskq/capacity");
+
 // ── Watchdog control + observe ────────────────────────────────────────────────
 
 /** The live watchdog snapshot (config + status + instances + problems + logs + …). */

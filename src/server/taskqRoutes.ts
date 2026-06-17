@@ -5,6 +5,7 @@
  * verbs (claim/complete) aren't here — the orchestrator/CLI own those.
  *
  *   GET    /api/taskq                      → TaskqBoard
+ *   GET    /api/taskq/capacity             → CapacitySnapshot (schedule decision + ready-task eligibility)
  *   POST   /api/taskq/tasks                → add  { draft, position? } → { board, id }
  *   PATCH  /api/taskq/tasks/:id            → update { patch } → { board }
  *   DELETE /api/taskq/tasks/:id            → { board }
@@ -46,6 +47,7 @@ import {
   taskqHistory,
 } from './taskq/control';
 import { resolveGateway } from './taskq/triage';
+import { capacitySnapshot } from './taskq/capacity';
 import { getTaskqDb } from './taskqDb';
 import { getUiPref, setUiPref } from './db';
 
@@ -172,6 +174,16 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       return json({ ok: r.ok, out: r.out, interval: currentInterval() });
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'failed to set interval', 400);
+    }
+  }
+
+  // Capacity snapshot: schedule decision + ready-task eligibility.
+  if (pathname === '/api/taskq/capacity') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    try {
+      return json(capacitySnapshot(getTaskqDb()));
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'capacity snapshot failed', 500);
     }
   }
 
