@@ -95,6 +95,22 @@ describe('taskq routes', () => {
     expect(bad.status).toBe(400);
   });
 
+  test('usage/live: GET returns a snapshot envelope (cold before any poll)', async () => {
+    const res = await call('GET', '/api/taskq/usage/live');
+    expect(res.status).toBe(200);
+    const snap = (await res.json()) as { telemetryStatus: string; costStatus: string; telemetry: unknown; cost: unknown };
+    // Background poller hasn't run in this isolated test process — sources cold.
+    expect(['never', 'fallback', 'live']).toContain(snap.telemetryStatus);
+    expect(['never', 'fallback', 'live']).toContain(snap.costStatus);
+    expect('telemetry' in snap).toBe(true);
+    expect('cost' in snap).toBe(true);
+  });
+
+  test('usage/live rejects non-GET; usage/refresh rejects non-POST', async () => {
+    expect((await call('POST', '/api/taskq/usage/live')).status).toBe(405);
+    expect((await call('GET', '/api/taskq/usage/refresh')).status).toBe(405);
+  });
+
   test('config: GET → patch jobs/model/fleet → reflected; bad model 400', async () => {
     const get1 = (await (await call('GET', '/api/taskq/config')).json()) as { config: { jobs: number } };
     expect(get1.config.jobs).toBeGreaterThanOrEqual(1);

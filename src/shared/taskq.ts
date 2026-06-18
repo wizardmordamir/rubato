@@ -4,18 +4,43 @@
  * into the browser bundle) plus the board shape the server returns.
  */
 
-import type { TaskRow, TaskStatus } from 'cwip/taskq';
+import type { CcusageReport, ComprehensiveClaudeReport, TaskRow, TaskStatus } from 'cwip/taskq';
 
 export type {
   BucketState,
+  CcusageDailyEntry,
+  CcusageModelBreakdown,
+  CcusageReport,
+  ComprehensiveClaudeReport,
+  MetricTier,
   NewTask,
   OpenClarification,
+  PeriodMetrics,
   Position,
   TaskPatch,
   TaskRow,
   TaskStatus,
   ThinkLevel,
 } from 'cwip/taskq';
+
+/** Where the last reading from a live-usage source stands. */
+export type UsageSourceStatus = 'live' | 'fallback' | 'never';
+
+/**
+ * Wire shape of the live usage snapshot served by `/api/taskq/usage/live`:
+ * the real `/usage` telemetry + the ccusage daily cost/token report, each with
+ * its own freshness status. The server poller produces this; the UI renders it.
+ */
+export interface TaskqUsageSnapshot {
+  telemetry: ComprehensiveClaudeReport | null;
+  telemetryAt: number | null;
+  telemetryStatus: UsageSourceStatus;
+  telemetryError?: string;
+  cost: CcusageReport | null;
+  costAt: number | null;
+  costStatus: UsageSourceStatus;
+  costError?: string;
+}
 
 /** A task row plus its resolved `needs:` slugs and optional runtime data. */
 export interface TaskqTaskView extends TaskRow {

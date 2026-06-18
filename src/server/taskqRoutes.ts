@@ -63,6 +63,7 @@ import {
   taskqHistory,
 } from './taskq/control';
 import { resolveGateway } from './taskq/triage';
+import { getUsageSnapshot, refreshUsageNow } from './taskq/usagePoller';
 import { reconcileUsageObservation } from './taskq/usageReconcile';
 import { getTaskqDb } from './taskqDb';
 
@@ -244,6 +245,19 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'probe failed', 500);
     }
+  }
+
+  // Live usage telemetry: real `/usage` limits + behavioral diagnostics + the
+  // ccusage daily cost/token breakdown, each with a live/fallback status. The
+  // background poller keeps this fresh; the buckets endpoint above already
+  // reflects the auto-calibration this drives.
+  if (pathname === '/api/taskq/usage/live') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    return json(getUsageSnapshot());
+  }
+  if (pathname === '/api/taskq/usage/refresh') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    return json(await refreshUsageNow());
   }
 
   // History: recent completed tasks + aggregates.

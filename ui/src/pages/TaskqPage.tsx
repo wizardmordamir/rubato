@@ -1,5 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DragHandle, DropIndicator, ModalShell, useDragReorder } from "cwip/react";
+import {
+  type BarDatum,
+  CategoryBars,
+  ChartThemeProvider,
+  chartThemeFor,
+  DragHandle,
+  DropIndicator,
+  ModalShell,
+  StatTile,
+  TimeSeriesChart,
+  useDragReorder,
+} from "cwip/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
@@ -17,6 +28,8 @@ import {
   fetchTaskqHistory,
   fetchTaskqSectionPrefs,
   fetchTaskqUsage,
+  fetchTaskqUsageLive,
+  refreshTaskqUsage,
   moveTaskqTask,
   resumeTaskqDrainer,
   runTaskqDrainer,
@@ -25,6 +38,9 @@ import {
   stopTaskqDrainer,
   type TaskqBucketState,
   type TaskqCapacity,
+  type TaskqCcusageReport,
+  type TaskqClaudeTelemetry,
+  type TaskqUsageSnapshot,
   TASKQ_AUTHORABLE_STATUSES,
   TASKQ_MODEL_ALIASES,
   TASKQ_STATUS_LABELS,
@@ -55,6 +71,7 @@ import {
 } from "../api";
 import { Alert, Badge, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLASS, PageHeading, Spinner, Tabs, Tooltip } from "../components";
 import { useConfirm } from "../confirm";
+import { getTheme } from "../theme";
 import { useToast } from "../toast";
 import { ForgePage } from "./ForgePage";
 import { OllamaPage } from "./OllamaPage";
@@ -257,22 +274,25 @@ export function TaskqPage() {
       <PageHeading
         title="Orchestration"
         actions={
-          tab === "board" ? (
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className={selectMode ? BTN_PRIMARY_CLASS : BTN_GHOST_CLASS}
-                onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-              >
-                {selectMode ? "Done" : "Select"}
-              </button>
-              {!selectMode && (
-                <button type="button" className={BTN_PRIMARY_CLASS} onClick={() => setBuilder({ mode: "create" })}>
-                  + New task
+          <div className="flex items-center gap-3">
+            <UsageMiniStat />
+            {tab === "board" && (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className={selectMode ? BTN_PRIMARY_CLASS : BTN_GHOST_CLASS}
+                  onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+                >
+                  {selectMode ? "Done" : "Select"}
                 </button>
-              )}
-            </div>
-          ) : undefined
+                {!selectMode && (
+                  <button type="button" className={BTN_PRIMARY_CLASS} onClick={() => setBuilder({ mode: "create" })}>
+                    + New task
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         }
       />
       <Tabs<TaskqTab> tabs={TASKQ_TABS} active={tab} onChange={setTab} />
@@ -1404,9 +1424,163 @@ function DrainStatusBanner({ onGoToWorkers, onGoToUsage }: { onGoToWorkers: () =
   );
 }
 
-/** Token-usage capacities + a manual /usage calibration form (the dependable telemetry). */
+// ── Live-usage formatting helpers ────────────────────────────────────────────
+
+/** Compact token count: 1.2B / 26.8M / 4.1K. */
+function fmtTokens(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(Math.round(n));
+}
+
+/** USD with thousands separators, two decimals. */
+function fmtUsd(n: number): string {
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Human relative time, e.g. "12m ago". null → "never". */
+function relTime(at: number | null): string {
+  if (at == null) return "never";
+  const s = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  return `${Math.round(s / 3600)}h ago`;
+}
+
+/** Drop the `claude-` prefix for chart labels. */
+function shortModel(name: string): string {
+  return name.replace(/^claude-/, "");
+}
+
+/** 🟢 Live / 🟡 Fallback / ⚪ none — a source-freshness badge. */
+function UsageSourceBadge({ status, at, label }: { status: string; at: number | null; label: string }) {
+  if (status === "live")
+    return (
+      <Badge tone="success">
+        🟢 Live {label} · {relTime(at)}
+      </Badge>
+    );
+  if (status === "fallback")
+    return (
+      <Badge tone="warn">
+        🟡 {label} stale{at != null ? ` · ${relTime(at)}` : ""}
+      </Badge>
+    );
+  return <Badge tone="neutral">⚪ No {label} yet</Badge>;
+}
+
+/** One look-back window of behavioral telemetry (24h / 7d). */
+function PeriodBlock({ title, period }: { title: string; period: TaskqClaudeTelemetry["historicalAnalysis"]["last24h"] }) {
+  const behaviors = Object.entries(period.behaviors);
+  const skills = Object.entries(period.topSkills);
+  const subagents = Object.entries(period.topSubagents);
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline gap-2">
+        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">{title}</h4>
+        <span className="text-xs text-gray-400">
+          {period.requests.toLocaleString()} requests · {period.sessions.toLocaleString()} sessions
+        </span>
+      </div>
+      <div className="space-y-1">
+        {behaviors.map(([label, pct]) => {
+          const v = Number.parseInt(pct, 10) || 0;
+          return (
+            <div key={label} className="flex items-center gap-2 text-xs">
+              <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+                <div className="h-full rounded-full bg-accent" style={{ width: `${Math.min(100, v)}%` }} />
+              </div>
+              <span className="w-8 shrink-0 text-right font-medium text-gray-600 dark:text-gray-400">{pct}</span>
+              <span className="text-gray-500">{label}</span>
+            </div>
+          );
+        })}
+        {behaviors.length === 0 && <span className="text-xs text-gray-400">No behavioral signals.</span>}
+      </div>
+      {(skills.length > 0 || subagents.length > 0) && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {skills.map(([k, v]) => (
+            <span key={`s-${k}`} className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              {k} {v}
+            </span>
+          ))}
+          {subagents.map(([k, v]) => (
+            <span key={`a-${k}`} className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-600 dark:bg-indigo-950 dark:text-indigo-300">
+              {k} {v}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Behavioral diagnostics from the live `/usage` telemetry. */
+function DiagnosticsCard({ telemetry }: { telemetry: TaskqClaudeTelemetry }) {
+  return (
+    <div className={`${CARD_CLASS} mb-3 p-4`}>
+      <h3 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Usage diagnostics</h3>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <PeriodBlock title="Last 24h" period={telemetry.historicalAnalysis.last24h} />
+        <PeriodBlock title="Last 7d" period={telemetry.historicalAnalysis.last7d} />
+      </div>
+    </div>
+  );
+}
+
+/** Daily cost + token breakdown from ccusage. */
+function CostCard({ cost }: { cost: TaskqCcusageReport }) {
+  const isDark = getTheme() === "dark";
+  const recent = cost.daily.slice(-14);
+  const trend = recent.map((d) => ({ ts: new Date(d.period).getTime(), cost: d.totalCost }));
+  const byModel = new Map<string, number>();
+  for (const day of cost.daily) {
+    for (const b of day.modelBreakdowns) byModel.set(b.modelName, (byModel.get(b.modelName) ?? 0) + b.cost);
+  }
+  const modelBars: BarDatum[] = [...byModel.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, c]) => ({ label: shortModel(name), value: c }));
+
+  return (
+    <div className={`${CARD_CLASS} p-4`}>
+      <h3 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Cost &amp; tokens</h3>
+      <ChartThemeProvider theme={chartThemeFor(isDark)}>
+        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Total cost" value={fmtUsd(cost.totals.totalCost)} />
+          <StatTile label="Total tokens" value={fmtTokens(cost.totals.totalTokens)} />
+          <StatTile label="Output tokens" value={fmtTokens(cost.totals.outputTokens)} />
+          <StatTile label="Days tracked" value={String(cost.daily.length)} />
+        </div>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div>
+            <h4 className="mb-2 text-xs font-semibold text-gray-500">Daily cost (last {recent.length}d)</h4>
+            <TimeSeriesChart
+              data={trend}
+              series={[{ key: "cost", name: "Cost", kind: "area" }]}
+              height={220}
+              valueFormatter={fmtUsd}
+              includeDate
+            />
+          </div>
+          <div>
+            <h4 className="mb-2 text-xs font-semibold text-gray-500">Cost by model</h4>
+            <CategoryBars data={modelBars} height={220} valueFormatter={fmtUsd} />
+          </div>
+        </div>
+      </ChartThemeProvider>
+    </div>
+  );
+}
+
+/** Token-usage capacities + live `/usage` telemetry, cost, and a fallback calibration form. */
 function UsagePanel() {
   const { data } = useQuery({ queryKey: ["taskq-usage"], queryFn: fetchTaskqUsage });
+  const { data: live } = useQuery({
+    queryKey: ["taskq-usage-live"],
+    queryFn: fetchTaskqUsageLive,
+    refetchInterval: 60_000,
+  });
   const qc = useQueryClient();
   const { notify } = useToast();
   const [open, setOpen] = useState(false);
@@ -1428,58 +1602,121 @@ function UsagePanel() {
     onError: (e) => notify(e instanceof Error ? e.message : "calibrate failed", "error"),
   });
 
+  const refresh = useMutation({
+    mutationFn: refreshTaskqUsage,
+    onSuccess: (snap: TaskqUsageSnapshot) => {
+      qc.setQueryData(["taskq-usage-live"], snap);
+      qc.invalidateQueries({ queryKey: ["taskq-usage"] });
+      qc.invalidateQueries({ queryKey: ["taskq-capacity"] });
+      notify(snap.telemetryStatus === "live" ? "Usage refreshed" : "Refresh failed — using last good data", snap.telemetryStatus === "live" ? "success" : "info");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "refresh failed", "error"),
+  });
+
   const buckets = data?.buckets ?? [];
+  const telemetryLive = live?.telemetryStatus === "live";
+  // Map a bucket → its real reset string from the live telemetry, when present.
+  const resetForBucket: Record<string, string | undefined> = {
+    session_5h: live?.telemetry?.limits.currentSession.resetsAt,
+    weekly_total: live?.telemetry?.limits.weeklyAllModels.resetsAt,
+    weekly_sonnet: live?.telemetry?.limits.weeklySonnetOnly.resetsAt,
+  };
+
   return (
-    <div className={`${CARD_CLASS} mb-3 p-3`}>
-      <div className="flex items-center justify-between">
+    <>
+      <div className={`${CARD_CLASS} mb-3 p-3`}>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 pb-2 dark:border-gray-700">
+          <div className="flex flex-wrap items-center gap-2">
+            <UsageSourceBadge status={live?.telemetryStatus ?? "never"} at={live?.telemetryAt ?? null} label="/usage" />
+            <UsageSourceBadge status={live?.costStatus ?? "never"} at={live?.costAt ?? null} label="cost" />
+          </div>
+          <div className="flex items-center gap-3">
+            <button type="button" className={BTN_GHOST_CLASS} onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+              {refresh.isPending && <Spinner />}Refresh now
+            </button>
+            <button type="button" onClick={() => setOpen((o) => !o)} className="text-xs text-accent hover:underline">
+              {open ? "Close" : "Calibrate"}
+            </button>
+          </div>
+        </div>
+
         <div className="flex flex-wrap gap-4">
           {buckets.map((b: TaskqBucketState) => {
             const pctRemain = Math.round(b.fraction * 100);
             const tone = b.fraction < 0.12 ? "text-red-600" : b.fraction < 0.4 ? "text-amber-600" : "text-emerald-600";
+            const resetStr = resetForBucket[b.key];
             return (
               <div key={b.key} className="text-xs">
                 <div className="text-gray-500">{BUCKET_LABELS[b.key] ?? b.key}</div>
                 <div className={`font-semibold ${tone}`}>
                   {pctRemain}% left
-                  {b.resetInSeconds != null && (
+                  {resetStr ? (
+                    <span className="ml-1 font-normal text-gray-400">· resets {resetStr}</span>
+                  ) : b.resetInSeconds != null ? (
                     <span className="ml-1 font-normal text-gray-400">· resets {Math.round(b.resetInSeconds / 3600)}h</span>
-                  )}
+                  ) : null}
                 </div>
               </div>
             );
           })}
           {buckets.length === 0 && <span className="text-xs text-gray-400">No usage data — calibrate from /usage.</span>}
         </div>
-        <button type="button" onClick={() => setOpen((o) => !o)} className="text-xs text-accent hover:underline">
-          {open ? "Close" : "Calibrate"}
-        </button>
+
+        {open && (
+          <div className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-700">
+            {telemetryLive && (
+              <p className="mb-2 text-xs text-gray-500">
+                Live syncing is active — buckets auto-calibrate from <code>/usage</code>. Manual entry below is only needed as a fallback.
+              </p>
+            )}
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-xs">
+                <span className="mb-1 block text-gray-500">Bucket</span>
+                <select className={`${FIELD_CLASS} w-40`} value={key} onChange={(e) => setKey(e.target.value)}>
+                  {Object.entries(BUCKET_LABELS).map(([k, l]) => (
+                    <option key={k} value={k}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs">
+                <span className="mb-1 block text-gray-500">Consumed %</span>
+                <input type="number" min={0} max={100} className={`${FIELD_CLASS} w-24`} value={pct} onChange={(e) => setPct(e.target.value)} />
+              </label>
+              <label className="text-xs">
+                <span className="mb-1 block text-gray-500">Resets in (h)</span>
+                <input type="number" min={0} className={`${FIELD_CLASS} w-24`} value={resetH} onChange={(e) => setResetH(e.target.value)} />
+              </label>
+              <button type="button" className={BTN_PRIMARY_CLASS} onClick={() => calibrate.mutate()} disabled={calibrate.isPending}>
+                {calibrate.isPending && <Spinner />}Save reading
+              </button>
+            </div>
+          </div>
+        )}
       </div>
-      {open && (
-        <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-gray-200 pt-3 dark:border-gray-700">
-          <label className="text-xs">
-            <span className="mb-1 block text-gray-500">Bucket</span>
-            <select className={`${FIELD_CLASS} w-40`} value={key} onChange={(e) => setKey(e.target.value)}>
-              {Object.entries(BUCKET_LABELS).map(([k, l]) => (
-                <option key={k} value={k}>
-                  {l}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs">
-            <span className="mb-1 block text-gray-500">Consumed %</span>
-            <input type="number" min={0} max={100} className={`${FIELD_CLASS} w-24`} value={pct} onChange={(e) => setPct(e.target.value)} />
-          </label>
-          <label className="text-xs">
-            <span className="mb-1 block text-gray-500">Resets in (h)</span>
-            <input type="number" min={0} className={`${FIELD_CLASS} w-24`} value={resetH} onChange={(e) => setResetH(e.target.value)} />
-          </label>
-          <button type="button" className={BTN_PRIMARY_CLASS} onClick={() => calibrate.mutate()} disabled={calibrate.isPending}>
-            {calibrate.isPending && <Spinner />}Save reading
-          </button>
-        </div>
-      )}
-    </div>
+
+      {live?.telemetry && <DiagnosticsCard telemetry={live.telemetry} />}
+      {live?.cost && live.cost.daily.length > 0 && <CostCard cost={live.cost} />}
+    </>
+  );
+}
+
+/** Compact session-usage indicator for the orchestration page header. */
+function UsageMiniStat() {
+  const { data: live } = useQuery({
+    queryKey: ["taskq-usage-live"],
+    queryFn: fetchTaskqUsageLive,
+    refetchInterval: 60_000,
+  });
+  const session = live?.telemetry?.limits.currentSession;
+  if (!session || session.percentUsed === "Unknown") return null;
+  const dot = live?.telemetryStatus === "live" ? "bg-emerald-500" : "bg-amber-500";
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400" title={`Session resets ${session.resetsAt}`}>
+      <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
+      Session {session.percentUsed} used
+    </span>
   );
 }
 

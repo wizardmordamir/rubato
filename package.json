@@ -134,6 +134,7 @@
     "@huggingface/transformers": "^4.2.0",
     "@playwright/test": "^1.60.0",
     "@types/bun": "^1.3.13",
+    "ccusage": "^20.0.14",
     "playwright": "^1.60.0",
     "typescript": "^6.0.3",
     "unpdf": "^1.6.2"

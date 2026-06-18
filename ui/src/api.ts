@@ -1655,12 +1655,16 @@ export const deleteOrchestrationTask = (anchorHeading: string) =>
 // ── Taskq (v2 orchestrator — SQLite-backed board CRUD) ───────────────────────
 export type {
   BucketState as TaskqBucketState,
+  CcusageDailyEntry as TaskqCcusageDaily,
+  CcusageReport as TaskqCcusageReport,
   OpenClarification as TaskqClarification,
+  ComprehensiveClaudeReport as TaskqClaudeTelemetry,
   NewTask as TaskqNewTask,
   Position as TaskqPosition,
   TaskPatch as TaskqPatch,
   TaskqBoard,
   TaskqTaskView,
+  TaskqUsageSnapshot,
   TaskRow as TaskqRow,
   TaskStatus as TaskqStatus,
 } from "@shared/taskq";
@@ -1671,7 +1675,16 @@ export {
   TASKQ_STATUSES,
   TASKQ_THINK_LEVELS,
 } from "@shared/taskq";
-import type { BucketState, NewTask, OpenClarification, Position, TaskPatch, TaskqBoard, TaskStatus } from "@shared/taskq";
+import type {
+  BucketState,
+  NewTask,
+  OpenClarification,
+  Position,
+  TaskPatch,
+  TaskqBoard,
+  TaskqUsageSnapshot,
+  TaskStatus,
+} from "@shared/taskq";
 
 /** The whole board (tasks + per-status counts). */
 export const fetchTaskqBoard = () => getJson<TaskqBoard>("/api/taskq");
@@ -1695,6 +1708,10 @@ export const enqueueTaskqTemplate = (id: number) =>
   postJson<{ board: TaskqBoard; id: number }>(`/api/taskq/tasks/${id}/enqueue`, {});
 /** Current token-usage bucket capacities. */
 export const fetchTaskqUsage = () => getJson<{ buckets: BucketState[] }>("/api/taskq/usage");
+/** Live real-usage snapshot: `/usage` telemetry + ccusage cost, each with status. */
+export const fetchTaskqUsageLive = () => getJson<TaskqUsageSnapshot>("/api/taskq/usage/live");
+/** Re-poll both live-usage sources now and return the fresh snapshot. */
+export const refreshTaskqUsage = () => postJson<TaskqUsageSnapshot>("/api/taskq/usage/refresh", {});
 /** Manually calibrate a usage bucket from a /usage reading. */
 export const calibrateTaskqBucket = (input: {
   key: string;

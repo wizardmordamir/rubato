@@ -14,9 +14,10 @@ import type { PluginRouteHandler } from '../plugin/types';
 import type { UiPage } from '../shared/ui';
 import { BUILTIN_SCRIPTS } from './builtinScripts';
 import { initDebugCapture } from './debugCapture';
-import { startForgeWorker } from './forge';
 import { subscribe } from './events';
+import { startForgeWorker } from './forge';
 import { route, type UiBranding } from './router';
+import { startUsagePoller } from './taskq/usagePoller';
 
 export interface StartOptions {
   /** Port to bind (default 4747, or `RUBATO_PORT`). */
@@ -72,6 +73,9 @@ export function startServer(options: StartOptions = {}): ServerHandle {
   initDebugCapture();
   // Background worker: drains queued task drafts through Ollama, one at a time.
   startForgeWorker();
+  // Background poller: real Claude Code usage telemetry (`/usage` + ccusage) —
+  // auto-calibrates the usage buckets and feeds the Usage tab live numbers.
+  startUsagePoller();
   const envPort = Number(process.env.RUBATO_PORT);
   const port = options.port ?? (Number.isInteger(envPort) && envPort > 0 ? envPort : 4747);
   const hostname = options.hostname ?? '127.0.0.1';
