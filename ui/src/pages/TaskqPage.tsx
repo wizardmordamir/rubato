@@ -144,7 +144,7 @@ export function TaskqPage() {
     },
   });
   const toggleCollapse = useMutation({
-    mutationFn: (v: { status: TaskqStatus; collapsed: boolean }) =>
+    mutationFn: (v: { status: string; collapsed: boolean }) =>
       setTaskqSectionCollapsed({ [v.status]: v.collapsed }),
     onSuccess: (r) => qc.setQueryData(["taskq-section-prefs"], r),
   });
@@ -210,27 +210,72 @@ export function TaskqPage() {
             {board.total === 0 ? (
               <p className="text-gray-400">No tasks yet — add one with "New task".</p>
             ) : (
-              TASKQ_STATUSES.filter((s) => board.tasks.some((t) => t.status === s)).map((s) => (
-                <BoardSection
-                  key={s}
-                  status={s}
-                  tasks={board.tasks.filter((t) => t.status === s)}
-                  count={board.counts[s]}
-                  reorderable={REORDERABLE.has(s)}
-                  collapsed={!!sectionPrefs[s]}
-                  onToggleCollapse={() => toggleCollapse.mutate({ status: s, collapsed: !sectionPrefs[s] })}
-                  onReorder={(ids) => onReorder(board, s, ids)}
-                  onEdit={(t) => setBuilder({ mode: "edit", task: t })}
-                  onDelete={async (t) => {
+              TASKQ_STATUSES.flatMap((s) => {
+                const allTasks = board.tasks.filter((t) => t.status === s);
+                if (allTasks.length === 0) return [];
+                if (s !== "on_hold") {
+                  return [
+                    <BoardSection
+                      key={s}
+                      status={s}
+                      tasks={allTasks}
+                      count={board.counts[s]}
+                      reorderable={REORDERABLE.has(s)}
+                      collapsed={!!sectionPrefs[s]}
+                      onToggleCollapse={() => toggleCollapse.mutate({ status: s, collapsed: !sectionPrefs[s] })}
+                      onReorder={(ids) => onReorder(board, s, ids)}
+                      onEdit={(t) => setBuilder({ mode: "edit", task: t })}
+                      onDelete={async (t) => {
+                        if (await confirm({ prompt: `Delete "${t.title}"?`, confirmText: "Delete" })) del.mutate(t.id);
+                      }}
+                      onHold={(t) =>
+                        status.mutate(t.status === "on_hold" ? { id: t.id, status: "ready" } : { id: t.id, status: "on_hold" })
+                      }
+                      onRequeue={(t) => status.mutate({ id: t.id, status: "ready" })}
+                      onEnqueue={(t) => enqueue.mutate(t.id)}
+                    />,
+                  ];
+                }
+                // Split on_hold: saved tasks get their own section; everything else stays in On hold.
+                const savedTasks = allTasks.filter((t) => t.is_saved === 1);
+                const holdTasks = allTasks.filter((t) => t.is_saved !== 1);
+                const sharedProps = {
+                  status: "on_hold" as TaskqStatus,
+                  reorderable: true,
+                  onEdit: (t: TaskqTaskView) => setBuilder({ mode: "edit", task: t }),
+                  onDelete: async (t: TaskqTaskView) => {
                     if (await confirm({ prompt: `Delete "${t.title}"?`, confirmText: "Delete" })) del.mutate(t.id);
-                  }}
-                  onHold={(t) =>
-                    status.mutate(t.status === "on_hold" ? { id: t.id, status: "ready" } : { id: t.id, status: "on_hold" })
-                  }
-                  onRequeue={(t) => status.mutate({ id: t.id, status: "ready" })}
-                  onEnqueue={(t) => enqueue.mutate(t.id)}
-                />
-              ))
+                  },
+                  onHold: (t: TaskqTaskView) => status.mutate({ id: t.id, status: "ready" }),
+                  onRequeue: (t: TaskqTaskView) => status.mutate({ id: t.id, status: "ready" }),
+                  onEnqueue: (t: TaskqTaskView) => enqueue.mutate(t.id),
+                };
+                return [
+                  holdTasks.length > 0 && (
+                    <BoardSection
+                      key="on_hold"
+                      {...sharedProps}
+                      tasks={holdTasks}
+                      count={holdTasks.length}
+                      collapsed={!!sectionPrefs["on_hold"]}
+                      onToggleCollapse={() => toggleCollapse.mutate({ status: "on_hold", collapsed: !sectionPrefs["on_hold"] })}
+                      onReorder={(ids) => onReorder(board, "on_hold", ids)}
+                    />
+                  ),
+                  savedTasks.length > 0 && (
+                    <BoardSection
+                      key="on_hold_saved"
+                      {...sharedProps}
+                      label="Saved"
+                      tasks={savedTasks}
+                      count={savedTasks.length}
+                      collapsed={!!sectionPrefs["on_hold_saved"]}
+                      onToggleCollapse={() => toggleCollapse.mutate({ status: "on_hold_saved", collapsed: !sectionPrefs["on_hold_saved"] })}
+                      onReorder={(ids) => onReorder(board, "on_hold", ids)}
+                    />
+                  ),
+                ].filter(Boolean);
+              })
             )}
           </div>
         )}
@@ -444,6 +489,7 @@ function TaskCard({
 /** A status section that supports drag-to-reorder (priority) via cwip's useDragReorder. */
 function BoardSection({
   status,
+  label,
   tasks,
   count,
   reorderable,
@@ -457,6 +503,8 @@ function BoardSection({
   onEnqueue,
 }: {
   status: TaskqStatus;
+  /** Override the section heading; defaults to TASKQ_STATUS_LABELS[status]. */
+  label?: string;
   tasks: TaskqTaskView[];
   count: number;
   reorderable: boolean;
@@ -480,7 +528,7 @@ function BoardSection({
         className="mb-2 flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
       >
         <span className={`text-xs transition-transform ${collapsed ? "" : "rotate-90"}`}>▶</span>
-        {TASKQ_STATUS_LABELS[status]} <span className="text-gray-400">({count})</span>
+        {label ?? TASKQ_STATUS_LABELS[status]} <span className="text-gray-400">({count})</span>
         {!collapsed && canDrag && <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder priority</span>}
       </button>
       {!collapsed && (
