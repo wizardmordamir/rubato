@@ -304,6 +304,7 @@ function TaskCard({
   const [open, setOpen] = useState(false);
   const editable = task.status !== "claimed" && task.status !== "done";
   const isTemplate = task.is_template === 1;
+  const isSaved = task.is_saved === 1;
   const markers = [
     task.model && `model:${task.model}`,
     task.think && `think:${task.think}`,
@@ -311,7 +312,6 @@ function TaskCard({
     task.needs.length > 0 && `needs:${task.needs.join(",")}`,
     task.group_key && `group:${task.group_key}`,
     task.recur_interval_ms != null && `every:${fmtInterval(task.recur_interval_ms)}`,
-    task.recur_n != null && `recur:${task.recur_n}`,
     task.repo && `repo:${task.repo}`,
   ].filter(Boolean) as string[];
 
@@ -346,6 +346,14 @@ function TaskCard({
         </span>
       );
     }
+    if (isSaved && task.status === "on_hold") {
+      return (
+        <span className="flex flex-wrap gap-x-3">
+          <span>created {fmtIso(task.created_at)}</span>
+          <span className="text-sky-500 dark:text-sky-400">saved — queue to run again</span>
+        </span>
+      );
+    }
     return <span>created {fmtIso(task.created_at)}</span>;
   })();
 
@@ -360,6 +368,11 @@ function TaskCard({
               {isTemplate && (
                 <span className="mr-1.5 rounded bg-violet-100 px-1.5 py-0.5 text-xs font-semibold uppercase text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
                   template
+                </span>
+              )}
+              {isSaved && !isTemplate && (
+                <span className="mr-1.5 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-semibold uppercase text-sky-700 dark:bg-sky-900/50 dark:text-sky-300">
+                  saved
                 </span>
               )}
               {task.title}
@@ -384,7 +397,7 @@ function TaskCard({
             )}
             {(task.status === "failed" || task.status === "on_hold") && (
               <button type="button" onClick={onRequeue} className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
-                Re-queue
+                {isSaved && task.status === "on_hold" ? "Queue now" : "Re-queue"}
               </button>
             )}
             {editable && (
@@ -709,14 +722,12 @@ function TaskqBuilderModal({
   onSaved: (board: TaskqBoard) => void;
 }) {
   const { notify } = useToast();
-  // "count" is a read-only legacy mode (recur_n) shown only when editing an
-  // existing count-based task — new tasks are always oneshot/time/template.
-  type Scheduling = "oneshot" | "time" | "template" | "count";
+  type Scheduling = "oneshot" | "saved" | "interval" | "template";
 
   function initialScheduling(t?: TaskqTaskView): Scheduling {
     if (t?.is_template === 1) return "template";
-    if (t?.recur_interval_ms != null) return "time";
-    if (t?.recur_n != null) return "count";
+    if (t?.is_saved === 1 && t?.recur_interval_ms != null) return "interval";
+    if (t?.is_saved === 1) return "saved";
     return "oneshot";
   }
 
@@ -755,7 +766,7 @@ function TaskqBuilderModal({
   const [posAnchor, setPosAnchor] = useState<number | "">(board.tasks[0]?.id ?? "");
 
   const unitMs: Record<string, number> = { minutes: 60_000, hours: 3600_000, days: 86400_000, weeks: 604800_000 };
-  const intervalMs = scheduling === "time" ? (Number.parseInt(intervalN, 10) || 1) * (unitMs[intervalUnit] ?? 3600_000) : undefined;
+  const intervalMs = scheduling === "interval" ? (Number.parseInt(intervalN, 10) || 1) * (unitMs[intervalUnit] ?? 3600_000) : undefined;
 
   const draft: TaskqNewTask = {
     title,
@@ -768,6 +779,7 @@ function TaskqBuilderModal({
     needs,
     group_key: group.trim() || undefined,
     recur_interval_ms: intervalMs,
+    is_saved: scheduling === "saved" || scheduling === "interval",
     is_template: scheduling === "template",
     note: note.trim() || undefined,
   };
@@ -797,8 +809,9 @@ function TaskqBuilderModal({
           needs,
           group_key: group,
           note,
-          recur_n: scheduling !== "count" ? null : undefined,
+          recur_n: null,
           recur_interval_ms: intervalMs ?? null,
+          is_saved: scheduling === "saved" || scheduling === "interval",
           is_template: scheduling === "template",
         })
       ).board;
@@ -922,26 +935,21 @@ function TaskqBuilderModal({
         <div className="md:col-span-2">
           <Field
             label="Scheduling"
-            hint="Should this run automatically on a schedule without human oversight? Choose recurring for unattended automation, template for on-demand manual runs."
+            hint="One-shot tasks are done after completion. Saved tasks return to on-hold so you can re-queue them manually. Saved + interval tasks auto-schedule on a repeating schedule."
           >
             <div className="space-y-2">
               <div className="flex flex-wrap gap-3">
-                {(["oneshot", "time", "template"] as const).map((s) => (
+                {(["oneshot", "saved", "interval", "template"] as const).map((s) => (
                   <label key={s} className="flex cursor-pointer items-center gap-1.5 text-sm">
                     <input type="radio" name="scheduling" value={s} checked={scheduling === s} onChange={() => setScheduling(s)} className="h-4 w-4" />
-                    {s === "oneshot" && "One-shot (run once and done)"}
-                    {s === "time" && "Recurring — runs automatically on a schedule"}
-                    {s === "template" && "Saved template — run on demand via Enqueue"}
+                    {s === "oneshot" && "One-shot (run once, done)"}
+                    {s === "saved" && "Saved (on-hold after run — queue manually)"}
+                    {s === "interval" && "Saved + interval (auto-schedules on repeat)"}
+                    {s === "template" && "Template (enqueue a fresh copy on demand)"}
                   </label>
                 ))}
-                {scheduling === "count" && (
-                  <label className="flex cursor-pointer items-center gap-1.5 text-sm">
-                    <input type="radio" name="scheduling" value="count" checked readOnly className="h-4 w-4" />
-                    Count-based (legacy — run every {task?.recur_n} completions)
-                  </label>
-                )}
               </div>
-              {scheduling === "time" && (
+              {scheduling === "interval" && (
                 <>
                   <div className="flex items-center gap-2 pl-6">
                     <span className="text-sm text-gray-500">every</span>
@@ -960,19 +968,18 @@ function TaskqBuilderModal({
                     </select>
                   </div>
                   <p className="pl-6 text-xs text-gray-400">
-                    Runs automatically, unattended. Use for infrastructure tasks: nightly health checks, weekly vacuums, scheduled reports.
+                    After each run the task schedules its next execution automatically. Good for recurring health checks, weekly sweeps, and timed maintenance.
                   </p>
                 </>
               )}
-              {scheduling === "template" && (
+              {scheduling === "saved" && (
                 <p className="pl-6 text-xs text-gray-400">
-                  The template stays saved; clicking <strong>Enqueue</strong> sends a fresh copy to the worker queue.
+                  The task goes to <strong>on-hold</strong> after completion and waits for you to queue it again via the <strong>Queue now</strong> button. Good for tasks you run on your own schedule.
                 </p>
               )}
-              {scheduling === "count" && (
-                <p className="pl-6 text-xs text-amber-600 dark:text-amber-400">
-                  Count-based recurrence is legacy. Migrate to a <button type="button" className="underline" onClick={() => setScheduling("time")}>recurring schedule</button> or{" "}
-                  <button type="button" className="underline" onClick={() => setScheduling("template")}>saved template</button>.
+              {scheduling === "template" && (
+                <p className="pl-6 text-xs text-gray-400">
+                  The template is never auto-claimed. Click <strong>Enqueue</strong> to send a fresh copy to the worker queue each time you want it to run.
                 </p>
               )}
             </div>
