@@ -67,11 +67,12 @@ export function ChatPage() {
   // freely. Returning to the bottom re-pins. Reset to pinned on each new send.
   const pinnedRef = useRef(true);
 
-  const { data: apps = [] } = useQuery({ queryKey: ["apps"], queryFn: fetchApps });
+  const { data: apps = [], isFetched: appsFetched } = useQuery({ queryKey: ["apps"], queryFn: fetchApps });
   // Default to the first app once the list loads, if no mode chosen yet.
+  // If there are no apps, fall back to general mode ("") so the composer is never stuck disabled.
   useEffect(() => {
-    if (app === null && apps.length) setApp(apps[0].name);
-  }, [app, apps]);
+    if (app === null && appsFetched) setApp(apps.length ? apps[0].name : "");
+  }, [app, apps, appsFetched]);
 
   const status = useQuery({
     queryKey: ["index", app],
