@@ -1903,7 +1903,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
             content={
               s?.watchdogLoaded
                 ? `The launchd watchdog agent (com.taskq.drain) is loaded and active. It automatically fires a drain pass every ${interval != null ? fmtIntervalSec(interval) : "tick"} — even when no browser window is open. Unload it to stop automatic draining (you can still trigger runs manually).`
-                : "The launchd watchdog agent is NOT loaded — drain passes only run when you click 'Run now'. Load it to enable automatic periodic draining on a background timer."
+                : "The launchd watchdog agent is NOT loaded — drain passes only run when you click 'Run once'. Load it to enable automatic periodic draining on a background timer."
             }
           >
             <StatusDot
@@ -1934,7 +1934,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
                 ? "A taskqDrain process is actively running right now — it is claiming ready tasks and spawning Claude workers. This state is ephemeral: the process starts, works through the queue, and exits. The watchdog scheduler (if loaded) will restart it on the next tick."
                 : cap?.decision.preferLight
                   ? `No drain is running. Token capacity is low (${cap.decision.reason}) — each watchdog tick will run 1 light-model worker. Tasks that succeed will auto-recalibrate the bucket estimate.`
-                  : "No drain is running right now. The queue is idle. If the watchdog is loaded, a new drain pass will start automatically on the next scheduler tick. You can also trigger one immediately with 'Run now'."
+                  : "No drain is running right now. The queue is idle. If the watchdog is loaded, a new drain pass will start automatically on the next scheduler tick. You can also trigger one immediately with 'Run once'."
             }
           >
             <StatusDot
@@ -1993,7 +1993,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
             disabled={run.isPending || !!s?.running}
           >
             {run.isPending && <Spinner />}
-            Run now
+            Run once
           </button>
         </Tooltip>
 
@@ -2029,7 +2029,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
         {/* Watchdog load/unload */}
         <div className="ml-1 border-l border-gray-200 pl-3 dark:border-gray-700">
           {s?.watchdogLoaded ? (
-            <Tooltip content="Unload the launchd watchdog agent. Automatic drain ticks stop immediately. You can still trigger drains manually with 'Run now'. Reload in Settings → Watchdog to re-enable.">
+            <Tooltip content="Unload the launchd watchdog agent. Automatic drain ticks stop immediately. You can still trigger drains manually with 'Run once'. Reload in Settings → Watchdog to re-enable.">
               <button
                 type="button"
                 className={BTN_GHOST_CLASS}

@@ -1,7 +1,7 @@
 /**
  * Drainer control + history for the Taskq UI — the pieces the legacy
  * Orchestration page offered (start/stop/status + completed-task history), now
- * over the new SQLite system. Status shells out to launchd/pgrep; "run now"
+ * over the new SQLite system. Status shells out to launchd/pgrep; "run once"
  * spawns a detached drain; graceful stop toggles the `.stop` sentinel.
  */
 
