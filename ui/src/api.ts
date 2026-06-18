@@ -1729,6 +1729,13 @@ export const fetchTaskqSectionPrefs = () =>
 export const setTaskqSectionCollapsed = (patch: Record<string, boolean>) =>
   postJson<{ prefs: Record<string, boolean> }>("/api/taskq/section-prefs", patch);
 
+/** List distinct serial group names currently in the queue. */
+export const fetchTaskqSerialGroups = () =>
+  getJson<{ groups: string[] }>("/api/taskq/serial-groups");
+/** Bulk-assign a serial_group to a set of tasks (null to clear). */
+export const bulkSetTaskqSerialGroup = (ids: number[], serial_group: string | null) =>
+  postJson<{ board: TaskqBoard }>("/api/taskq/tasks/bulk-serial-group", { ids, serial_group });
+
 export interface TaskqCapacityScheduleDecision {
   paused: boolean;
   recommendedJobs: number;

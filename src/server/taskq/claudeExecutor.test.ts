@@ -22,6 +22,7 @@ const task = (over: Partial<TaskRow> = {}): TaskRow => ({
   think: null,
   fast: 0,
   group_key: null,
+  serial_group: null,
   recur_n: null,
   recur_last: null,
   recur_interval_ms: null,

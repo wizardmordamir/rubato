@@ -50,6 +50,8 @@ import {
   type TaskqTaskView,
   updateTaskqTask,
   deriveTaskTitle,
+  fetchTaskqSerialGroups,
+  bulkSetTaskqSerialGroup,
 } from "../api";
 import { Alert, Badge, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLASS, PageHeading, Spinner, Tabs, Tooltip } from "../components";
 import { useConfirm } from "../confirm";
@@ -157,6 +159,44 @@ export function TaskqPage() {
     onError: (e) => notify(e instanceof Error ? e.message : "enqueue failed", "error"),
   });
 
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [serialGroupDialogOpen, setSerialGroupDialogOpen] = useState(false);
+  const { data: serialGroupsData } = useQuery({
+    queryKey: ["taskq-serial-groups"],
+    queryFn: fetchTaskqSerialGroups,
+    enabled: tab === "board",
+  });
+  const existingSerialGroups = serialGroupsData?.groups ?? [];
+
+  const bulkSerialGroup = useMutation({
+    mutationFn: (v: { ids: number[]; serial_group: string | null }) => bulkSetTaskqSerialGroup(v.ids, v.serial_group),
+    onSuccess: (r) => {
+      apply(r.board);
+      void qc.invalidateQueries({ queryKey: ["taskq-serial-groups"] });
+      notify("Serial group updated", "success");
+      setSelectedIds(new Set());
+      setSelectMode(false);
+      setSerialGroupDialogOpen(false);
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "bulk update failed", "error"),
+  });
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+    setSerialGroupDialogOpen(false);
+  };
+
   /** Commit a within-status reorder: optimistic local order + a before/after move. */
   const onReorder = (curBoard: TaskqBoard, sectionStatus: TaskqStatus, newIds: number[]) => {
     const oldIds = curBoard.tasks.filter((t) => t.status === sectionStatus).map((t) => t.id);
@@ -186,9 +226,20 @@ export function TaskqPage() {
         title="Orchestration"
         actions={
           tab === "board" ? (
-            <button type="button" className={BTN_PRIMARY_CLASS} onClick={() => setBuilder({ mode: "create" })}>
-              + New task
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className={selectMode ? BTN_PRIMARY_CLASS : BTN_GHOST_CLASS}
+                onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+              >
+                {selectMode ? "Done" : "Select"}
+              </button>
+              {!selectMode && (
+                <button type="button" className={BTN_PRIMARY_CLASS} onClick={() => setBuilder({ mode: "create" })}>
+                  + New task
+                </button>
+              )}
+            </div>
           ) : undefined
         }
       />
@@ -213,6 +264,7 @@ export function TaskqPage() {
               TASKQ_STATUSES.flatMap((s) => {
                 const allTasks = board.tasks.filter((t) => t.status === s);
                 if (allTasks.length === 0) return [];
+                const selectProps = { selectMode, selectedIds, onToggleSelect: toggleSelect };
                 if (s !== "on_hold") {
                   return [
                     <BoardSection
@@ -233,6 +285,7 @@ export function TaskqPage() {
                       }
                       onRequeue={(t) => status.mutate({ id: t.id, status: "ready" })}
                       onEnqueue={(t) => enqueue.mutate(t.id)}
+                      {...selectProps}
                     />,
                   ];
                 }
@@ -249,6 +302,7 @@ export function TaskqPage() {
                   onHold: (t: TaskqTaskView) => status.mutate({ id: t.id, status: "ready" }),
                   onRequeue: (t: TaskqTaskView) => status.mutate({ id: t.id, status: "ready" }),
                   onEnqueue: (t: TaskqTaskView) => enqueue.mutate(t.id),
+                  ...selectProps,
                 };
                 return [
                   holdTasks.length > 0 && (
@@ -277,6 +331,43 @@ export function TaskqPage() {
                 ].filter(Boolean);
               })
             )}
+            {/* Floating action bar when tasks are selected */}
+            {selectMode && selectedIds.size > 0 &&
+              createPortal(
+                <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2">
+                  <div className="flex items-center gap-3 rounded-xl bg-gray-900 px-4 py-3 shadow-2xl dark:bg-gray-800">
+                    <span className="text-sm font-medium text-white">{selectedIds.size} selected</span>
+                    <button
+                      type="button"
+                      className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/80"
+                      onClick={() => setSerialGroupDialogOpen(true)}
+                    >
+                      Set serial group
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded bg-gray-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-500"
+                      onClick={() => bulkSerialGroup.mutate({ ids: [...selectedIds], serial_group: null })}
+                      disabled={bulkSerialGroup.isPending}
+                    >
+                      Clear serial group
+                    </button>
+                    <button type="button" className="ml-1 text-gray-400 hover:text-white" onClick={exitSelectMode}>
+                      ✕
+                    </button>
+                  </div>
+                  {serialGroupDialogOpen && (
+                    <SerialGroupDialog
+                      existingGroups={existingSerialGroups}
+                      isPending={bulkSerialGroup.isPending}
+                      onApply={(name) => bulkSerialGroup.mutate({ ids: [...selectedIds], serial_group: name })}
+                      onCancel={() => setSerialGroupDialogOpen(false)}
+                    />
+                  )}
+                </div>,
+                document.body,
+              )
+            }
           </div>
         )}
         {tab === "workers" && (
@@ -298,6 +389,7 @@ export function TaskqPage() {
           mode={builder.mode}
           board={board}
           task={builder.mode === "edit" ? builder.task : undefined}
+          existingSerialGroups={existingSerialGroups}
           onClose={() => setBuilder(null)}
           onSaved={(b) => {
             apply(b);
@@ -337,6 +429,9 @@ function TaskCard({
   onRequeue,
   onEnqueue,
   dragHandle,
+  selectMode,
+  isSelected,
+  onToggleSelect,
 }: {
   task: TaskqTaskView;
   onEdit: () => void;
@@ -346,6 +441,9 @@ function TaskCard({
   onEnqueue: () => void;
   /** A drag-grip element (from the section's useDragReorder), when reorderable. */
   dragHandle?: React.ReactNode;
+  selectMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const editable = task.status !== "claimed" && task.status !== "done";
@@ -357,6 +455,7 @@ function TaskCard({
     task.slug && `id:${task.slug}`,
     task.needs.length > 0 && `needs:${task.needs.join(",")}`,
     task.group_key && `group:${task.group_key}`,
+    task.serial_group && `serial:${task.serial_group}`,
     task.recur_interval_ms != null && `every:${fmtInterval(task.recur_interval_ms)}`,
     task.repo && `repo:${task.repo}`,
   ].filter(Boolean) as string[];
@@ -404,8 +503,22 @@ function TaskCard({
   })();
 
   return (
-    <div className={`group ${CARD_CLASS} flex gap-2 p-3`}>
-      {dragHandle}
+    <div
+      className={`group ${CARD_CLASS} flex gap-2 p-3 ${selectMode ? "cursor-pointer" : ""} ${isSelected ? "ring-2 ring-accent" : ""}`}
+      onClick={selectMode ? onToggleSelect : undefined}
+    >
+      {selectMode && (
+        <div className="flex shrink-0 items-start pt-0.5">
+          <input
+            type="checkbox"
+            checked={!!isSelected}
+            onChange={onToggleSelect}
+            onClick={(e) => e.stopPropagation()}
+            className="h-4 w-4 rounded border-gray-300 accent-accent"
+          />
+        </div>
+      )}
+      {!selectMode && dragHandle}
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -501,6 +614,9 @@ function BoardSection({
   onHold,
   onRequeue,
   onEnqueue,
+  selectMode,
+  selectedIds,
+  onToggleSelect,
 }: {
   status: TaskqStatus;
   /** Override the section heading; defaults to TASKQ_STATUS_LABELS[status]. */
@@ -516,10 +632,13 @@ function BoardSection({
   onHold: (t: TaskqTaskView) => void;
   onRequeue: (t: TaskqTaskView) => void;
   onEnqueue: (t: TaskqTaskView) => void;
+  selectMode?: boolean;
+  selectedIds?: Set<number>;
+  onToggleSelect?: (id: number) => void;
 }) {
   const ids = tasks.map((t) => String(t.id));
   const dr = useDragReorder({ ids, axis: "y", onReorder: (next) => onReorder(next.map(Number)) });
-  const canDrag = reorderable && tasks.length > 1 && !collapsed;
+  const canDrag = reorderable && tasks.length > 1 && !collapsed && !selectMode;
   return (
     <section>
       <button
@@ -535,7 +654,20 @@ function BoardSection({
         <div {...(canDrag ? dr.containerProps : {})} className="space-y-2">
           {tasks.map((t) => {
             if (!canDrag) {
-              return <TaskCard key={t.id} task={t} onEdit={() => onEdit(t)} onDelete={() => onDelete(t)} onHold={() => onHold(t)} onRequeue={() => onRequeue(t)} onEnqueue={() => onEnqueue(t)} />;
+              return (
+                <TaskCard
+                  key={t.id}
+                  task={t}
+                  onEdit={() => onEdit(t)}
+                  onDelete={() => onDelete(t)}
+                  onHold={() => onHold(t)}
+                  onRequeue={() => onRequeue(t)}
+                  onEnqueue={() => onEnqueue(t)}
+                  selectMode={selectMode}
+                  isSelected={selectedIds?.has(t.id)}
+                  onToggleSelect={() => onToggleSelect?.(t.id)}
+                />
+              );
             }
             const idStr = String(t.id);
             const ip = dr.getItemProps(idStr);
@@ -564,6 +696,56 @@ function BoardSection({
         </div>
       )}
     </section>
+  );
+}
+
+/** Small popup for naming/choosing a serial group when applying via the action bar. */
+function SerialGroupDialog({
+  existingGroups,
+  isPending,
+  onApply,
+  onCancel,
+}: {
+  existingGroups: string[];
+  isPending: boolean;
+  onApply: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState("");
+  return (
+    <div className="mt-2 rounded-xl border border-gray-700 bg-gray-900 px-4 py-3 shadow-2xl dark:bg-gray-800">
+      <p className="mb-2 text-sm font-medium text-white">Serial group name</p>
+      <input
+        autoFocus
+        className="mb-3 w-full rounded border border-gray-600 bg-gray-800 px-2 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-accent"
+        placeholder="e.g. deploy-sequence"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        list="serial-group-datalist-bar"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && value.trim()) onApply(value.trim());
+          if (e.key === "Escape") onCancel();
+        }}
+      />
+      <datalist id="serial-group-datalist-bar">
+        {existingGroups.map((g) => (
+          <option key={g} value={g} />
+        ))}
+      </datalist>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 hover:bg-accent/80"
+          disabled={!value.trim() || isPending}
+          onClick={() => onApply(value.trim())}
+        >
+          Apply
+        </button>
+        <button type="button" className="rounded bg-gray-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-500" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -761,12 +943,14 @@ function TaskqBuilderModal({
   mode,
   board,
   task,
+  existingSerialGroups,
   onClose,
   onSaved,
 }: {
   mode: "create" | "edit";
   board: TaskqBoard;
   task?: TaskqTaskView;
+  existingSerialGroups: string[];
   onClose: () => void;
   onSaved: (board: TaskqBoard) => void;
 }) {
@@ -808,6 +992,7 @@ function TaskqBuilderModal({
   const [repo, setRepo] = useState(task?.repo ?? "");
   const [needs, setNeeds] = useState<string[]>(task?.needs ?? []);
   const [group, setGroup] = useState(task?.group_key ?? "");
+  const [serialGroup, setSerialGroup] = useState(task?.serial_group ?? "");
   const [scheduling, setScheduling] = useState<Scheduling>(initialScheduling(task));
   const [intervalN, setIntervalN] = useState(initialIntervalN(task));
   const [intervalUnit, setIntervalUnit] = useState(initialIntervalUnit(task));
@@ -828,6 +1013,7 @@ function TaskqBuilderModal({
     repo: repo.trim() || undefined,
     needs,
     group_key: group.trim() || undefined,
+    serial_group: serialGroup.trim() || undefined,
     recur_interval_ms: intervalMs,
     is_saved: scheduling === "saved" || scheduling === "interval",
     is_template: scheduling === "template",
@@ -858,6 +1044,7 @@ function TaskqBuilderModal({
           repo,
           needs,
           group_key: group,
+          serial_group: serialGroup,
           note,
           recur_n: null,
           recur_interval_ms: intervalMs ?? null,
@@ -980,6 +1167,20 @@ function TaskqBuilderModal({
         </Field>
         <Field label="Group">
           <input className={FIELD_CLASS} value={group} onChange={(e) => setGroup(e.target.value)} placeholder="vault" />
+        </Field>
+        <Field label="Serial group" hint="Only one task in the group runs at a time">
+          <input
+            className={FIELD_CLASS}
+            value={serialGroup}
+            onChange={(e) => setSerialGroup(e.target.value)}
+            placeholder="e.g. deploy-sequence"
+            list="serial-group-datalist"
+          />
+          <datalist id="serial-group-datalist">
+            {existingSerialGroups.map((g) => (
+              <option key={g} value={g} />
+            ))}
+          </datalist>
         </Field>
 
         <div className="md:col-span-2">

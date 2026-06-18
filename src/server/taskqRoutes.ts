@@ -4,14 +4,16 @@
  * routes just open the handle, call it, and return the rebuilt board. Run-side
  * verbs (claim/complete) aren't here — the orchestrator/CLI own those.
  *
- *   GET    /api/taskq                      → TaskqBoard
- *   GET    /api/taskq/capacity             → CapacitySnapshot (schedule decision + ready-task eligibility)
- *   POST   /api/taskq/tasks                → add  { draft, position? } → { board, id }
- *   PATCH  /api/taskq/tasks/:id            → update { patch } → { board }
- *   DELETE /api/taskq/tasks/:id            → { board }
- *   POST   /api/taskq/tasks/:id/status     → { status, note? } → { board }
- *   POST   /api/taskq/tasks/:id/move       → { position } → { board }
- *   POST   /api/taskq/tasks/:id/enqueue    → clone a template into a ready one-shot → { board, id }
+ *   GET    /api/taskq                               → TaskqBoard
+ *   GET    /api/taskq/capacity                      → CapacitySnapshot
+ *   GET    /api/taskq/serial-groups                 → { groups: string[] }
+ *   POST   /api/taskq/tasks                         → add  { draft, position? } → { board, id }
+ *   POST   /api/taskq/tasks/bulk-serial-group       → { ids, serial_group } → { board }
+ *   PATCH  /api/taskq/tasks/:id                     → update { patch } → { board }
+ *   DELETE /api/taskq/tasks/:id                     → { board }
+ *   POST   /api/taskq/tasks/:id/status              → { status, note? } → { board }
+ *   POST   /api/taskq/tasks/:id/move                → { position } → { board }
+ *   POST   /api/taskq/tasks/:id/enqueue             → clone a template into a ready one-shot → { board, id }
  */
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -24,6 +26,7 @@ import {
   getNeeds,
   getTask,
   listDrainRuns,
+  listSerialGroups,
   listTasks,
   modelAliasFromId,
   moveTask,
@@ -32,6 +35,7 @@ import {
   type Position,
   recordRun,
   releaseLease,
+  setSerialGroup,
   setStatus,
   TASK_STATUSES,
   type TaskPatch,
@@ -344,6 +348,31 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
     return json(tailWatchdogLog(Number.isFinite(n) ? n : 200));
   }
 
+  // Serial groups: list distinct names in the queue.
+  if (pathname === '/api/taskq/serial-groups') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    return json({ groups: listSerialGroups(getTaskqDb()) });
+  }
+
+  // Bulk-assign serial_group on a set of task ids (or clear with null).
+  if (pathname === '/api/taskq/tasks/bulk-serial-group') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    const body = await readJsonBody<{ ids?: unknown; serial_group?: unknown }>(req);
+    if (!Array.isArray(body?.ids) || !body.ids.every((x) => typeof x === 'number')) {
+      return jsonError('ids (number[]) is required', 400);
+    }
+    if (body.serial_group !== null && typeof body.serial_group !== 'string') {
+      return jsonError('serial_group must be a string or null', 400);
+    }
+    const name = typeof body.serial_group === 'string' ? body.serial_group.trim() : null;
+    try {
+      setSerialGroup(getTaskqDb(), body.ids as number[], name);
+      return json({ board: board() });
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'bulk serial group failed', 400);
+    }
+  }
+
   // Drain run audit log: recent drain pass decisions + outcomes.
   if (pathname === '/api/taskq/drain-runs') {
     if (req.method !== 'GET') return jsonError('use GET', 405);
@@ -388,6 +417,7 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
         think: tmpl.think ?? undefined,
         repo: tmpl.repo ?? undefined,
         group_key: tmpl.group_key ?? undefined,
+        serial_group: tmpl.serial_group ?? undefined,
         note: undefined,
         is_template: false,
       };
