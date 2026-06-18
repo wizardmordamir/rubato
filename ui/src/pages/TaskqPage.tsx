@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DragHandle, DropIndicator, ModalShell, useDragReorder } from "cwip/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -49,6 +49,7 @@ import {
   type TaskqStatus,
   type TaskqTaskView,
   updateTaskqTask,
+  deriveTaskTitle,
 } from "../api";
 import { Alert, Badge, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLASS, PageHeading, Spinner, Tabs, Tooltip } from "../components";
 import { useConfirm } from "../confirm";
@@ -752,6 +753,7 @@ function TaskqBuilderModal({
   const [statusV, setStatusV] = useState<TaskqStatus>(task?.status ?? "ready");
   const [title, setTitle] = useState(task?.title ?? "");
   const [body, setBody] = useState(task?.body ?? "");
+  const derivedTitle = useMemo(() => deriveTaskTitle(body), [body]);
   const [model, setModel] = useState(task?.model ?? "");
   const [think, setThink] = useState(task?.think ?? "");
   const [slug, setSlug] = useState(task?.slug ?? "");
@@ -769,7 +771,7 @@ function TaskqBuilderModal({
   const intervalMs = scheduling === "interval" ? (Number.parseInt(intervalN, 10) || 1) * (unitMs[intervalUnit] ?? 3600_000) : undefined;
 
   const draft: TaskqNewTask = {
-    title,
+    title: title.trim() || derivedTitle,
     status: scheduling === "template" ? "on_hold" : statusV,
     body: body.trim() || undefined,
     model: model || undefined,
@@ -799,7 +801,7 @@ function TaskqBuilderModal({
       // mode so a count-based task can be migrated to time-based or template.
       return (
         await updateTaskqTask(task.id, {
-          title,
+          title: title.trim() || derivedTitle,
           status: scheduling === "template" ? "on_hold" : statusV,
           body,
           model,
@@ -823,7 +825,7 @@ function TaskqBuilderModal({
     onError: (e) => notify(e instanceof Error ? e.message : "save failed", "error"),
   });
 
-  const titleError = !title.trim();
+  const titleError = !title.trim() && !derivedTitle;
 
   return (
     <ModalShell
@@ -888,8 +890,8 @@ function TaskqBuilderModal({
         )}
 
         <div className="md:col-span-2">
-          <Field label="Title">
-            <input className={FIELD_CLASS} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What to do" />
+          <Field label="Title" hint={!title.trim() && derivedTitle ? `Will use: "${derivedTitle}"` : "Optional — derived from details if blank"}>
+            <input className={FIELD_CLASS} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={derivedTitle || "What to do"} />
           </Field>
         </div>
         <div className="md:col-span-2">
