@@ -47,4 +47,8 @@ async function main(): Promise<void> {
   console.log(`  URL:      ${build.url}`);
 }
 
-if (import.meta.main) await main();
+if (import.meta.main)
+  main().catch((e) => {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  });

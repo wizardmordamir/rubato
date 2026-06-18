@@ -545,29 +545,27 @@ function pickMatch(query: string, apps: AppConfig[]): AppConfig | null {
 
   if (matches.length === 0) return null;
   if (matches.length > 1) {
-    console.error(`rubato: "${query}" is ambiguous — it matches:`);
-    for (const m of matches) console.error(`  - ${m.name}  (${m.absolutePath})`);
-    console.error(`Remove the shared key or rename one in ${APPS_FILE}.`);
-    process.exit(1);
+    const list = matches.map((m) => `  - ${m.name}  (${m.absolutePath})`).join('\n');
+    throw new Error(
+      `rubato: "${query}" is ambiguous — it matches:\n${list}\nRemove the shared key or rename one in ${APPS_FILE}.`,
+    );
   }
 
   const app = matches[0];
   if (app.missing) {
-    console.error(`rubato: "${app.name}" no longer exists at ${app.absolutePath}.`);
-    process.exit(1);
+    throw new Error(`rubato: "${app.name}" no longer exists at ${app.absolutePath}.`);
   }
   return app;
 }
 
 /**
- * Resolve a query to a single app for a command, or print an error to stderr
- * and exit. Keeps stdout clean so `goto` can emit only the path.
+ * Resolve a query to a single app for a command. Throws with an actionable
+ * message when the query is unresolved or ambiguous.
  */
 export async function resolveApp(query: string): Promise<AppConfig> {
   const app = pickMatch(query, await loadApps());
   if (!app) {
-    console.error(`rubato: no app matches "${query}". Run \`rubato-scan\` or edit ${APPS_FILE}.`);
-    process.exit(1);
+    throw new Error(`rubato: no app matches "${query}". Run \`rubato-scan\` or edit ${APPS_FILE}.`);
   }
   return app;
 }
@@ -587,7 +585,7 @@ export interface GotoTarget {
  * or `gotab ~/notes.md` work without registering them first. Returns null when
  * nothing matches and the query isn't a real path, leaving the caller to decide
  * what that means (e.g. `gotab` opens the registry so you can add it). Ambiguity
- * and missing apps still error + exit (via `pickMatch`).
+ * and missing apps throw (via `pickMatch`).
  */
 export async function tryResolveAppOrPath(query: string): Promise<GotoTarget | null> {
   const app = pickMatch(query, await loadApps());
@@ -604,16 +602,15 @@ export async function tryResolveAppOrPath(query: string): Promise<GotoTarget | n
 }
 
 /**
- * Like `tryResolveAppOrPath`, but prints an error to stderr and exits when
- * nothing matches — the behavior `goto` relies on to keep stdout a clean path.
+ * Like `tryResolveAppOrPath`, but throws when nothing matches. Callers that
+ * need a clean CLI error message should catch and print `err.message`.
  */
 export async function resolveAppOrPath(query: string): Promise<GotoTarget> {
   const target = await tryResolveAppOrPath(query);
   if (target) return target;
-  console.error(
+  throw new Error(
     `rubato: no app matches "${query}", and it isn't a file or dir. Run \`rubato-scan\` or edit ${APPS_FILE}.`,
   );
-  process.exit(1);
 }
 
 /** Derive repoName from a repo's git remote, falling back to the given default. */

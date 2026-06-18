@@ -14,11 +14,18 @@
 
 import { gotoTarget, resolveAppOrPath } from '../lib/apps';
 
-const query = process.argv[2];
-if (!query) {
-  console.error('usage: goto <name|alias|path>');
-  process.exit(1);
+async function main(): Promise<void> {
+  const query = process.argv[2];
+  if (!query) {
+    console.error('usage: goto <name|alias|path>');
+    process.exit(1);
+  }
+  const target = await resolveAppOrPath(query);
+  console.log(await gotoTarget(target.absolutePath));
 }
 
-const target = await resolveAppOrPath(query);
-console.log(await gotoTarget(target.absolutePath));
+if (import.meta.main)
+  main().catch((e) => {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  });
