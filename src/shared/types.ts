@@ -252,6 +252,9 @@ export type ServerEvent =
       isError?: boolean;
     }
   | { type: 'ask:title'; conversationId: string; title: string }
+  // Post-generation code checks found issues; one self-repair turn is now streaming
+  // a corrected answer over the same messageId. `issues` is a short human summary.
+  | { type: 'ask:repair_started'; conversationId: string; messageId: string; issues: string[] }
   | { type: 'ask:done'; conversationId: string; messageId: string; message: ChatMessage }
   | { type: 'ask:error'; conversationId: string; messageId: string; error: string }
   | { type: 'index:status'; status: IndexStatus };

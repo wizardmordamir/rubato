@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildGeneralPrompt, buildPrompt, formatAttachments, packContext } from './prompt';
+import { buildGeneralPrompt, buildPrompt, CODE_GROUNDING_RULES, formatAttachments, isCodeQuestion, packContext } from './prompt';
 import type { RetrievedChunk } from './types';
 
 const chunk = (path: string, text: string): RetrievedChunk => ({
@@ -97,6 +97,41 @@ describe('history (multi-turn memory)', () => {
     const built = buildGeneralPrompt('follow-up', { history });
     expect(built.messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
     expect(built.messages[3].content).toBe('follow-up');
+  });
+});
+
+describe('isCodeQuestion', () => {
+  test('true for code-shaped asks', () => {
+    expect(isCodeQuestion('write a script to parse usage')).toBe(true);
+    expect(isCodeQuestion('fix the bug in foo.ts')).toBe(true);
+    expect(isCodeQuestion('show me an example')).toBe(true);
+  });
+
+  test('false for plain prose questions', () => {
+    expect(isCodeQuestion('what does this app do?')).toBe(false);
+    expect(isCodeQuestion('who is the owner of the project')).toBe(false);
+  });
+});
+
+describe('code grounding injection', () => {
+  test('buildPrompt injects code rules only when codeMode is set', () => {
+    const on = buildPrompt('app', 'q', [], { codeMode: true });
+    expect(on.messages[0].content).toContain('Code-generation rules');
+    const off = buildPrompt('app', 'q', [], { codeMode: false });
+    expect(off.messages[0].content).not.toContain('Code-generation rules');
+  });
+
+  test('buildPrompt injects the runtime reference block when provided', () => {
+    const built = buildPrompt('app', 'q', [], { runtimeRef: '[Runtime Reference]\nRuntime: Bun 1.2.3' });
+    expect(built.messages[0].content).toContain('[Runtime Reference]');
+    expect(built.messages[0].content).toContain('Bun 1.2.3');
+  });
+
+  test('buildGeneralPrompt honors codeMode + runtimeRef', () => {
+    const sys = buildGeneralPrompt('write code', { codeMode: true, runtimeRef: '[Runtime Reference]\nx' }).messages[0].content;
+    expect(sys).toContain('Code-generation rules');
+    expect(sys).toContain('[Runtime Reference]');
+    expect(CODE_GROUNDING_RULES).toContain('promisify');
   });
 });
 

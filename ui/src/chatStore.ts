@@ -69,6 +69,15 @@ export const chatStore = {
       case "ask:status":
         ensure(ev.conversationId, ev.messageId).note = ev.text;
         break;
+      case "ask:repair_started": {
+        // The server found code issues and is re-streaming a corrected answer over
+        // the same message — clear the first answer so tokens don't concatenate.
+        const s = ensure(ev.conversationId, ev.messageId);
+        s.text = "";
+        s.thinking = "";
+        s.note = `Fixing ${ev.issues.length} code issue${ev.issues.length === 1 ? "" : "s"}…`;
+        break;
+      }
       case "ask:tool_call":
         ensure(ev.conversationId, ev.messageId).toolEvents.push({
           toolCallId: ev.toolCallId,

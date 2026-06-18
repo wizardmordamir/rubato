@@ -16,6 +16,7 @@ import { addTask, type NewTask } from 'cwip/taskq';
 import { completeText } from '../api/llm/complete';
 import { llmFromConfig } from '../api/llm/fromConfig';
 import type { LlmMessage } from '../api/llm/types';
+import { CODE_GROUNDING_RULES } from '../lib/ai/prompt';
 import { loadConfig } from '../lib/config';
 import type {
   DraftDetail,
@@ -336,7 +337,12 @@ export async function enhanceOnce(deps: { complete?: CompleteFn; publish?: Publi
 
   db.run(`UPDATE task_drafts SET enhance_state = 'processing', updated_at = ? WHERE id = ?`, [now(), row.id]);
 
-  const system = row.pending_prompt ?? defaultPromptBody();
+  // Inherit the same anti-hallucination guidance the chat uses, so draft→spec
+  // rewrites that contain code/commands don't bake in JSON-assuming or
+  // await-on-callback patterns. Opt-out via the global codeGrounding flag.
+  const grounding = (await loadConfig()).ai?.codeGrounding ?? true;
+  const basePrompt = row.pending_prompt ?? defaultPromptBody();
+  const system = grounding ? `${basePrompt}${CODE_GROUNDING_RULES}` : basePrompt;
   const prev = row.current_enhanced_id
     ? (db.query(`SELECT ai_specification FROM enhanced_tasks WHERE id = ?`).get(row.current_enhanced_id) as
         | { ai_specification: string }

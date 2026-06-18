@@ -11,6 +11,7 @@
 
 import { completeText } from '../api/llm/complete';
 import type { LlmMessage, LlmProvider } from '../api/llm/types';
+import { CODE_GROUNDING_RULES } from '../lib/ai/prompt';
 import {
   formatObservations,
   type ObservationLine,
@@ -46,6 +47,10 @@ export interface AgenticGatherArgs {
   history?: LlmMessage[];
   /** Compact App Map prepended to the system prompt for global app awareness. */
   appMap?: string;
+  /** `[Runtime Reference]` grounding block (Bun version, app path, deps, tool versions). */
+  runtimeRef?: string;
+  /** When set, append the code-generation rules + few-shot anchors to the system prompt. */
+  codeMode?: boolean;
   /** Optional timing recorder; records seed retrieval, model rounds, tool calls. */
   tracer?: Tracer;
 }
@@ -87,7 +92,8 @@ function fsSystem(root: string): string {
 }
 
 export async function runAgenticGather(args: AgenticGatherArgs): Promise<AgenticGatherResult> {
-  const { app, fsRoot, question, provider, model, conversationId, messageId, maxRounds, history, appMap, tracer } = args;
+  const { app, fsRoot, question, provider, model, conversationId, messageId, maxRounds, history, appMap, runtimeRef, codeMode, tracer } =
+    args;
   const status = (text: string) => emit({ type: 'ask:status', conversationId, messageId, text });
 
   // Two tool sets: app-scoped (indexed repo tools) or general filesystem tools
@@ -141,8 +147,15 @@ export async function runAgenticGather(args: AgenticGatherArgs): Promise<Agentic
     ? `\n\nUse this map of the app's structure to orient yourself and connect references ` +
       `(e.g. a "privacy page" to the "/private" route) before using the tools:\n\n${appMap}`
     : '';
+  const runtimeBlock = runtimeRef?.trim()
+    ? `\n\nGround every fact about the runtime and dependencies in this — do not guess versions, paths, or available packages:\n\n${runtimeRef}`
+    : '';
+  const rulesBlock = codeMode ? CODE_GROUNDING_RULES : '';
   const messages: LlmMessage[] = [
-    { role: 'system', content: `${system}${mapBlock}\n\n${renderToolInstructions(tools.map((t) => t.spec))}` },
+    {
+      role: 'system',
+      content: `${system}${mapBlock}${runtimeBlock}\n\n${renderToolInstructions(tools.map((t) => t.spec))}${rulesBlock}`,
+    },
     ...(history ?? []),
     { role: 'user', content: `Question: ${question}\n\nInitial context:\n${seedContext}` },
   ];

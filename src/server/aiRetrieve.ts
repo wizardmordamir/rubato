@@ -44,6 +44,29 @@ function noteEmbeddingDegraded(app: AppConfig, err: unknown): void {
   void d.finish('warn');
 }
 
+/** Matches a top-level TypeScript `interface X`/`type X` declaration in a chunk. */
+const TYPE_DECL_RE = /^(?:export\s+)?(?:interface|type)\s+\w+/m;
+
+/**
+ * Nudge TypeScript type/interface declarations up the candidate pool. Data-shape
+ * hallucination (inventing fields, mismatched request/response types) was a top
+ * failure mode; surfacing the real declaration when a question references a
+ * type-shaped term is the cheapest fix. Scale-independent (multiplicative) so it
+ * works for both BM25 and RRF score ranges, then re-sort. Small enough to only
+ * reorder genuine near-matches, not drag unrelated types to the top.
+ */
+function boostTypeChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
+  let boosted = false;
+  for (const c of chunks) {
+    if (/\.tsx?$/.test(c.relativePath) && TYPE_DECL_RE.test(c.text)) {
+      c.score *= 1.2;
+      boosted = true;
+    }
+  }
+  if (boosted) chunks.sort((a, b) => b.score - a.score);
+  return chunks;
+}
+
 /** Rank the top-K chunks for a question with the configured scorer (pre-expansion). */
 async function rank(
   app: AppConfig,
@@ -93,7 +116,7 @@ export async function retrieve(
   const rerankModel = app.ai?.rerankModel ?? ai.rerankModel ?? DEFAULT_RERANK_MODEL;
   const rerankOn = (app.ai?.rerank ?? ai.rerank ?? true) && rerankAvailable(rerankModel);
   const poolK = rerankOn ? topK * 3 : topK;
-  const pool = await rank(app, question, chunks, poolK, ai);
+  const pool = boostTypeChunks(await rank(app, question, chunks, poolK, ai));
   const ranked = rerankOn ? await rerank(question, pool, { model: rerankModel, topK }) : pool;
 
   // Expand ranked files to their sibling chunks so whole-file / enumeration

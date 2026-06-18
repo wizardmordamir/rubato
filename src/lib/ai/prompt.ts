@@ -22,6 +22,45 @@ export interface PromptOptions {
   history?: LlmMessage[];
   /** Compact App Map (routes/endpoints/dirs) prepended to the system prompt for global awareness. */
   appMap?: string;
+  /** `[Runtime Reference]` block (Bun version, app path, deps, tool versions) for code grounding. */
+  runtimeRef?: string;
+  /** When set, append the code-generation rules + few-shot anchors to the system prompt. */
+  codeMode?: boolean;
+}
+
+/**
+ * Anti-hallucination rules + tiny golden few-shot anchors for code-shaped
+ * questions. Targets the exact failure modes a local coder model was observed
+ * producing (JSON-assuming, await-on-callback, wrong shapes, relative FS paths).
+ * Kept small (~250 tokens) and only injected in code mode.
+ */
+export const CODE_GROUNDING_RULES =
+  '\n\nCode-generation rules (follow exactly):\n' +
+  "- Do NOT assume a CLI/tool outputs JSON unless the context shows it. If output format is unknown, write a robust string parser (split lines, extract fields) rather than calling JSON.parse on it.\n" +
+  '- Use the exact request/response and data shapes shown in the context. If you need a type that is not in the context, declare it explicitly before using it — never invent fields on an existing type.\n' +
+  '- Node `child_process.exec`/`execFile` are callback-style and return a ChildProcess, not a Promise. To await them use `util.promisify(exec)`, or prefer `Bun.$`/`Bun.spawn`. Never `await` a callback-style call directly.\n' +
+  '- Anchor filesystem paths with `path.join(import.meta.dir, …)` (or `__dirname`), never bare relative strings, so they survive a different working directory.\n' +
+  'Examples of the correct patterns:\n' +
+  '```ts\n' +
+  "import { promisify } from 'node:util';\n" +
+  "import { exec } from 'node:child_process';\n" +
+  'const execAsync = promisify(exec);\n' +
+  "const { stdout } = await execAsync('git status');\n" +
+  '```\n' +
+  '```ts\n' +
+  "import { join } from 'node:path';\n" +
+  "const dataPath = join(import.meta.dir, '..', 'data', 'cache.json');\n" +
+  '```';
+
+/**
+ * Heuristic: is this a code-shaped question (worth the runtime block + code rules)?
+ * Cheap regex, no LLM call; a false positive only injects harmless extra guidance.
+ */
+export function isCodeQuestion(question: string): boolean {
+  return (
+    /\b(write|implement|add|create|build|fix|refactor|generate|code|script|function|parse|example)\b/i.test(question) ||
+    /\.(ts|tsx|js|jsx|py|go|rs|java|rb|sh|sql|json|yaml|yml)\b/i.test(question)
+  );
 }
 
 /** Prepend the App Map (when present) to a system prompt for global app awareness. */
@@ -30,6 +69,20 @@ function withAppMap(system: string, appMap?: string): string {
     ? `${system}\n\nUse this map of the app's structure to orient yourself and connect references ` +
         `(e.g. a "privacy page" to the "/private" route) before relying on the snippets below:\n\n${appMap}`
     : system;
+}
+
+/** Prepend the `[Runtime Reference]` grounding block (when present) to a system prompt. */
+function withRuntimeRef(system: string, runtimeRef?: string): string {
+  return runtimeRef?.trim()
+    ? `${system}\n\nGround every fact about the runtime and dependencies in this — do not guess versions, paths, or available packages:\n\n${runtimeRef}`
+    : system;
+}
+
+/** Apply the optional runtime-ref grounding + code-mode rules to a base system prompt. */
+function applyCodeGrounding(system: string, opts: PromptOptions): string {
+  let out = withRuntimeRef(system, opts.runtimeRef);
+  if (opts.codeMode) out += CODE_GROUNDING_RULES;
+  return out;
 }
 
 /**
@@ -108,7 +161,7 @@ export function buildPrompt(
       "to this app's own code), answer it directly and accurately from your own knowledge. If it " +
       "does depend on this app's code, note that the app isn't indexed for this question yet and " +
       'answer as best you can, flagging uncertainty rather than guessing.';
-  const system = withAppMap(baseSystem, opts.appMap);
+  const system = applyCodeGrounding(withAppMap(baseSystem, opts.appMap), opts);
 
   const sections: string[] = [];
   if (att.block) sections.push(`Attached files:\n\n${att.block}`);
@@ -131,9 +184,10 @@ export function buildGeneralPrompt(question: string, opts: PromptOptions = {}): 
   const attachments = opts.attachments ?? [];
   const att = attachments.length ? formatAttachments(attachments, budget) : { block: '', tokens: 0 };
 
-  const system =
+  const baseSystem =
     "You are a helpful assistant. Answer the user's question clearly and accurately" +
     (attachments.length ? ', using the attached files where relevant.' : '.');
+  const system = applyCodeGrounding(baseSystem, opts);
   const user = att.block ? `Attached files:\n\n${att.block}\n\n---\n\nQuestion: ${question}` : question;
 
   return {

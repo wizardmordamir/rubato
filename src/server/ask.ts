@@ -12,7 +12,9 @@ import { randomUUID } from 'node:crypto';
 import { completeText } from '../api/llm/complete';
 import { llmFromConfig } from '../api/llm/fromConfig';
 import type { LlmMessage, LlmProvider } from '../api/llm/types';
-import { buildGeneralPrompt, buildPrompt } from '../lib/ai/prompt';
+import { formatIssuesForRepair, runCodeChecks } from '../lib/ai/codeCheck';
+import { buildGeneralPrompt, buildPrompt, isCodeQuestion } from '../lib/ai/prompt';
+import { buildRuntimeRef } from '../lib/ai/runtimeRef';
 import { buildPlannerPrompt, parseDecision } from '../lib/ai/selfAsk';
 import { estimateTokens } from '../lib/ai/tokens';
 import type { RetrievedChunk } from '../lib/ai/types';
@@ -207,6 +209,17 @@ async function streamAnswer(
   const model = app?.ai?.model ?? cfg.ai?.direct?.model;
   const maxContextTokens = app?.ai?.maxContextTokens ?? cfg.ai?.maxContextTokens ?? 6000;
 
+  // Code grounding/enhance: opt-out flags (default on), gated to code-shaped questions.
+  const codeGrounding = app?.ai?.codeGrounding ?? cfg.ai?.codeGrounding ?? true;
+  const codeEnhance = app?.ai?.codeEnhance ?? cfg.ai?.codeEnhance ?? true;
+  const codeEnhanceTsc = app?.ai?.codeEnhanceTsc ?? cfg.ai?.codeEnhanceTsc ?? false;
+  const codeMode = codeGrounding && isCodeQuestion(question);
+  // The self-repair turn re-sends the first answer, so it needs headroom; the
+  // effective num_ctx (unset ⇒ Ollama's small default) gates it.
+  const numCtx = app?.ai?.numCtx ?? cfg.ai?.direct?.numCtx ?? 0;
+  // Real runtime/deps/tool grounding — only for app-scoped code questions (needs a repo).
+  const runtimeRef = app && codeMode ? await buildRuntimeRef(app, question).catch(() => undefined) : undefined;
+
   // Multi-turn memory: replay prior turns of this conversation, bounded.
   const maxHistoryMessages = app?.ai?.maxHistoryMessages ?? cfg.ai?.maxHistoryMessages ?? 20;
   const maxHistoryTokens = app?.ai?.maxHistoryTokens ?? cfg.ai?.maxHistoryTokens ?? 3000;
@@ -232,6 +245,7 @@ async function streamAnswer(
       messageId,
       maxRounds: maxToolRounds,
       history,
+      codeMode,
       tracer,
     });
     messages = gathered.messages;
@@ -241,7 +255,7 @@ async function streamAnswer(
     // General (no-repo) chat: skip retrieval entirely; just the question + any
     // attached files. Honors the same context budget for the attachments.
     mode = 'general';
-    messages = buildGeneralPrompt(question, { maxContextTokens, attachments, history }).messages;
+    messages = buildGeneralPrompt(question, { maxContextTokens, attachments, history, codeMode }).messages;
   } else {
     // Index lazily on the first question about an app.
     if (!getStatus(app.name)) {
@@ -271,6 +285,8 @@ async function streamAnswer(
         maxRounds: maxToolRounds,
         history,
         appMap,
+        runtimeRef,
+        codeMode,
         tracer,
       });
       messages = gathered.messages;
@@ -280,7 +296,14 @@ async function streamAnswer(
       mode = 'self-ask';
       const maxRounds = Math.max(1, app.ai?.maxRetrievalRounds ?? cfg.ai?.maxRetrievalRounds ?? 4);
       const chunks = await gatherContext(app, question, provider, model, maxRounds, status, tracer);
-      const built = buildPrompt(app.name, question, chunks, { maxContextTokens, attachments, history, appMap });
+      const built = buildPrompt(app.name, question, chunks, {
+        maxContextTokens,
+        attachments,
+        history,
+        appMap,
+        runtimeRef,
+        codeMode,
+      });
       messages = built.messages;
       answerSources = built.used.map((c) => ({
         relativePath: c.relativePath,
@@ -351,6 +374,41 @@ async function streamAnswer(
         case 'done':
           break;
       }
+    }
+  }
+
+  // Post-generation safety net for code answers: check the buffered answer and, if
+  // automated checks surface issues, do exactly one self-repair turn before
+  // persisting. Chat-only (not general no-repo); gated on context headroom because
+  // the repair turn re-sends the first answer. codeEnhanceTsc adds the opt-in tsc pass.
+  if (codeEnhance && mode !== 'general' && isCodeQuestion(question)) {
+    if (numCtx >= 8192) {
+      const { issues } = await runCodeChecks(answer, { withTsc: codeEnhanceTsc });
+      if (issues.length) {
+        emit({ type: 'ask:repair_started', conversationId, messageId, issues: issues.map((i) => i.message) });
+        messages.push({ role: 'assistant', content: answer });
+        messages.push({
+          role: 'user',
+          content:
+            'The code in your previous answer has issues found by automated checks. ' +
+            'Re-output the ENTIRE corrected answer (not a diff), fixing every issue below and ' +
+            'keeping everything else the same:\n\n' +
+            formatIssuesForRepair(issues),
+        });
+        // Reset the buffers so we stream + persist only the corrected answer (over
+        // the same messageId; the UI clears the message on ask:repair_started).
+        answer = '';
+        thinking = '';
+        firstTokenMs = undefined;
+        await tracer.span(
+          'Answer (self-repair)',
+          'answer',
+          () => streamAndCollect(),
+          () => ({ detail: `${issues.length} issue(s) fixed` }),
+        );
+      }
+    } else {
+      status('Skipping code self-repair (context window < 8192).');
     }
   }
 

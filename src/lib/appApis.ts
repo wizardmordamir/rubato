@@ -262,6 +262,25 @@ export interface AppAiConfig {
   rerank?: boolean;
   /** Cross-encoder model id for re-ranking. Overrides global. */
   rerankModel?: string;
+  /**
+   * Inject a `[Runtime Reference]` block (Bun version, app path, key deps, probed CLI
+   * versions) + code-generation rules into the system prompt for code-shaped questions.
+   * Overrides global. Default true.
+   */
+  codeGrounding?: boolean;
+  /**
+   * After a code-shaped answer, run in-process syntax/async/path checks and, if any
+   * fire, do one self-repair turn before persisting. Auto-skips when the effective
+   * num_ctx < 8192 (the repair turn re-sends the first answer). Overrides global.
+   * Default true.
+   */
+  codeEnhance?: boolean;
+  /**
+   * Additionally run `tsc --noEmit` over extracted code blocks during codeEnhance.
+   * Noisy on fragments (missing imports/ambient types); best for complete-file
+   * snippets. Overrides global. Default false.
+   */
+  codeEnhanceTsc?: boolean;
 }
 
 /** Chat transport shape for a direct endpoint: OpenAI-compat `/v1` or Ollama-native `/api/chat`. */
@@ -370,4 +389,21 @@ export interface AiGlobalConfig {
   rerank?: boolean;
   /** Cross-encoder model id used for re-ranking (default "Xenova/ms-marco-MiniLM-L-6-v2"). */
   rerankModel?: string;
+  /**
+   * Inject a `[Runtime Reference]` block (Bun version, app path, key deps, probed CLI
+   * versions) + code-generation rules into the system prompt for code-shaped questions.
+   * Default true.
+   */
+  codeGrounding?: boolean;
+  /**
+   * Post-generation safety net for code answers: run in-process syntax/async/path
+   * checks and, if any fire, do one self-repair turn before persisting. Auto-skips
+   * when the effective num_ctx < 8192. Default true.
+   */
+  codeEnhance?: boolean;
+  /**
+   * Also run `tsc --noEmit` over extracted code blocks during codeEnhance. Noisy on
+   * fragments; best for complete-file snippets. Default false.
+   */
+  codeEnhanceTsc?: boolean;
 }

@@ -151,6 +151,8 @@ describe('forge', () => {
       return { text: 'ok', model: null };
     };
     await enhanceOnce({ complete });
-    expect(systemSeen).toBe('MY CUSTOM PROMPT');
+    // Typed text wins over the saved id and forms the BASE system prompt; the
+    // code-grounding rules (on by default) are appended after it.
+    expect(systemSeen.startsWith('MY CUSTOM PROMPT')).toBe(true);
   });
 });
