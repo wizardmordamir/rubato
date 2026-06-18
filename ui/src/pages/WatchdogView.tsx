@@ -272,7 +272,7 @@ function ControlBar({
             applies to the current state is the bright/colored button, the other
             looks disabled — so the row visibly reacts as the drain starts/stops.
             Both show a pending label the instant they're clicked. */}
-        <Tooltip multiline content="Start a new drain run now. The drainer launches headless claude -p workers to claim and complete tasks from TASKS.md. It self-locks so a second start while one runs just exits — safe to click even if unsure whether it's already running.">
+        <Tooltip multiline content="Start a new drain run once. The drainer launches headless claude -p workers to claim and complete tasks from TASKS.md. It self-locks so a second start while one runs just exits — safe to click even if unsure whether it's already running.">
           <button
             type="button"
             onClick={() => start.mutate()}
