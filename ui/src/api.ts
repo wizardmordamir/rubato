@@ -231,6 +231,17 @@ export const cloneApp = (body: { url: string; dest: string; name?: string; group
 /** Backfill cloneUrl from each git-repo app's origin remote where missing. */
 export const fillGitUrls = () =>
   postJson<{ filled: Array<{ name: string; cloneUrl: string }>; count: number }>("/api/apps/fill-git-urls", {});
+/** List subdirectories of a path for the folder-picker UI. */
+export interface BrowseDirResult {
+  path: string;
+  dirs: string[];
+  home: string;
+}
+export const browseDir = (path: string) =>
+  getJson<BrowseDirResult>(`/api/browse?path=${encodeURIComponent(path)}`);
+/** Scan a directory for git repos and register them. */
+export const scanAppsDir = (dir: string) =>
+  postJson<{ added: AppConfig[]; skipped: string[] }>("/api/apps/scan", { dir });
 export const fetchAppDetails = (name: string) =>
   getJson<AppDetails>(`/api/apps/${encodeURIComponent(name)}/details`);
 /** Open an app's directory in the configured editor (uses gotab's mechanism server-side). */

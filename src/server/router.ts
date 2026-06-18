@@ -20,10 +20,12 @@ import { makeCorrelationId } from 'cwip/node';
 import { COMMANDS, commandTags } from '../commands';
 import {
   type AppConfig,
+  browseDir,
   findMatches,
   loadApps,
   readPackageJson,
   removeApp,
+  scanAndRegister,
   setAppDb,
   setAppLinks,
   setAppTags,
@@ -713,6 +715,35 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
     const app = await resolveAppByName(appName);
     if (!app) return jsonError(`unknown app: ${appName}`, 404);
     return json(await indexApp(app));
+  }
+
+  // GET /api/browse?path=<dir> — list subdirs for the folder-picker UI.
+  if (pathname === '/api/browse') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    const dir = new URL(req.url).searchParams.get('path') ?? '';
+    try {
+      return json(await browseDir(dir));
+    } catch (err) {
+      return jsonError(err instanceof Error ? err.message : 'browse failed', 400);
+    }
+  }
+
+  // POST /api/apps/scan { dir } — discover git repos in a dir and register them.
+  if (pathname === '/api/apps/scan') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    let body: Record<string, unknown>;
+    try {
+      body = (await req.json()) as Record<string, unknown>;
+    } catch {
+      return jsonError('invalid JSON body', 400);
+    }
+    const dir = typeof body.dir === 'string' ? body.dir : '';
+    if (!dir) return jsonError('dir is required', 400);
+    try {
+      return json(await scanAndRegister(dir));
+    } catch (err) {
+      return jsonError(err instanceof Error ? err.message : 'scan failed', 400);
+    }
   }
 
   // POST /api/apps/clone { url, dest, name?, group? } — clone a repo + register it.

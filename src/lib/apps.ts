@@ -6,8 +6,8 @@
  * Unknown fields are preserved across re-scans, so user additions are safe.
  */
 
-import { readFile, stat } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { readFile, readdir, stat } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import { $ } from 'bun';
 import type { AppAiConfig, AppApi, CommandType, KnownApiName } from './appApis';
 import { APPS_FILE, expandPath } from './config';
@@ -637,6 +637,108 @@ export async function readPackageName(repoPath: string): Promise<string | undefi
   } catch {
     return undefined;
   }
+}
+
+/** Result of browsing a directory for the folder-picker UI. */
+export interface BrowseDirResult {
+  /** Resolved absolute path that was listed. */
+  path: string;
+  /** Subdirectory names (not paths) within `path`, sorted alphabetically. Hidden dirs (starting with `.`) are excluded. */
+  dirs: string[];
+  /** User's home directory, for the "Home" shortcut. */
+  home: string;
+}
+
+/**
+ * List subdirectories of `dir` for the folder-picker UI. Expands `~` and relative
+ * paths. Hidden entries (`.foo`) are excluded so the list stays navigable.
+ */
+export async function browseDir(dir: string): Promise<BrowseDirResult> {
+  const home = expandPath('~');
+  const resolved = resolve(expandPath(dir || home));
+  let entries: string[];
+  try {
+    const raw = await readdir(resolved, { withFileTypes: true });
+    entries = raw
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .map((e) => e.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    entries = [];
+  }
+  return { path: resolved, dirs: entries, home };
+}
+
+/** One git repo found by `scanDir`. */
+export interface ScannedApp {
+  name: string;
+  absolutePath: string;
+  dirName: string;
+  group: string;
+  cloneUrl?: string;
+}
+
+/**
+ * Scan `dir` for git repos (immediate children with a `.git` directory) and
+ * register any not already in the registry. Returns the list of newly added apps.
+ */
+export async function scanAndRegister(dir: string): Promise<{ added: AppConfig[]; skipped: string[] }> {
+  const resolved = resolve(expandPath(dir));
+  let entries: string[];
+  try {
+    const raw = await readdir(resolved, { withFileTypes: true });
+    entries = raw.filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    throw new Error(`Cannot read directory: ${resolved}`);
+  }
+
+  const apps = await loadApps();
+  const existingPaths = new Set(apps.map((a) => a.absolutePath));
+  const existingNames = new Set(apps.map((a) => a.name.toLowerCase()));
+
+  const added: AppConfig[] = [];
+  const skipped: string[] = [];
+
+  for (const entry of entries) {
+    const absPath = join(resolved, entry);
+    // Check for .git to confirm it's a git repo
+    let isGit = false;
+    try {
+      await stat(join(absPath, '.git'));
+      isGit = true;
+    } catch {
+      // not a git repo — skip
+    }
+    if (!isGit) continue;
+    if (existingPaths.has(absPath)) {
+      skipped.push(entry);
+      continue;
+    }
+    // Pick a unique name (add suffix if collision)
+    let name = basename(absPath);
+    let suffix = 2;
+    while (existingNames.has(name.toLowerCase())) {
+      name = `${basename(absPath)}-${suffix++}`;
+    }
+    existingNames.add(name.toLowerCase());
+
+    const group = basename(resolved);
+    const app: AppConfig = {
+      name,
+      absolutePath: absPath,
+      dirName: basename(absPath),
+      group,
+      aliases: [],
+    };
+    apps.push(app);
+    added.push(app);
+    existingPaths.add(absPath);
+  }
+
+  if (added.length > 0) {
+    await saveApps(apps);
+  }
+  return { added, skipped };
 }
 
 /** Parse a repo's package.json, or undefined if absent/unreadable. */
