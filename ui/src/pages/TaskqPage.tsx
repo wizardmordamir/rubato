@@ -2102,13 +2102,11 @@ function InstancesPanel() {
     <section>
       <button
         type="button"
-        className="mb-2 flex w-full items-center justify-between gap-2 text-left"
+        className="mb-2 flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
         onClick={() => setOpen((o) => !o)}
       >
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
-          Live instances <span className="text-gray-400">({items.length})</span>
-        </h3>
-        <span className="text-xs text-gray-400">{open ? "▼" : "▶"}</span>
+        <span className={`text-xs transition-transform ${open ? "rotate-90" : ""}`}>▶</span>
+        Live instances <span className="text-gray-400">({items.length})</span>
       </button>
       {open && items.length === 0 ? (
         <p className="text-sm text-gray-400">No workers claimed right now.</p>
@@ -2277,13 +2275,11 @@ function DrainRunsPanel() {
     <section>
       <button
         type="button"
-        className="mb-2 flex w-full items-center justify-between gap-2 text-left"
+        className="mb-2 flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
         onClick={() => setOpen((o) => !o)}
       >
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
-          Drain history {items.length > 0 && <span className="text-gray-400">({items.length})</span>}
-        </h3>
-        <span className="text-xs text-gray-400">{open ? "▼" : "▶"}</span>
+        <span className={`text-xs transition-transform ${open ? "rotate-90" : ""}`}>▶</span>
+        Drain history {items.length > 0 && <span className="text-gray-400">({items.length})</span>}
       </button>
       {open && items.length === 0 ? (
         <p className="text-sm text-gray-400">No drain runs recorded yet — runs will appear here after the next drain tick.</p>
