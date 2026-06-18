@@ -588,7 +588,13 @@ function TaskCard({
                   saved
                 </span>
               )}
-              {task.title}
+              {editable && !selectMode ? (
+                <button type="button" onClick={onEdit} className="hover:text-accent hover:underline">
+                  {task.title}
+                </button>
+              ) : (
+                task.title
+              )}
             </p>
             {(markers.length > 0 || sgColor) && (
               <div className="mt-1 flex flex-wrap gap-1 font-mono text-xs text-gray-500">
