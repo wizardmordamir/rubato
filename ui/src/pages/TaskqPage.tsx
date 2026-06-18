@@ -1265,6 +1265,7 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
     queryFn: fetchTaskqCapacity,
     refetchInterval: 8000,
   });
+  const [readyOpen, setReadyOpen] = useState(true);
 
   if (isLoading || !data) return null;
   const cap: TaskqCapacity = data;
@@ -1432,7 +1433,11 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
 
       {/* Ready task eligibility */}
       <div className={`${CARD_CLASS} p-3`}>
-        <div className="mb-2 flex items-center justify-between">
+        <button
+          type="button"
+          className="mb-2 flex w-full items-center justify-between gap-2 text-left"
+          onClick={() => setReadyOpen((o) => !o)}
+        >
           <Tooltip
             multiline
             content="Tasks currently in 'ready' status and eligible for the next drain pass. A task is unclaimable when no worker slot can serve its model requirement (Fleet mode mismatch). Fix by adding the required model to a fleet tier, or switch to Flat mode."
@@ -1447,11 +1452,12 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
               )
             </div>
           </Tooltip>
-        </div>
+          <span className="text-xs text-gray-400">{readyOpen ? "▼" : "▶"}</span>
+        </button>
 
-        {cap.totalReady === 0 ? (
+        {readyOpen && cap.totalReady === 0 ? (
           <p className="text-xs text-gray-400">No ready tasks — queue is empty or all tasks are blocked/on hold.</p>
-        ) : (
+        ) : readyOpen ? (
           <div className="space-y-1">
             {cap.readyTasks.map((t) => {
               const canClaim = t.claimableBySlots.length > 0;
@@ -1521,9 +1527,9 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
               );
             })}
           </div>
-        )}
+        ) : null}
 
-        {cap.maxJobs > 0 && cap.totalReady > 0 && cap.totalReady < cap.maxJobs && (
+        {readyOpen && cap.maxJobs > 0 && cap.totalReady > 0 && cap.totalReady < cap.maxJobs && (
           <p className="mt-2 text-xs text-gray-400">
             {cap.totalReady} ready task{cap.totalReady > 1 ? "s" : ""} · {cap.maxJobs} slots — only{" "}
             {cap.totalReady} worker{cap.totalReady > 1 ? "s" : ""} will run (others exit idle immediately).
@@ -1840,6 +1846,7 @@ function InstancesPanel() {
   const defaultModel = configQ.data?.config?.model ?? 'sonnet';
   const qc = useQueryClient();
   const { notify } = useToast();
+  const [open, setOpen] = useState(true);
   const release = useMutation({
     mutationFn: (id: number) => releaseTaskqInstance(id),
     onSuccess: (r) => {
@@ -1853,12 +1860,19 @@ function InstancesPanel() {
   const now = Date.now();
   return (
     <section>
-      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
-        Live instances <span className="text-gray-400">({items.length})</span>
-      </h3>
-      {items.length === 0 ? (
+      <button
+        type="button"
+        className="mb-2 flex w-full items-center justify-between gap-2 text-left"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+          Live instances <span className="text-gray-400">({items.length})</span>
+        </h3>
+        <span className="text-xs text-gray-400">{open ? "▼" : "▶"}</span>
+      </button>
+      {open && items.length === 0 ? (
         <p className="text-sm text-gray-400">No workers claimed right now.</p>
-      ) : (
+      ) : open ? (
         <div className="space-y-3">
           {items.map((i) => {
             const elapsed = now - i.claimed_at;
@@ -1974,11 +1988,13 @@ function InstancesPanel() {
             );
           })}
         </div>
+      ) : null}
+      {open && (
+        <p className="mt-2 text-xs text-gray-400">
+          Release returns a task to "ready" (drops the lease). To stop ALL work, use Graceful stop above. To cap how
+          many run at once, set Jobs / fleet tiers in Settings.
+        </p>
       )}
-      <p className="mt-2 text-xs text-gray-400">
-        Release returns a task to "ready" (drops the lease). To stop ALL work, use Graceful stop above. To cap how
-        many run at once, set Jobs / fleet tiers in Settings.
-      </p>
     </section>
   );
 }
@@ -1996,6 +2012,7 @@ function WorkerInfoCell({ label, children, wide }: { label: string; children: Re
 function DrainRunsPanel() {
   const { data: runs } = useQuery({ queryKey: ["taskq-drain-runs"], queryFn: () => fetchTaskqDrainRuns(30), refetchInterval: 5000 });
   const { data: logs } = useQuery({ queryKey: ["taskq-logs"], queryFn: () => fetchTaskqLogs(200), refetchInterval: 5000 });
+  const [open, setOpen] = useState(true);
 
   function fmtRunTs(epochMs: number): string {
     const d = new Date(epochMs);
@@ -2018,53 +2035,64 @@ function DrainRunsPanel() {
 
   return (
     <section>
-      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Drain history</h3>
-      {items.length === 0 ? (
+      <button
+        type="button"
+        className="mb-2 flex w-full items-center justify-between gap-2 text-left"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+          Drain history {items.length > 0 && <span className="text-gray-400">({items.length})</span>}
+        </h3>
+        <span className="text-xs text-gray-400">{open ? "▼" : "▶"}</span>
+      </button>
+      {open && items.length === 0 ? (
         <p className="text-sm text-gray-400">No drain runs recorded yet — runs will appear here after the next drain tick.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50 text-left text-gray-500 dark:border-gray-700 dark:bg-gray-800/60">
-                <th className="px-3 py-2 font-medium">Time</th>
-                <th className="px-3 py-2 font-medium">Decision</th>
-                <th className="px-3 py-2 font-medium">Reason</th>
-                <th className="px-3 py-2 font-medium">Workers</th>
-                <th className="px-3 py-2 font-medium">Completed</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-700/60">
-              {items.map((r) => (
-                <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                  <td className="whitespace-nowrap px-3 py-2 font-mono text-gray-600 dark:text-gray-300">
-                    {fmtRunTs(r.started_at)}
-                  </td>
-                  <td className="px-3 py-2">{decisionBadge(r.decision)}</td>
-                  <td className="px-3 py-2 text-gray-600 dark:text-gray-300">{r.reason}</td>
-                  <td className="px-3 py-2 text-gray-600 dark:text-gray-300">
-                    {r.decision === 'paused' ? '—' : `${r.jobs}/${r.max_jobs}`}
-                  </td>
-                  <td className="px-3 py-2 text-gray-600 dark:text-gray-300">
-                    {r.completed ? <span className="font-medium text-emerald-600 dark:text-emerald-400">{r.completed}</span> : '—'}
-                  </td>
+      ) : open ? (
+        <>
+          <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50 text-left text-gray-500 dark:border-gray-700 dark:bg-gray-800/60">
+                  <th className="px-3 py-2 font-medium">Time</th>
+                  <th className="px-3 py-2 font-medium">Decision</th>
+                  <th className="px-3 py-2 font-medium">Reason</th>
+                  <th className="px-3 py-2 font-medium">Workers</th>
+                  <th className="px-3 py-2 font-medium">Completed</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700/60">
+                {items.map((r) => (
+                  <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-gray-600 dark:text-gray-300">
+                      {fmtRunTs(r.started_at)}
+                    </td>
+                    <td className="px-3 py-2">{decisionBadge(r.decision)}</td>
+                    <td className="px-3 py-2 text-gray-600 dark:text-gray-300">{r.reason}</td>
+                    <td className="px-3 py-2 text-gray-600 dark:text-gray-300">
+                      {r.decision === 'paused' ? '—' : `${r.jobs}/${r.max_jobs}`}
+                    </td>
+                    <td className="px-3 py-2 text-gray-600 dark:text-gray-300">
+                      {r.completed ? <span className="font-medium text-emerald-600 dark:text-emerald-400">{r.completed}</span> : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-      <details className="mt-3">
-        <summary className="cursor-pointer select-none text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-          Raw watchdog log
-        </summary>
-        <div className="mt-2">
-          <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-gray-950 p-3 text-xs text-gray-300">
-            {(logs?.lines ?? []).join("\n") || "(empty)"}
-          </pre>
-          {logs?.path && <p className="mt-1 font-mono text-xs text-gray-400">{logs.path}</p>}
-        </div>
-      </details>
+          <details className="mt-3">
+            <summary className="cursor-pointer select-none text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+              Raw watchdog log
+            </summary>
+            <div className="mt-2">
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-gray-950 p-3 text-xs text-gray-300">
+                {(logs?.lines ?? []).join("\n") || "(empty)"}
+              </pre>
+              {logs?.path && <p className="mt-1 font-mono text-xs text-gray-400">{logs.path}</p>}
+            </div>
+          </details>
+        </>
+      ) : null}
     </section>
   );
 }
