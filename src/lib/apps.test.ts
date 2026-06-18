@@ -174,6 +174,10 @@ describe('resolveAppOrPath', () => {
     expect(target.absolutePath).toBe(import.meta.dir);
     expect(target.name).toBe(basename(import.meta.dir));
   });
+
+  test('throws with a rubato-prefixed message when nothing matches', async () => {
+    await expect(resolveAppOrPath('definitely-not-an-app-or-real-path')).rejects.toThrow(/^rubato:/);
+  });
 });
 
 describe('tryResolveAppOrPath', () => {

@@ -17,12 +17,13 @@ export interface AppJenkins {
 }
 
 export async function resolveAppJenkins(query: string): Promise<AppJenkins> {
-  const app = await resolveApp(query); // prints + exits if unresolved/ambiguous
+  const app = await resolveApp(query); // throws if unresolved/ambiguous
   const jenkins = getAppApi(app, 'jenkins');
   if (!jenkins) {
-    console.error(`rubato: "${app.name}" has no jenkins config in ~/.rubato/apps.json.`);
-    console.error('Add an api entry: { "name": "jenkins", "project": "<folder>", ... } (see rubato-init).');
-    process.exit(1);
+    throw new Error(
+      `rubato: "${app.name}" has no jenkins config in ~/.rubato/apps.json.\n` +
+        'Add an api entry: { "name": "jenkins", "project": "<folder>", ... } (see rubato-init).',
+    );
   }
   const client = await jenkinsFromConfig(); // throws with guidance if config/secrets missing
   return { app, jenkins, client };

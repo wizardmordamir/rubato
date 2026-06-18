@@ -1,35 +1,14 @@
 /**
  * SSH server helpers for the localhost-only Admin → SSH panel.
  *
- * `buildSshCommand` / `serverLabel` mirror the CLI helpers in prod-ssh.ts
- * (kept separate so the server never imports a CLI script). `openSshInTerminal`
- * spawns a native macOS terminal with the SSH command so the user gets a proper
- * interactive shell — it's intentionally localhost-only and is never reachable
- * in a network-exposed deployment.
+ * Pure SSH helpers (`buildSshArgs`/`serverLabel`/`buildSshCommand`) live in
+ * `src/lib/ssh.ts` and are re-exported here. `openSshInTerminal` is server-
+ * specific (spawns a native macOS terminal) and lives only here.
  */
 
-import { expandPath, type SshServerConfig } from '../lib/config';
-
-/** Human-readable label for a server. */
-export function serverLabel(s: SshServerConfig): string {
-  return s.label ?? s.host;
-}
-
-/** Build the SSH argument list for a server config. */
-export function buildSshArgs(s: SshServerConfig): string[] {
-  const args: string[] = ['ssh'];
-  if (s.port && s.port !== 22) args.push('-p', String(s.port));
-  if (s.keyPath) args.push('-i', expandPath(s.keyPath));
-  if (s.extraArgs?.length) args.push(...s.extraArgs);
-  const target = s.user ? `${s.user}@${s.host}` : s.host;
-  args.push(target);
-  return args;
-}
-
-/** Full SSH command string for display / copy. */
-export function buildSshCommand(s: SshServerConfig): string {
-  return buildSshArgs(s).join(' ');
-}
+import type { SshServerConfig } from '../lib/config';
+import { buildSshArgs, buildSshCommand, serverLabel } from '../lib/ssh';
+export { buildSshArgs, buildSshCommand, serverLabel };
 
 /** Result returned from openSshInTerminal. */
 export interface SshOpenResult {
