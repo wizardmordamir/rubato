@@ -127,13 +127,16 @@ export function parseClaudeResult(stdout: string): TaskResult {
     };
   }
   const ok = env.subtype === 'success' && !env.is_error;
-  const summary = (env.result ?? '').replace(/\s+/g, ' ').trim().slice(0, 280);
+  // Full result preserved for the AI summary stored in completions.
+  const full = (env.result ?? '').trim();
+  // Brief (collapsed, truncated) used only for failure reason notes and the rate-limit check.
+  const brief = full.replace(/\s+/g, ' ').slice(0, 280);
   return {
     ok,
-    summary: summary || undefined,
-    reason: ok ? undefined : summary || env.subtype || 'run did not succeed',
+    summary: full || undefined,
+    reason: ok ? undefined : brief || env.subtype || 'run did not succeed',
     outputTokens: env.usage?.output_tokens,
-    rateLimited: !ok && isUsageLimitMessage(`${summary} ${env.subtype ?? ''}`),
+    rateLimited: !ok && isUsageLimitMessage(`${brief} ${env.subtype ?? ''}`),
   };
 }
 
