@@ -15,7 +15,6 @@ import { CommandDetailPage, CommandsPage } from "./pages/CommandsPage";
 import { ConfigPage } from "./pages/ConfigPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DocsPage } from "./pages/DocsPage";
-import { ForgePage } from "./pages/ForgePage";
 import { AutomationBuilderPage } from "./pages/ExcelAutomations/AutomationBuilderPage";
 import { ExcelAutomationsPage } from "./pages/ExcelAutomations/ExcelAutomationsPage";
 import { HubPage } from "./pages/HubPage";
@@ -71,7 +70,6 @@ const PAGE_ELEMENTS: Record<string, ReactNode> = {
   "shell-aliases": <ShellAliasesPage />,
   vault: <VaultPage />,
   taskq: <TaskqPage />,
-  forge: <ForgePage />,
   customPages: <PagesPage />,
   tools: <ToolsPage />,
   docs: <DocsPage />,
@@ -120,6 +118,8 @@ export function App() {
         <Route path="/orchestration" element={<Navigate to="/taskq" replace />} />
         {/* Orchestration Processing merged into the Orchestration (taskq) page as a tab. */}
         <Route path="/orchestration-processing" element={<Navigate to="/taskq?tab=processing" replace />} />
+        {/* Task Forge merged into the Orchestration (taskq) page as a tab. */}
+        <Route path="/forge" element={<Navigate to="/taskq?tab=forge" replace />} />
         {appsOn && <Route key="app-templates" path="/apps/templates" element={<AppTemplatesPage />} />}
         {appsOn && <Route key="app-detail" path="/apps/:name" element={<AppDetailPage />} />}
         {commandsOn && <Route key="command-detail" path="/commands/:name" element={<CommandDetailPage />} />}
