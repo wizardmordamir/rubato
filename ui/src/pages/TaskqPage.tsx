@@ -79,6 +79,25 @@ const VALID_TABS = new Set<string>(["board", "workers", "settings", "history", "
 /** Statuses where drag-reorder changes claim priority (running/done are not). */
 const REORDERABLE = new Set<TaskqStatus>(["ready", "on_hold", "not_ready", "blocked", "pending_triage"]);
 
+/** 8 distinct color palettes for serial group color-coding. */
+const SERIAL_GROUP_COLORS = [
+  { border: "border-sky-400", bg: "bg-sky-100 dark:bg-sky-900/50", text: "text-sky-700 dark:text-sky-300" },
+  { border: "border-violet-400", bg: "bg-violet-100 dark:bg-violet-900/50", text: "text-violet-700 dark:text-violet-300" },
+  { border: "border-emerald-400", bg: "bg-emerald-100 dark:bg-emerald-900/50", text: "text-emerald-700 dark:text-emerald-300" },
+  { border: "border-amber-400", bg: "bg-amber-100 dark:bg-amber-900/50", text: "text-amber-700 dark:text-amber-300" },
+  { border: "border-rose-400", bg: "bg-rose-100 dark:bg-rose-900/50", text: "text-rose-700 dark:text-rose-300" },
+  { border: "border-cyan-400", bg: "bg-cyan-100 dark:bg-cyan-900/50", text: "text-cyan-700 dark:text-cyan-300" },
+  { border: "border-orange-400", bg: "bg-orange-100 dark:bg-orange-900/50", text: "text-orange-700 dark:text-orange-300" },
+  { border: "border-indigo-400", bg: "bg-indigo-100 dark:bg-indigo-900/50", text: "text-indigo-700 dark:text-indigo-300" },
+] as const;
+
+/** Returns a stable color palette for a serial group name (hash-based). */
+function serialGroupColor(name: string) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (Math.imul(31, h) + name.charCodeAt(i)) | 0;
+  return SERIAL_GROUP_COLORS[Math.abs(h) % SERIAL_GROUP_COLORS.length];
+}
+
 /** Find the single id whose removal makes the two orderings identical (the moved one). */
 function findMovedId(oldIds: number[], newIds: number[]): number | null {
   if (oldIds.length !== newIds.length) return null;
@@ -449,13 +468,13 @@ function TaskCard({
   const editable = task.status !== "claimed" && task.status !== "done";
   const isTemplate = task.is_template === 1;
   const isSaved = task.is_saved === 1;
+  const sgColor = task.serial_group ? serialGroupColor(task.serial_group) : null;
   const markers = [
     task.model && `model:${task.model}`,
     task.think && `think:${task.think}`,
     task.slug && `id:${task.slug}`,
     task.needs.length > 0 && `needs:${task.needs.join(",")}`,
     task.group_key && `group:${task.group_key}`,
-    task.serial_group && `serial:${task.serial_group}`,
     task.recur_interval_ms != null && `every:${fmtInterval(task.recur_interval_ms)}`,
     task.repo && `repo:${task.repo}`,
   ].filter(Boolean) as string[];
@@ -504,7 +523,7 @@ function TaskCard({
 
   return (
     <div
-      className={`group ${CARD_CLASS} flex gap-2 p-3 ${selectMode ? "cursor-pointer" : ""} ${isSelected ? "ring-2 ring-accent" : ""}`}
+      className={`group ${CARD_CLASS} flex gap-2 p-3 ${sgColor ? `border-l-4 ${sgColor.border}` : ""} ${selectMode ? "cursor-pointer" : ""} ${isSelected ? "ring-2 ring-accent" : ""}`}
       onClick={selectMode ? onToggleSelect : undefined}
     >
       {selectMode && (
@@ -536,13 +555,18 @@ function TaskCard({
               )}
               {task.title}
             </p>
-            {markers.length > 0 && (
+            {(markers.length > 0 || sgColor) && (
               <div className="mt-1 flex flex-wrap gap-1 font-mono text-xs text-gray-500">
                 {markers.map((m) => (
                   <span key={m} className="rounded bg-gray-100 px-1 dark:bg-gray-800">
                     {m}
                   </span>
                 ))}
+                {sgColor && task.serial_group && (
+                  <span className={`rounded px-1 font-semibold ${sgColor.bg} ${sgColor.text}`}>
+                    serial:{task.serial_group}
+                  </span>
+                )}
               </div>
             )}
             <div className="mt-1 text-xs text-gray-400">{timeMeta}</div>
