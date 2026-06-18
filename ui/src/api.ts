@@ -1037,6 +1037,34 @@ export const ask = (
   images?: string[],
 ) => postJson<AskAccepted>("/api/ask", { app: app || undefined, question, conversationId, attachments, fsRoot, images });
 
+// ── Local art generation ─────────────────────────────────────────────────────
+export type ArtPreset = "web_ui" | "game_art_2d" | "abstract_texture" | "app_icon" | "raw_creative";
+
+export interface GeneratedAsset {
+  fileName: string;
+  url: string;
+}
+
+export interface GenerateArtResult {
+  success: true;
+  url: string;
+  path: string;
+  fileName: string;
+  appId: string;
+  enrichedPrompt: string;
+}
+
+export const generateArt = (input: {
+  appId?: string;
+  prompt: string;
+  preset: ArtPreset;
+  width?: number;
+  height?: number;
+}) => postJson<GenerateArtResult>("/api/generate-image", input);
+
+export const listGeneratedAssets = (appId: string) =>
+  getJson<{ files: GeneratedAsset[] }>(`/api/generated-assets/${encodeURIComponent(appId)}`);
+
 export async function deleteConversation(id: string): Promise<void> {
   const res = await fetch(`/api/conversations/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`delete failed → ${res.status}`);

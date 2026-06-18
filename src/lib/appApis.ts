@@ -417,3 +417,25 @@ export interface AiGlobalConfig {
    */
   visionModel?: string;
 }
+
+/** Style preset for local art generation; each maps to a positive/negative modifier. */
+export type ArtPresetType = 'web_ui' | 'game_art_2d' | 'abstract_texture' | 'app_icon' | 'raw_creative';
+
+/** Which local diffusion server the art engine talks to (the request/response wiring differs per backend). */
+export type ArtBackend = 'fooocus' | 'a1111' | 'comfyui';
+
+/**
+ * Local art/image generation settings (global; `~/.rubato/config.json` → `art`).
+ * Talks to a local diffusion server; assets are written under
+ * `<RUBATO_HOME>/generated-assets/<appId>/` and served via a GET route.
+ */
+export interface ArtConfig {
+  /** Master switch for the art engine + agentic tool. Default true. */
+  enabled?: boolean;
+  /** Diffusion backend protocol. Default "fooocus" (Fooocus-API). */
+  backend?: ArtBackend;
+  /** Base URL of the local diffusion server. Default depends on backend (fooocus → http://localhost:8888). */
+  url?: string;
+  /** Sampling steps (FLUX.1-schnell is happy at 4). Default 4. */
+  steps?: number;
+}

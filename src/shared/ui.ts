@@ -166,6 +166,14 @@ export const UI_PAGES: UiPage[] = [
     color: '#8b5cf6',
     description: 'Ask questions about your repos (local RAG chat).',
   },
+  {
+    key: 'art',
+    path: '/art',
+    label: 'Art Canvas',
+    group: 'top',
+    color: '#ec4899',
+    description: 'Generate local art assets (icons, game art, UI mockups, textures).',
+  },
   { key: 'board', path: '/board', label: 'Board', group: 'top', color: '#f59e0b', description: 'Kanban task board.' },
   {
     key: 'links',
@@ -214,7 +222,8 @@ export const UI_PAGES: UiPage[] = [
     label: 'Task Forge',
     group: 'top',
     color: '#a855f7',
-    description: 'Draft rough tasks; local Ollama rewrites them into queue-ready specs you can publish to the orchestrator.',
+    description:
+      'Draft rough tasks; local Ollama rewrites them into queue-ready specs you can publish to the orchestrator.',
     mergedInto: 'taskq',
   },
   {

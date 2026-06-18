@@ -14,6 +14,7 @@ import type { AuthConfig } from '../shared/auth';
 import type { UiConfig, UiConfigPatch } from '../shared/ui';
 import type {
   AiGlobalConfig,
+  ArtConfig,
   JenkinsGlobalConfig,
   OpenshiftGlobalConfig,
   ServiceGlobalConfig,
@@ -47,6 +48,13 @@ export const ENV_FILE = resolve(RUBATO_HOME, '.env');
 export const OUTPUTS_DIR = resolve(RUBATO_HOME, 'outputs');
 /** Where discoverable custom `*.ts` scripts live (the file half of "custom functions"). */
 export const SCRIPTS_DIR = resolve(RUBATO_HOME, 'scripts');
+/**
+ * Where locally-generated art/image assets are written, one subdir per app
+ * (`generated-assets/<appId>/art_asset_*.png`). Under RUBATO_HOME (not the repo's
+ * `public/`) so assets are machine-local runtime state, served via a GET route —
+ * never committed and present in prod the same way as dev.
+ */
+export const GENERATED_ASSETS_DIR = resolve(RUBATO_HOME, 'generated-assets');
 /**
  * Where the test runner writes structured run reports (cwip `writeReportFiles`):
  * `<id>.json/.html/.txt` + a `<id>-artifacts/` dir. The Test Reports page reads
@@ -90,6 +98,8 @@ export interface RubatoConfig {
   harness?: ServiceGlobalConfig;
   /** Global AI / "ask about your repo" settings (per-app `ai` overrides these). */
   ai?: AiGlobalConfig;
+  /** Local art/image generation settings (diffusion backend, output). */
+  art?: ArtConfig;
   /** Web-UI page enablement + Admin gate (see src/shared/ui.ts). */
   ui?: UiConfig;
   /** Custom scripts + pipelines settings (the run dir, discovered scripts). */
@@ -215,6 +225,7 @@ export async function loadConfig(): Promise<RubatoConfig> {
       rancher: raw.rancher,
       harness: raw.harness,
       ai: raw.ai,
+      art: raw.art,
       ui: raw.ui,
       // Pick only known fields (don't spread) so a removed knob left in an old
       // config.json — e.g. a stale `automations.scriptsDir` — is dropped on load

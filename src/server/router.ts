@@ -18,6 +18,8 @@ import { isAppError } from 'cwip';
 import { parseLoose } from 'cwip/json';
 import { makeCorrelationId } from 'cwip/node';
 import { COMMANDS, commandTags } from '../commands';
+import { ART_PRESETS } from '../lib/ai/promptEnricher';
+import type { ArtPresetType } from '../lib/appApis';
 import {
   type AppConfig,
   browseDir,
@@ -80,6 +82,8 @@ import {
   templateDiff,
 } from './appsTemplate';
 import { createAppTag, getAppTags, isTagAction, runAppTagAction } from './appTags';
+import { DiffusionOfflineError } from './art/diffusion';
+import { appAssetsDir, generateArt, listAssets } from './art/generateImage';
 import { startAsk } from './ask';
 import { handleAuthApi } from './authRoutes';
 import { handleAutomationEnvApi } from './automationEnvRoutes';
@@ -127,6 +131,7 @@ import { listSystemFiles, readSystemFile, writeSystemFile } from './systemFiles'
 import { readSystemHealthFile, runSystemHealth } from './systemHealth';
 import { handleTaskqApi } from './taskqRoutes';
 import { handleTestReportsApi } from './testReportsRoutes';
+import { resolveUnderRoot } from './tools/shared';
 import { handleToolsApi } from './toolsRoutes';
 import { UI_HTML } from './ui';
 import { handleVaultApi } from './vaultRoutes';
@@ -674,6 +679,32 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
     };
     if (ext === 'html' || ext === 'htm') headers['content-security-policy'] = 'sandbox';
     return new Response(Bun.file(resolved.realAbs), { headers });
+  }
+
+  // Generated art assets. GET /api/generated-assets/:appId → JSON list;
+  // GET /api/generated-assets/:appId/:file → the image bytes (path-safe under the
+  // app's asset dir). POST /api/generate-image (in the switch below) creates them.
+  if (pathname.startsWith('/api/generated-assets/')) {
+    const parts = pathname
+      .slice('/api/generated-assets/'.length)
+      .split('/')
+      .filter(Boolean)
+      .map((p) => decodeURIComponent(p));
+    if (parts.length === 1) return json({ files: await listAssets(parts[0]) });
+    if (parts.length === 2) {
+      const [appId, file] = parts;
+      const resolved = await resolveUnderRoot(appAssetsDir(appId), file);
+      if (!resolved.ok) return jsonError(resolved.error, 404);
+      const ext = file.split('.').pop()?.toLowerCase() ?? '';
+      return new Response(Bun.file(resolved.abs), {
+        headers: {
+          'content-type': INLINE_TYPES[ext] ?? 'application/octet-stream',
+          'content-disposition': `inline; filename="${file}"`,
+          'x-content-type-options': 'nosniff',
+        },
+      });
+    }
+    return jsonError('not found', 404);
   }
 
   // GET /api/docs → list; GET /api/docs/:name → raw markdown (root + generated + docs/).
@@ -1323,6 +1354,32 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
         );
       } catch (err) {
         return jsonError(err instanceof Error ? err.message : 'ask failed', 500);
+      }
+    }
+    case '/api/generate-image': {
+      if (req.method !== 'POST') return jsonError('use POST', 405);
+      let body: { prompt?: string; preset?: string; width?: number; height?: number; appId?: string };
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        return jsonError('invalid JSON body', 400);
+      }
+      if (!body.prompt?.trim()) return jsonError('prompt required', 400);
+      const preset: ArtPresetType =
+        body.preset && body.preset in ART_PRESETS ? (body.preset as ArtPresetType) : 'raw_creative';
+      try {
+        const result = await generateArt({
+          appId: body.appId,
+          prompt: body.prompt,
+          preset,
+          width: body.width,
+          height: body.height,
+        });
+        return json(result);
+      } catch (err) {
+        // Offline diffusion server → 503 with the friendly, actionable message.
+        if (err instanceof DiffusionOfflineError) return jsonError(err.message, 503);
+        return jsonError(err instanceof Error ? err.message : 'image generation failed', 500);
       }
     }
     case '/api/run': {

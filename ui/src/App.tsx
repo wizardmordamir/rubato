@@ -8,6 +8,7 @@ import { AppDetailPage, AppsPage } from "./pages/AppsPage";
 import { AppTemplatesPage } from "./pages/AppTemplatesPage";
 import { AutomationsPage } from "./pages/AutomationsPage";
 import { AutomationEnvironmentsPage } from "./pages/AutomationEnvironmentsPage";
+import { ArtCanvasPage } from "./pages/ArtCanvasPage";
 import { BoardPage } from "./pages/BoardPage";
 import { BuilderPage } from "./pages/BuilderPage";
 import { ChatPage } from "./pages/ChatPage";
@@ -65,6 +66,7 @@ const PAGE_ELEMENTS: Record<string, ReactNode> = {
   plans: <PlansPage />,
   excel: <ExcelAutomationsPage />,
   ask: <ChatPage />,
+  art: <ArtCanvasPage />,
   board: <BoardPage />,
   links: <LinksPage />,
   "shell-aliases": <ShellAliasesPage />,

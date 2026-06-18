@@ -70,6 +70,20 @@ export function ChatPage() {
   // freely. Returning to the bottom re-pins. Reset to pinned on each new send.
   const pinnedRef = useRef(true);
 
+  // Intake images handed off from the Art Canvas "Send to Vision Chat" action
+  // (same localStorage pattern as APP_KEY/FSROOT_KEY); consume + clear once.
+  useEffect(() => {
+    const raw = localStorage.getItem("rubato.chat.pendingImages");
+    if (!raw) return;
+    localStorage.removeItem("rubato.chat.pendingImages");
+    try {
+      const pending: string[] = JSON.parse(raw);
+      if (pending.length) setImages((prev) => [...prev, ...pending].slice(0, 6));
+    } catch {
+      /* ignore malformed handoff */
+    }
+  }, []);
+
   const { data: apps = [], isFetched: appsFetched } = useQuery({ queryKey: ["apps"], queryFn: fetchApps });
   // Default to the first app once the list loads, if no mode chosen yet.
   // If there are no apps, fall back to general mode ("") so the composer is never stuck disabled.

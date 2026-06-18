@@ -7,6 +7,7 @@
 import type { AskSource } from '../../shared/types';
 import { fileSignatures } from '../aiDb';
 import { retrieve } from '../aiRetrieve';
+import { generatePlaceholderArtwork } from './artTool';
 import { globToRegExp } from './safety';
 import { readNumberedSlice, resolveUnderRoot, truncate } from './shared';
 import type { RepoTool, ToolResult } from './types';
@@ -77,4 +78,4 @@ const listFiles: RepoTool = {
   },
 };
 
-export const BUILTIN_TOOLS: RepoTool[] = [searchRepo, readFileTool, listFiles];
+export const BUILTIN_TOOLS: RepoTool[] = [searchRepo, readFileTool, listFiles, generatePlaceholderArtwork];
