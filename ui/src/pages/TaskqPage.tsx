@@ -1560,12 +1560,13 @@ function CostCard({ cost }: { cost: TaskqCcusageReport }) {
               series={[{ key: "cost", name: "Cost", kind: "area" }]}
               height={220}
               valueFormatter={fmtUsd}
+              yAxisWidth={72}
               includeDate
             />
           </div>
           <div>
             <h4 className="mb-2 text-xs font-semibold text-gray-500">Cost by model</h4>
-            <CategoryBars data={modelBars} height={220} valueFormatter={fmtUsd} />
+            <CategoryBars data={modelBars} height={220} valueFormatter={fmtUsd} yAxisWidth={72} />
           </div>
         </div>
       </ChartThemeProvider>
