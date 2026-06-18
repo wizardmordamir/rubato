@@ -63,7 +63,7 @@ import {
   taskqHistory,
 } from './taskq/control';
 import { resolveGateway } from './taskq/triage';
-import { getUsageSnapshot, refreshUsageNow } from './taskq/usagePoller';
+import { applyUsagePollConfig, getUsageSnapshot, refreshUsageNow } from './taskq/usagePoller';
 import { reconcileUsageObservation } from './taskq/usageReconcile';
 import { getTaskqDb } from './taskqDb';
 
@@ -318,7 +318,9 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       const body = await readJsonBody<TaskqConfigPatch>(req);
       if (!body || typeof body !== 'object') return jsonError('a config patch is required', 400);
       try {
-        return json({ config: saveTaskqConfig(body), interval: currentInterval() });
+        const config = saveTaskqConfig(body);
+        applyUsagePollConfig(); // pick up any usage poll-interval change immediately
+        return json({ config, interval: currentInterval() });
       } catch (e) {
         return jsonError(e instanceof Error ? e.message : 'invalid config', 400);
       }

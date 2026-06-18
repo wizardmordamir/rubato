@@ -1573,6 +1573,88 @@ function CostCard({ cost }: { cost: TaskqCcusageReport }) {
   );
 }
 
+/** Inline editor for the background poll intervals (minutes; 0 = off / manual only). */
+function UsagePollSettings() {
+  const { data } = useQuery({ queryKey: ["taskq-config"], queryFn: fetchTaskqConfig });
+  const qc = useQueryClient();
+  const { notify } = useToast();
+  const [edit, setEdit] = useState(false);
+  const [tel, setTel] = useState("");
+  const [cost, setCost] = useState("");
+  const cfg = data?.config;
+
+  const startEdit = () => {
+    setTel(String(cfg?.usagePollMinutes ?? 5));
+    setCost(String(cfg?.usageCostPollMinutes ?? 30));
+    setEdit(true);
+  };
+
+  const save = useMutation({
+    mutationFn: () =>
+      saveTaskqConfig({
+        usagePollMinutes: Math.max(0, Math.round(Number(tel) || 0)),
+        usageCostPollMinutes: Math.max(0, Math.round(Number(cost) || 0)),
+      }),
+    onSuccess: (r) => {
+      qc.setQueryData(["taskq-config"], r);
+      setEdit(false);
+      notify("Polling interval saved", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "save failed", "error"),
+  });
+
+  if (!cfg) return null;
+  const fmt = (m: number) => (m > 0 ? `every ${m}m` : "off (manual only)");
+
+  return (
+    <div className="mt-3 border-t border-gray-200 pt-2 text-xs dark:border-gray-700">
+      {!edit ? (
+        <div className="flex flex-wrap items-center gap-2 text-gray-500">
+          <span>
+            Auto-poll — <code>/usage</code> {fmt(cfg.usagePollMinutes)} · cost {fmt(cfg.usageCostPollMinutes)}
+          </span>
+          <button type="button" className="text-accent hover:underline" onClick={startEdit}>
+            Edit
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-end gap-2">
+          <label>
+            <span className="mb-1 block text-gray-500">
+              <code>/usage</code> every (min, 0 = off)
+            </span>
+            <input
+              type="number"
+              min={0}
+              max={1440}
+              className={`${FIELD_CLASS} w-32`}
+              value={tel}
+              onChange={(e) => setTel(e.target.value)}
+            />
+          </label>
+          <label>
+            <span className="mb-1 block text-gray-500">cost every (min, 0 = off)</span>
+            <input
+              type="number"
+              min={0}
+              max={1440}
+              className={`${FIELD_CLASS} w-32`}
+              value={cost}
+              onChange={(e) => setCost(e.target.value)}
+            />
+          </label>
+          <button type="button" className={BTN_PRIMARY_CLASS} disabled={save.isPending} onClick={() => save.mutate()}>
+            {save.isPending && <Spinner />}Save
+          </button>
+          <button type="button" className="text-gray-500 hover:underline" onClick={() => setEdit(false)}>
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Token-usage capacities + live `/usage` telemetry, cost, and a fallback calibration form. */
 function UsagePanel() {
   const { data } = useQuery({ queryKey: ["taskq-usage"], queryFn: fetchTaskqUsage });
@@ -1661,6 +1743,8 @@ function UsagePanel() {
           })}
           {buckets.length === 0 && <span className="text-xs text-gray-400">No usage data — calibrate from /usage.</span>}
         </div>
+
+        <UsagePollSettings />
 
         {open && (
           <div className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-700">

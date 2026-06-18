@@ -130,6 +130,23 @@ describe('taskq routes', () => {
     expect(bad.status).toBe(400);
   });
 
+  test('config: usage poll intervals default, save (incl. 0=off), and validate range', async () => {
+    const get = (await (await call('GET', '/api/taskq/config')).json()) as {
+      config: { usagePollMinutes: number; usageCostPollMinutes: number };
+    };
+    expect(get.config.usagePollMinutes).toBe(5);
+    expect(get.config.usageCostPollMinutes).toBe(30);
+
+    const saved = (await (
+      await call('POST', '/api/taskq/config', { usagePollMinutes: 10, usageCostPollMinutes: 0 })
+    ).json()) as { config: { usagePollMinutes: number; usageCostPollMinutes: number } };
+    expect(saved.config.usagePollMinutes).toBe(10);
+    expect(saved.config.usageCostPollMinutes).toBe(0); // 0 = off
+
+    expect((await call('POST', '/api/taskq/config', { usagePollMinutes: -1 })).status).toBe(400);
+    expect((await call('POST', '/api/taskq/config', { usageCostPollMinutes: 5000 })).status).toBe(400);
+  });
+
   test('instances: empty, then one appears after a claim-equivalent', async () => {
     const empty = (await (await call('GET', '/api/taskq/instances')).json()) as { instances: unknown[] };
     expect(empty.instances.length).toBe(0);

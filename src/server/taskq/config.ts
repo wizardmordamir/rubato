@@ -36,12 +36,22 @@ export interface TaskqConfig {
   repos: Record<string, string>;
   /** Opt-in auto-triage / epic decomposition (off by default — conservative). */
   triage?: { enabled: boolean };
+  /** Background `/usage` telemetry poll interval, minutes (0 = off, manual only). */
+  usagePollMinutes: number;
+  /** Background `ccusage` cost poll interval, minutes (0 = off, manual only). */
+  usageCostPollMinutes: number;
 }
 
 /** A user-supplied config patch (only the editable knobs). */
 export type TaskqConfigPatch = Partial<
-  Pick<TaskqConfig, 'jobs' | 'model' | 'think' | 'fast' | 'fleet' | 'leaseTtlMs'> & { triageEnabled: boolean }
+  Pick<
+    TaskqConfig,
+    'jobs' | 'model' | 'think' | 'fast' | 'fleet' | 'leaseTtlMs' | 'usagePollMinutes' | 'usageCostPollMinutes'
+  > & { triageEnabled: boolean }
 >;
+
+/** Max accepted poll interval (minutes) — 24h. 0 means "off / manual only". */
+const MAX_POLL_MINUTES = 1440;
 
 function defaults(): TaskqConfig {
   const gh = join(homedir(), 'code', 'github');
@@ -49,6 +59,8 @@ function defaults(): TaskqConfig {
     jobs: 2,
     model: 'opus',
     leaseTtlMs: 15 * 60_000,
+    usagePollMinutes: 5,
+    usageCostPollMinutes: 30,
     repos: {
       ca: join(gh, 'cursedalchemy'),
       ru: join(gh, 'rubato'),
@@ -107,6 +119,14 @@ export function validateConfigPatch(patch: TaskqConfigPatch): TaskqConfigPatch {
     if (typeof patch.triageEnabled !== 'boolean') throw new Error('triageEnabled must be boolean');
     out.triageEnabled = patch.triageEnabled;
   }
+  for (const k of ['usagePollMinutes', 'usageCostPollMinutes'] as const) {
+    if (patch[k] !== undefined) {
+      const v = patch[k] as number;
+      if (!Number.isInteger(v) || v < 0 || v > MAX_POLL_MINUTES)
+        throw new Error(`${k} must be 0–${MAX_POLL_MINUTES} (0 = off)`);
+      out[k] = v;
+    }
+  }
   if (patch.fleet !== undefined) {
     if (
       patch.fleet !== null &&
@@ -149,6 +169,8 @@ export function saveTaskqConfig(patch: TaskqConfigPatch): TaskqConfig {
   if ('think' in clean) raw.think = clean.think;
   if (clean.fast !== undefined) raw.fast = clean.fast;
   if (clean.leaseTtlMs !== undefined) raw.leaseTtlMs = clean.leaseTtlMs;
+  if (clean.usagePollMinutes !== undefined) raw.usagePollMinutes = clean.usagePollMinutes;
+  if (clean.usageCostPollMinutes !== undefined) raw.usageCostPollMinutes = clean.usageCostPollMinutes;
   if (clean.triageEnabled !== undefined) raw.triage = { enabled: clean.triageEnabled };
   if ('fleet' in clean) {
     if (clean.fleet?.length) raw.fleet = clean.fleet;

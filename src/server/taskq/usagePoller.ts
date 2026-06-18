@@ -34,9 +34,8 @@ import {
 import type { TaskqUsageSnapshot } from '../../shared/taskq';
 import { getTaskqDb } from '../taskqDb';
 import { agentPath } from './claudeExecutor';
+import { loadTaskqConfig } from './config';
 
-const TELEMETRY_INTERVAL_MS = 5 * 60_000;
-const COST_INTERVAL_MS = 30 * 60_000;
 const SPAWN_TIMEOUT_MS = 90_000;
 
 const snapshot: TaskqUsageSnapshot = {
@@ -218,17 +217,51 @@ async function costTick(): Promise<void> {
   }
 }
 
+let started = false;
+
+/** (Re)schedule one loop from a minutes setting. 0/negative ⇒ disabled (timer cleared). */
+function reschedule(
+  current: ReturnType<typeof setInterval> | null,
+  minutes: number,
+  tick: () => void,
+): ReturnType<typeof setInterval> | null {
+  if (current) clearInterval(current);
+  if (!Number.isFinite(minutes) || minutes <= 0) return null; // off / manual-only
+  return setInterval(tick, minutes * 60_000);
+}
+
 /**
- * Start the background usage poller: load the last cache, then poll `/usage`
- * (~5 min) and ccusage (~30 min) on their own intervals with an immediate first
- * pass. Idempotent — calling twice keeps a single pair of timers.
+ * Apply the current config's poll intervals to the live timers — call after a
+ * config save so interval changes (including enabling/disabling a source) take
+ * effect without a restart. Kicks an immediate tick for a source that was off
+ * and is now enabled, so the user sees data right away.
  */
-export function startUsagePoller(opts: { telemetryMs?: number; costMs?: number } = {}): void {
-  if (telemetryTimer || costTimer) return;
+export function applyUsagePollConfig(): void {
+  const cfg = loadTaskqConfig();
+  const telemetryWasOff = telemetryTimer === null;
+  const costWasOff = costTimer === null;
+  telemetryTimer = reschedule(telemetryTimer, cfg.usagePollMinutes, () => void telemetryTick());
+  costTimer = reschedule(costTimer, cfg.usageCostPollMinutes, () => void costTick());
+  if (started && telemetryWasOff && telemetryTimer) void telemetryTick();
+  if (started && costWasOff && costTimer) void costTick();
+}
+
+/**
+ * Start the background usage poller: load the last cache, do an immediate first
+ * pass, then poll `/usage` + ccusage on the config-driven intervals (defaults
+ * 5 min / 30 min; 0 disables a source). Idempotent — calling twice is a no-op.
+ * `opts` overrides the interval (minutes) for tests; omit to read config.
+ */
+export function startUsagePoller(opts: { telemetryMinutes?: number; costMinutes?: number } = {}): void {
+  if (started) return;
+  started = true;
+  const cfg = loadTaskqConfig();
+  const telemetryMin = opts.telemetryMinutes ?? cfg.usagePollMinutes;
+  const costMin = opts.costMinutes ?? cfg.usageCostPollMinutes;
   void loadCache().then(() => {
-    void telemetryTick();
-    void costTick();
+    if (telemetryMin > 0) void telemetryTick();
+    if (costMin > 0) void costTick();
   });
-  telemetryTimer = setInterval(() => void telemetryTick(), opts.telemetryMs ?? TELEMETRY_INTERVAL_MS);
-  costTimer = setInterval(() => void costTick(), opts.costMs ?? COST_INTERVAL_MS);
+  telemetryTimer = reschedule(telemetryTimer, telemetryMin, () => void telemetryTick());
+  costTimer = reschedule(costTimer, costMin, () => void costTick());
 }

@@ -1791,6 +1791,10 @@ export interface TaskqConfig {
   leaseTtlMs: number;
   triage?: { enabled: boolean };
   repos: Record<string, string>;
+  /** Background `/usage` telemetry poll interval, minutes (0 = off, manual only). */
+  usagePollMinutes: number;
+  /** Background `ccusage` cost poll interval, minutes (0 = off, manual only). */
+  usageCostPollMinutes: number;
 }
 export interface TaskqConfigPatch {
   jobs?: number;
@@ -1800,6 +1804,8 @@ export interface TaskqConfigPatch {
   fleet?: TaskqFleetTier[] | null;
   leaseTtlMs?: number;
   triageEnabled?: boolean;
+  usagePollMinutes?: number;
+  usageCostPollMinutes?: number;
 }
 export interface TaskqInstance {
   task_id: number;
