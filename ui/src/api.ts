@@ -1034,7 +1034,8 @@ export const ask = (
   conversationId?: string,
   attachments?: AskAttachment[],
   fsRoot?: string,
-) => postJson<AskAccepted>("/api/ask", { app: app || undefined, question, conversationId, attachments, fsRoot });
+  images?: string[],
+) => postJson<AskAccepted>("/api/ask", { app: app || undefined, question, conversationId, attachments, fsRoot, images });
 
 export async function deleteConversation(id: string): Promise<void> {
   const res = await fetch(`/api/conversations/${id}`, { method: "DELETE" });

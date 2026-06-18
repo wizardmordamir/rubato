@@ -74,7 +74,13 @@ export function createOllamaProvider(config: OllamaProviderConfig): LlmProvider 
       const think = opts.think ?? config.think;
       const body: Record<string, unknown> = {
         model: opts.model ?? config.model,
-        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        // Forward base64 `images` on a message for multimodal (vision) turns — the
+        // native /api/chat shape is `{ role, content, images: [base64, …] }`.
+        messages: messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          ...(m.images?.length ? { images: m.images } : {}),
+        })),
         stream: true,
         ...(think !== undefined ? { think } : {}),
         ...(Object.keys(options).length ? { options } : {}),

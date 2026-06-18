@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { buildGeneralPrompt, buildPrompt, CODE_GROUNDING_RULES, formatAttachments, isCodeQuestion, packContext } from './prompt';
+import {
+  buildGeneralPrompt,
+  buildPrompt,
+  CODE_GROUNDING_RULES,
+  formatAttachments,
+  isCodeQuestion,
+  packContext,
+} from './prompt';
 import type { RetrievedChunk } from './types';
 
 const chunk = (path: string, text: string): RetrievedChunk => ({
@@ -13,7 +20,13 @@ const chunk = (path: string, text: string): RetrievedChunk => ({
 describe('packContext', () => {
   test('caps chunks per file so one file cannot crowd out others', () => {
     const many: RetrievedChunk[] = [
-      ...Array.from({ length: 10 }, (_, i) => ({ relativePath: 'big.ts', startLine: i * 10 + 1, endLine: i * 10 + 9, text: 'x', score: 1 })),
+      ...Array.from({ length: 10 }, (_, i) => ({
+        relativePath: 'big.ts',
+        startLine: i * 10 + 1,
+        endLine: i * 10 + 9,
+        text: 'x',
+        score: 1,
+      })),
       { relativePath: 'other.ts', startLine: 1, endLine: 9, text: 'y', score: 0.5 },
     ];
     const kept = packContext(many, 100_000, 6);
@@ -127,10 +140,21 @@ describe('code grounding injection', () => {
     expect(built.messages[0].content).toContain('Bun 1.2.3');
   });
 
-  test('buildGeneralPrompt honors codeMode + runtimeRef', () => {
-    const sys = buildGeneralPrompt('write code', { codeMode: true, runtimeRef: '[Runtime Reference]\nx' }).messages[0].content;
+  test('buildPrompt injects the [UI Vision Reference] block when provided', () => {
+    const built = buildPrompt('app', 'q', [], { visionRef: '## Errors\n- TypeError: x is undefined' });
+    expect(built.messages[0].content).toContain('[UI Vision Reference]');
+    expect(built.messages[0].content).toContain('TypeError: x is undefined');
+  });
+
+  test('buildGeneralPrompt honors codeMode + runtimeRef + visionRef', () => {
+    const sys = buildGeneralPrompt('write code', {
+      codeMode: true,
+      runtimeRef: '[Runtime Reference]\nx',
+      visionRef: '## Errors\n- boom',
+    }).messages[0].content;
     expect(sys).toContain('Code-generation rules');
     expect(sys).toContain('[Runtime Reference]');
+    expect(sys).toContain('[UI Vision Reference]');
     expect(CODE_GROUNDING_RULES).toContain('promisify');
   });
 });

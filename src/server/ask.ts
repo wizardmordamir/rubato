@@ -18,6 +18,7 @@ import { buildRuntimeRef } from '../lib/ai/runtimeRef';
 import { buildPlannerPrompt, parseDecision } from '../lib/ai/selfAsk';
 import { estimateTokens } from '../lib/ai/tokens';
 import type { RetrievedChunk } from '../lib/ai/types';
+import { DEFAULT_VISION_MODEL, extractVisionDiagnostic } from '../lib/ai/visionExtract';
 import type { AppConfig } from '../lib/apps';
 import { loadConfig } from '../lib/config';
 import { startDiagnostics } from '../lib/diagnostics';
@@ -112,6 +113,8 @@ export interface AskInput {
   attachments?: AskAttachment[];
   /** A folder the AI may explore with read-only filesystem tools (general mode, no app). */
   fsRoot?: string;
+  /** Screenshot(s) as raw base64 (no data-URL header) — triggers the vision→code pipeline. */
+  images?: string[];
 }
 
 export interface AskResult {
@@ -130,7 +133,7 @@ function deriveTitle(question: string): string {
  * the background. Returns the ids the UI keys the live stream on.
  */
 export function startAsk(input: AskInput): AskResult {
-  const { app, question, attachments } = input;
+  const { app, question, attachments, images } = input;
 
   // A thread is bound to the folder it was created with: persist it on a new
   // conversation, and reuse the stored one when continuing (so reloaded chats
@@ -151,7 +154,7 @@ export function startAsk(input: AskInput): AskResult {
   emit({ type: 'ask:started', conversationId, messageId, app: app?.name, question });
 
   // Fire-and-forget; the answer arrives over the socket.
-  streamAnswer(app, question, conversationId, messageId, attachments, fsRoot).catch((err) => {
+  streamAnswer(app, question, conversationId, messageId, attachments, fsRoot, images).catch((err) => {
     const error = err instanceof Error ? err.message : String(err);
     // Durable, exportable record of the failure — the answer message is ephemeral
     // and lossy; the diagnostic carries the classification, stack, and HTTP context.
@@ -198,6 +201,7 @@ async function streamAnswer(
   messageId: string,
   attachments?: AskAttachment[],
   fsRoot?: string,
+  images?: string[],
 ): Promise<void> {
   // Transient progress, so the user sees activity before answer tokens flow.
   const status = (text: string) => emit({ type: 'ask:status', conversationId, messageId, text });
@@ -219,6 +223,34 @@ async function streamAnswer(
   const numCtx = app?.ai?.numCtx ?? cfg.ai?.direct?.numCtx ?? 0;
   // Real runtime/deps/tool grounding — only for app-scoped code questions (needs a repo).
   const runtimeRef = app && codeMode ? await buildRuntimeRef(app, question).catch(() => undefined) : undefined;
+
+  // Step 1 of the vision→code pipeline: if the question carries screenshot(s), a
+  // local vision model extracts a markdown diagnostic (OCR + errors + layout
+  // issues), injected below as a `[UI Vision Reference]` block so the text code
+  // model (Step 2) acts on it through the normal RAG + code-check + self-repair
+  // loop. Requires the native Ollama transport (only it forwards `images`).
+  let visionRef: string | undefined;
+  if (images?.length) {
+    const ollamaFlavor = (app?.ai?.flavor ?? cfg.ai?.direct?.flavor) === 'ollama';
+    if (!ollamaFlavor) {
+      status('Screenshots need the Ollama transport (set ai.direct.flavor = "ollama"); ignoring images.');
+    } else {
+      const visionModel = app?.ai?.visionModel ?? cfg.ai?.visionModel ?? DEFAULT_VISION_MODEL;
+      status(`Analyzing ${images.length} screenshot${images.length === 1 ? '' : 's'} with ${visionModel}…`);
+      try {
+        visionRef = await tracer.span(
+          'Vision extraction',
+          'vision',
+          () => extractVisionDiagnostic(provider, images, question, { model: visionModel }),
+          () => ({ detail: `${images.length} image(s) → ${visionModel}` }),
+        );
+      } catch (err) {
+        // Vision is best-effort: a model that isn't pulled / a transport hiccup must
+        // not sink the whole answer — fall through to a text-only answer with a note.
+        status(`Vision step failed (${err instanceof Error ? err.message : 'error'}); answering from text only.`);
+      }
+    }
+  }
 
   // Multi-turn memory: replay prior turns of this conversation, bounded.
   const maxHistoryMessages = app?.ai?.maxHistoryMessages ?? cfg.ai?.maxHistoryMessages ?? 20;
@@ -246,6 +278,7 @@ async function streamAnswer(
       maxRounds: maxToolRounds,
       history,
       codeMode,
+      visionRef,
       tracer,
     });
     messages = gathered.messages;
@@ -255,7 +288,7 @@ async function streamAnswer(
     // General (no-repo) chat: skip retrieval entirely; just the question + any
     // attached files. Honors the same context budget for the attachments.
     mode = 'general';
-    messages = buildGeneralPrompt(question, { maxContextTokens, attachments, history, codeMode }).messages;
+    messages = buildGeneralPrompt(question, { maxContextTokens, attachments, history, codeMode, visionRef }).messages;
   } else {
     // Index lazily on the first question about an app.
     if (!getStatus(app.name)) {
@@ -287,6 +320,7 @@ async function streamAnswer(
         appMap,
         runtimeRef,
         codeMode,
+        visionRef,
         tracer,
       });
       messages = gathered.messages;
@@ -303,6 +337,7 @@ async function streamAnswer(
         appMap,
         runtimeRef,
         codeMode,
+        visionRef,
       });
       messages = built.messages;
       answerSources = built.used.map((c) => ({

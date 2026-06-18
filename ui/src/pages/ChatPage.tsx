@@ -57,9 +57,12 @@ export function ChatPage() {
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<AskAttachment[]>([]);
+  // Screenshots (data URLs) for the vision→code pipeline; the server strips the header.
+  const [images, setImages] = useState<string[]>([]);
   // General mode only: a folder the AI may explore with read-only filesystem tools.
   const [fsRoot, setFsRoot] = useState(() => localStorage.getItem(FSROOT_KEY) ?? "");
   const fileRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const autoScroll = useAutoScroll();
   // While streaming, stay pinned to the bottom — until the user scrolls up,
@@ -112,8 +115,15 @@ export function ChatPage() {
   });
 
   const askM = useMutation({
-    mutationFn: (vars: { question: string; attachments?: AskAttachment[] }) =>
-      ask(app ?? "", vars.question, conversationId, vars.attachments, app === "" ? fsRoot.trim() || undefined : undefined),
+    mutationFn: (vars: { question: string; attachments?: AskAttachment[]; images?: string[] }) =>
+      ask(
+        app ?? "",
+        vars.question,
+        conversationId,
+        vars.attachments,
+        app === "" ? fsRoot.trim() || undefined : undefined,
+        vars.images,
+      ),
     onSuccess: (res) => {
       setConversationId(res.conversationId);
       qc.invalidateQueries({ queryKey: ["conversation", res.conversationId] });
@@ -199,8 +209,13 @@ export function ChatPage() {
     if (!q || app === null || askM.isPending) return;
     pinnedRef.current = true; // re-pin for the fresh answer
     setInput("");
-    askM.mutate({ question: q, attachments: attachments.length ? attachments : undefined });
+    askM.mutate({
+      question: q,
+      attachments: attachments.length ? attachments : undefined,
+      images: images.length ? images : undefined,
+    });
     setAttachments([]);
+    setImages([]);
   };
 
   // Read attached files as text (capped to 10), append to the pending list.
@@ -209,6 +224,24 @@ export function ChatPage() {
     const read = await Promise.all([...list].map(async (f) => ({ name: f.name, content: await f.text() })));
     setAttachments((prev) => [...prev, ...read].slice(0, 10));
     if (fileRef.current) fileRef.current.value = ""; // allow re-selecting the same file
+  };
+
+  // Read attached screenshots as data URLs (capped to 6) for the vision pipeline.
+  const onImages = async (list: FileList | null) => {
+    if (!list) return;
+    const read = await Promise.all(
+      [...list].map(
+        (f) =>
+          new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result));
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(f);
+          }),
+      ),
+    );
+    setImages((prev) => [...prev, ...read].slice(0, 6));
+    if (imageRef.current) imageRef.current.value = ""; // allow re-selecting the same file
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -382,6 +415,31 @@ export function ChatPage() {
             ))}
           </div>
         )}
+        {images.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {images.map((src, i) => (
+              <span
+                // biome-ignore lint/suspicious/noArrayIndexKey: screenshots are positional
+                key={i}
+                className="relative inline-block"
+              >
+                <img
+                  src={src}
+                  alt={`screenshot ${i + 1}`}
+                  className="h-14 w-14 rounded-lg border border-gray-200 object-cover dark:border-gray-700"
+                />
+                <button
+                  type="button"
+                  onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
+                  className="-top-1.5 -right-1.5 absolute flex h-4 w-4 items-center justify-center rounded-full bg-gray-700 text-white text-xs hover:bg-red-500"
+                  aria-label={`remove screenshot ${i + 1}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <input
             ref={fileRef}
@@ -399,6 +457,25 @@ export function ChatPage() {
               className={`${BTN_GHOST_CLASS} h-10 px-3`}
             >
               📎
+            </button>
+          </Tooltip>
+          <input
+            ref={imageRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => onImages(e.target.files)}
+          />
+          <Tooltip content="Attach screenshots (analyzed by the vision model)">
+            <button
+              type="button"
+              onClick={() => imageRef.current?.click()}
+              disabled={app === null}
+              aria-label="Attach screenshots (analyzed by the vision model)"
+              className={`${BTN_GHOST_CLASS} h-10 px-3`}
+            >
+              🖼️
             </button>
           </Tooltip>
           <textarea

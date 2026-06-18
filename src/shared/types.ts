@@ -291,7 +291,7 @@ export interface AskSource {
  */
 export interface TraceStep {
   label: string;
-  kind: 'index' | 'retrieval' | 'planner' | 'llm' | 'tool' | 'answer';
+  kind: 'index' | 'retrieval' | 'planner' | 'llm' | 'tool' | 'answer' | 'vision';
   /** Offset from the start of the answer, in ms. */
   startMs: number;
   durationMs: number;

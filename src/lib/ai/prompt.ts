@@ -26,6 +26,8 @@ export interface PromptOptions {
   runtimeRef?: string;
   /** When set, append the code-generation rules + few-shot anchors to the system prompt. */
   codeMode?: boolean;
+  /** `[UI Vision Reference]` markdown diagnostic from the screenshot-extraction step. */
+  visionRef?: string;
 }
 
 /**
@@ -36,7 +38,7 @@ export interface PromptOptions {
  */
 export const CODE_GROUNDING_RULES =
   '\n\nCode-generation rules (follow exactly):\n' +
-  "- Do NOT assume a CLI/tool outputs JSON unless the context shows it. If output format is unknown, write a robust string parser (split lines, extract fields) rather than calling JSON.parse on it.\n" +
+  '- Do NOT assume a CLI/tool outputs JSON unless the context shows it. If output format is unknown, write a robust string parser (split lines, extract fields) rather than calling JSON.parse on it.\n' +
   '- Use the exact request/response and data shapes shown in the context. If you need a type that is not in the context, declare it explicitly before using it — never invent fields on an existing type.\n' +
   '- Node `child_process.exec`/`execFile` are callback-style and return a ChildProcess, not a Promise. To await them use `util.promisify(exec)`, or prefer `Bun.$`/`Bun.spawn`. Never `await` a callback-style call directly.\n' +
   '- Anchor filesystem paths with `path.join(import.meta.dir, …)` (or `__dirname`), never bare relative strings, so they survive a different working directory.\n' +
@@ -78,9 +80,16 @@ function withRuntimeRef(system: string, runtimeRef?: string): string {
     : system;
 }
 
-/** Apply the optional runtime-ref grounding + code-mode rules to a base system prompt. */
+/** Prepend the `[UI Vision Reference]` diagnostic (from the screenshot step) to a system prompt. */
+function withVisionRef(system: string, visionRef?: string): string {
+  return visionRef?.trim()
+    ? `${system}\n\n[UI Vision Reference] — a vision model analyzed the user's screenshot(s); treat this as ground truth for what is on screen (text, errors, layout issues):\n\n${visionRef}`
+    : system;
+}
+
+/** Apply the optional runtime-ref + vision grounding + code-mode rules to a base system prompt. */
 function applyCodeGrounding(system: string, opts: PromptOptions): string {
-  let out = withRuntimeRef(system, opts.runtimeRef);
+  let out = withVisionRef(withRuntimeRef(system, opts.runtimeRef), opts.visionRef);
   if (opts.codeMode) out += CODE_GROUNDING_RULES;
   return out;
 }

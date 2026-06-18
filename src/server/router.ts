@@ -31,11 +31,11 @@ import {
 } from '../lib/apps';
 import { renderCommandsByExample } from '../lib/commandsDoc';
 import { expandPath, loadConfig, OUTPUTS_DIR, type RubatoConfig, saveConfig, setUiConfig } from '../lib/config';
-import { runScan } from '../lib/scanApps';
 import { runWithCorrelation } from '../lib/correlation';
 import { detectTechFromPackageJson } from '../lib/detectAppTech';
 import { openInEditor } from '../lib/editor';
 import { findPackageRoot } from '../lib/pkgPaths';
+import { runScan } from '../lib/scanApps';
 import type { PluginRouteHandler } from '../plugin/types';
 import type { AskAttachment } from '../shared/types';
 import { resolvePages, type UiConfig, type UiConfigPatch, type UiPage, type UiState } from '../shared/ui';
@@ -150,6 +150,26 @@ function capAttachments(raw: unknown): AskAttachment[] | undefined {
     if (a && typeof a.name === 'string' && typeof a.content === 'string') {
       out.push({ name: a.name.slice(0, 200), content: a.content.slice(0, MAX_ATTACHMENT_CHARS) });
     }
+  }
+  return out.length ? out : undefined;
+}
+
+/** Defensive caps on screenshot payloads (vision step). */
+const MAX_IMAGES = 6;
+const MAX_IMAGE_CHARS = 12_000_000; // ~9MB decoded per image — plenty for a screenshot
+
+/**
+ * Sanitize screenshot images from a request body into RAW base64 strings: strip
+ * any browser-injected `data:image/<type>;base64,` header, drop non-strings, and
+ * bound count + per-image size. Returns undefined when there are none.
+ */
+export function capImages(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: string[] = [];
+  for (const img of raw.slice(0, MAX_IMAGES)) {
+    if (typeof img !== 'string') continue;
+    const base64 = img.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '').trim();
+    if (base64) out.push(base64.slice(0, MAX_IMAGE_CHARS));
   }
   return out.length ? out : undefined;
 }
@@ -736,7 +756,11 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
   if (pathname === '/api/apps/run-scan') {
     if (req.method !== 'POST') return jsonError('use POST', 405);
     let body: Record<string, unknown> = {};
-    try { body = (await req.json()) as Record<string, unknown>; } catch { /* body is optional */ }
+    try {
+      body = (await req.json()) as Record<string, unknown>;
+    } catch {
+      /* body is optional */
+    }
     const dryRun = body.dryRun === true;
     try {
       const cfg = await loadConfig();
@@ -1152,7 +1176,11 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
   if (pathname === '/api/config/code-dirs') {
     if (req.method !== 'PATCH') return jsonError('use PATCH', 405);
     let body: { dirs?: unknown };
-    try { body = (await req.json()) as typeof body; } catch { return jsonError('invalid JSON body', 400); }
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return jsonError('invalid JSON body', 400);
+    }
     if (!Array.isArray(body.dirs) || !body.dirs.every((d) => typeof d === 'string')) {
       return jsonError('dirs must be an array of strings', 400);
     }
@@ -1254,6 +1282,7 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
         conversationId?: string;
         attachments?: AskAttachment[];
         fsRoot?: string;
+        images?: unknown;
       };
       try {
         body = (await req.json()) as typeof body;
@@ -1288,6 +1317,7 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
             conversationId: body.conversationId,
             attachments: capAttachments(body.attachments),
             fsRoot,
+            images: capImages(body.images),
           }),
           202,
         );

@@ -281,6 +281,11 @@ export interface AppAiConfig {
    * snippets. Overrides global. Default false.
    */
   codeEnhanceTsc?: boolean;
+  /**
+   * Local vision model for the screenshot-extraction step when a question carries
+   * images (requires `flavor: "ollama"`). Overrides global. Default "qwen3-vl:8b".
+   */
+  visionModel?: string;
 }
 
 /** Chat transport shape for a direct endpoint: OpenAI-compat `/v1` or Ollama-native `/api/chat`. */
@@ -406,4 +411,9 @@ export interface AiGlobalConfig {
    * fragments; best for complete-file snippets. Default false.
    */
   codeEnhanceTsc?: boolean;
+  /**
+   * Local vision model used for the screenshot-extraction step when a question
+   * carries images (requires `flavor: "ollama"`). Default "qwen3-vl:8b".
+   */
+  visionModel?: string;
 }

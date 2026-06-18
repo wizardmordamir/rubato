@@ -11,6 +11,12 @@
 export interface LlmMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  /**
+   * Raw base64 image data (NO `data:` URL header) for multimodal turns. Only the
+   * native Ollama transport forwards these (as the message's `images` array); the
+   * OpenAI-compat/form transports ignore them, so vision needs `flavor: "ollama"`.
+   */
+  images?: string[];
 }
 
 /** One normalized piece of a streamed response. */

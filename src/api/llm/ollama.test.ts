@@ -37,7 +37,10 @@ describe('createOllamaProvider', () => {
       ])) as unknown as typeof fetch;
     const provider = createOllamaProvider({ baseUrl: 'http://x/v1', model: 'm', fetch: fakeFetch });
     const chunks = await drain(provider.streamChat([{ role: 'user', content: 'hi' }]));
-    const text = chunks.filter((c) => c.kind === 'text').map((c) => (c.kind === 'text' ? c.text : '')).join('');
+    const text = chunks
+      .filter((c) => c.kind === 'text')
+      .map((c) => (c.kind === 'text' ? c.text : ''))
+      .join('');
     expect(text).toBe('Hello');
     expect(chunks.some((c) => c.kind === 'done')).toBe(true);
   });
@@ -50,7 +53,10 @@ describe('createOllamaProvider', () => {
       ])) as unknown as typeof fetch;
     const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'm', fetch: fakeFetch });
     const chunks = await drain(provider.streamChat([{ role: 'user', content: 'hi' }]));
-    const text = chunks.filter((c) => c.kind === 'text').map((c) => (c.kind === 'text' ? c.text : '')).join('');
+    const text = chunks
+      .filter((c) => c.kind === 'text')
+      .map((c) => (c.kind === 'text' ? c.text : ''))
+      .join('');
     expect(text).toBe('partial!');
   });
 
@@ -70,5 +76,26 @@ describe('createOllamaProvider', () => {
     expect(sentBody.model).toBe('qwen2.5-coder:14b');
     expect(sentBody.stream).toBe(true);
     expect(sentBody.options).toEqual({ num_ctx: 32768, temperature: 0.1, repeat_penalty: 1.1 });
+  });
+
+  test('forwards base64 images on a message (multimodal), omitting the key when absent', async () => {
+    let sentBody: { messages?: Array<{ role: string; content: string; images?: string[] }> } = {};
+    const fakeFetch = (async (_url: string, init: RequestInit) => {
+      sentBody = JSON.parse(init.body as string);
+      return ndjsonResponse(['{"message":{"content":"ok"},"done":true}\n']);
+    }) as unknown as typeof fetch;
+    const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'qwen3-vl:8b', fetch: fakeFetch });
+    await drain(
+      provider.streamChat([
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'what is wrong here?', images: ['BASE64A', 'BASE64B'] },
+      ]),
+    );
+    expect(sentBody.messages?.[0]).toEqual({ role: 'system', content: 'sys' }); // no images key
+    expect(sentBody.messages?.[1]).toEqual({
+      role: 'user',
+      content: 'what is wrong here?',
+      images: ['BASE64A', 'BASE64B'],
+    });
   });
 });

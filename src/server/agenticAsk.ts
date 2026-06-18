@@ -51,6 +51,8 @@ export interface AgenticGatherArgs {
   runtimeRef?: string;
   /** When set, append the code-generation rules + few-shot anchors to the system prompt. */
   codeMode?: boolean;
+  /** `[UI Vision Reference]` markdown diagnostic from the screenshot-extraction step. */
+  visionRef?: string;
   /** Optional timing recorder; records seed retrieval, model rounds, tool calls. */
   tracer?: Tracer;
 }
@@ -92,8 +94,22 @@ function fsSystem(root: string): string {
 }
 
 export async function runAgenticGather(args: AgenticGatherArgs): Promise<AgenticGatherResult> {
-  const { app, fsRoot, question, provider, model, conversationId, messageId, maxRounds, history, appMap, runtimeRef, codeMode, tracer } =
-    args;
+  const {
+    app,
+    fsRoot,
+    question,
+    provider,
+    model,
+    conversationId,
+    messageId,
+    maxRounds,
+    history,
+    appMap,
+    runtimeRef,
+    codeMode,
+    visionRef,
+    tracer,
+  } = args;
   const status = (text: string) => emit({ type: 'ask:status', conversationId, messageId, text });
 
   // Two tool sets: app-scoped (indexed repo tools) or general filesystem tools
@@ -150,11 +166,14 @@ export async function runAgenticGather(args: AgenticGatherArgs): Promise<Agentic
   const runtimeBlock = runtimeRef?.trim()
     ? `\n\nGround every fact about the runtime and dependencies in this — do not guess versions, paths, or available packages:\n\n${runtimeRef}`
     : '';
+  const visionBlock = visionRef?.trim()
+    ? `\n\n[UI Vision Reference] — a vision model analyzed the user's screenshot(s); treat this as ground truth for what is on screen (text, errors, layout issues):\n\n${visionRef}`
+    : '';
   const rulesBlock = codeMode ? CODE_GROUNDING_RULES : '';
   const messages: LlmMessage[] = [
     {
       role: 'system',
-      content: `${system}${mapBlock}${runtimeBlock}\n\n${renderToolInstructions(tools.map((t) => t.spec))}${rulesBlock}`,
+      content: `${system}${mapBlock}${runtimeBlock}${visionBlock}\n\n${renderToolInstructions(tools.map((t) => t.spec))}${rulesBlock}`,
     },
     ...(history ?? []),
     { role: 'user', content: `Question: ${question}\n\nInitial context:\n${seedContext}` },
