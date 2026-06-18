@@ -215,6 +215,7 @@ export const UI_PAGES: UiPage[] = [
     group: 'top',
     color: '#a855f7',
     description: 'Draft rough tasks; local Ollama rewrites them into queue-ready specs you can publish to the orchestrator.',
+    mergedInto: 'taskq',
   },
   {
     key: 'customPages',

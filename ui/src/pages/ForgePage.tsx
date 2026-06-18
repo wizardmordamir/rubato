@@ -54,7 +54,7 @@ const STATE_TONE: Record<ForgeDraft["enhance_state"], "neutral" | "accent" | "wa
   error: "error",
 };
 
-export function ForgePage() {
+export function ForgePage({ embedded }: { embedded?: boolean } = {}) {
   const qc = useQueryClient();
   const { notify } = useToast();
   const onError = (e: unknown) => notify(e instanceof Error ? e.message : "request failed", "error");
@@ -87,7 +87,7 @@ export function ForgePage() {
   return (
     <div className="flex h-full flex-col gap-4">
       <div className="flex items-center justify-between">
-        <PageHeading title="Task Forge" />
+        {embedded ? <div /> : <PageHeading title="Task Forge" />}
         <div className="flex gap-2">
           <button type="button" className={BTN_GHOST_CLASS} onClick={() => setManagingPrompts(true)}>
             Prompts
