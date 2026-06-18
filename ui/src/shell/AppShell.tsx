@@ -103,7 +103,7 @@ export function AppShell({ accent, label = appBrand(), pages, showSearch = appSh
         </header>
         <main className="flex-1 overflow-auto p-4 sm:p-6 md:p-8">
           <ScrollToTopButton />
-          <div className="mx-auto h-full w-full max-w-4xl">
+          <div className="h-full w-full">
             <AppBreadcrumbs />
             {children}
           </div>

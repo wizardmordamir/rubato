@@ -23,6 +23,7 @@ import { Message } from "./chat/Message";
 
 const APP_KEY = "rubato.chat.app";
 const FSROOT_KEY = "rubato.chat.fsRoot";
+const INPUT_KEY = "rubato.chat.input";
 
 function when(ms: number): string {
   const s = Math.round((Date.now() - ms) / 1000);
@@ -55,7 +56,7 @@ export function ChatPage() {
   // null = no mode chosen yet; "" = general (no repo); else an app name.
   const [app, setApp] = useState<string | null>(() => localStorage.getItem(APP_KEY));
   const [conversationId, setConversationId] = useState<string | undefined>();
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => localStorage.getItem(INPUT_KEY) ?? "");
   const [attachments, setAttachments] = useState<AskAttachment[]>([]);
   // Screenshots (data URLs) for the vision→code pipeline; the server strips the header.
   const [images, setImages] = useState<string[]>([]);
@@ -223,6 +224,7 @@ export function ChatPage() {
     if (!q || app === null || askM.isPending) return;
     pinnedRef.current = true; // re-pin for the fresh answer
     setInput("");
+    localStorage.removeItem(INPUT_KEY);
     askM.mutate({
       question: q,
       attachments: attachments.length ? attachments : undefined,
@@ -380,7 +382,7 @@ export function ChatPage() {
       )}
 
       {/* Thread */}
-      <div ref={threadRef} onScroll={onThreadScroll} className="flex-1 space-y-3 overflow-auto rounded-xl pr-1">
+      <div ref={threadRef} onScroll={onThreadScroll} className="flex-1 space-y-3 overflow-x-hidden overflow-y-auto rounded-xl pr-1">
         {messages.length === 0 && !liveMessage && !askM.isPending && (
           <p className="mt-8 text-center text-sm text-gray-400">
             {app ? (
@@ -494,7 +496,11 @@ export function ChatPage() {
           </Tooltip>
           <textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              if (e.target.value) localStorage.setItem(INPUT_KEY, e.target.value);
+              else localStorage.removeItem(INPUT_KEY);
+            }}
             onKeyDown={onKey}
             rows={2}
             placeholder={

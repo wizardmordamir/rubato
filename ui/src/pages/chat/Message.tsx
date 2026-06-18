@@ -11,14 +11,19 @@ import { TracePanel } from "./Trace";
 function CodeBlock(props: ComponentPropsWithoutRef<"pre">) {
   const ref = useRef<HTMLPreElement>(null);
   return (
-    <div className="code-block group/code">
-      <CopyButton
-        text={() => ref.current?.textContent ?? ""}
-        label="Copy code"
-        tooltip="Copy code"
-        iconSize={14}
-        className="absolute right-2 top-2 rounded-md bg-gray-200/80 text-gray-500 opacity-0 hover:text-accent group-hover/code:opacity-100 dark:bg-gray-700/80 dark:text-gray-400"
-      />
+    <div className="code-block group/code relative">
+      {/* Wrapper div owns the absolute positioning so the Tooltip span inside
+          CopyButton doesn't create an unintended stacking context that misplaces
+          the button relative to the code block. */}
+      <div className="absolute right-2 top-2 opacity-0 group-hover/code:opacity-100">
+        <CopyButton
+          text={() => ref.current?.textContent ?? ""}
+          label="Copy code"
+          tooltip="Copy code"
+          iconSize={14}
+          className="rounded-md bg-gray-200/80 text-gray-500 hover:text-accent dark:bg-gray-700/80 dark:text-gray-400"
+        />
+      </div>
       <pre ref={ref} {...props} />
     </div>
   );
