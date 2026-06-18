@@ -8,8 +8,10 @@ import { getTheme, type Theme, toggleTheme } from "./theme";
 export function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>(getTheme);
   const next = theme === "dark" ? "light" : "dark";
+  // The icon button is the control; on touch reveal the hint on tap rather than
+  // appending a disclosure icon next to a toolbar button.
   return (
-    <Tooltip content={`Switch to ${next} mode`}>
+    <Tooltip content={`Switch to ${next} mode`} mobile="tap">
       <button
         type="button"
         onClick={() => setTheme(toggleTheme())}
