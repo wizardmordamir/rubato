@@ -14,6 +14,7 @@ import type { PluginRouteHandler } from '../plugin/types';
 import type { UiPage } from '../shared/ui';
 import { BUILTIN_SCRIPTS } from './builtinScripts';
 import { initDebugCapture } from './debugCapture';
+import { startForgeWorker } from './forge';
 import { subscribe } from './events';
 import { route, type UiBranding } from './router';
 
@@ -69,6 +70,8 @@ export function startServer(options: StartOptions = {}): ServerHandle {
   registerScripts(options.scripts);
   // Install the outbound-fetch capture hook (a no-op unless RUBATO_CAPTURE / the toggle is on).
   initDebugCapture();
+  // Background worker: drains queued task drafts through Ollama, one at a time.
+  startForgeWorker();
   const envPort = Number(process.env.RUBATO_PORT);
   const port = options.port ?? (Number.isInteger(envPort) && envPort > 0 ? envPort : 4747);
   const hostname = options.hostname ?? '127.0.0.1';

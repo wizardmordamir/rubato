@@ -209,6 +209,14 @@ export const UI_PAGES: UiPage[] = [
     mergedInto: 'taskq',
   },
   {
+    key: 'forge',
+    path: '/forge',
+    label: 'Task Forge',
+    group: 'top',
+    color: '#a855f7',
+    description: 'Draft rough tasks; local Ollama rewrites them into queue-ready specs you can publish to the orchestrator.',
+  },
+  {
     key: 'customPages',
     path: '/pages',
     label: 'Pages',

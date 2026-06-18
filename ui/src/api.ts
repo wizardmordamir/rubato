@@ -1227,6 +1227,50 @@ export async function deleteLink(id: string): Promise<void> {
 }
 export const importBookmarks = (html: string) => postJson<LinkImportResult>("/api/links/import", { html });
 
+// ── Task Draft Forge (Ollama-enhanced task drafts → taskq) ───────────────────
+
+import type {
+  DraftDetail,
+  EnhancedTask,
+  EnhanceRequest,
+  ForgeDraft,
+  ForgeDraftInput,
+  ForgeDraftPatch,
+  ForgePrompt,
+  ForgePromptInput,
+} from "@shared/forge";
+
+export type {
+  DraftDetail,
+  EnhancedTask,
+  ForgeDraft,
+  ForgeDraftInput,
+  ForgeDraftPatch,
+  ForgePrompt,
+  ForgePromptInput,
+  ForgeTargetStatus,
+} from "@shared/forge";
+export { FORGE_TARGET_STATUSES } from "@shared/forge";
+
+export const fetchDrafts = () => getJson<ForgeDraft[]>("/api/forge/drafts");
+export const fetchDraftDetail = (id: number) => getJson<DraftDetail>(`/api/forge/drafts/${id}`);
+export const createDraft = (input: ForgeDraftInput) => postJson<ForgeDraft>("/api/forge/drafts", input);
+export const updateDraft = (id: number, patch: ForgeDraftPatch) =>
+  patchJson<ForgeDraft>(`/api/forge/drafts/${id}`, patch);
+export const deleteDraft = (id: number) => sendJson<{ deleted: boolean }>("DELETE", `/api/forge/drafts/${id}`, {});
+export const enhanceDraft = (id: number, req: EnhanceRequest) =>
+  postJson<ForgeDraft>(`/api/forge/drafts/${id}/enhance`, req);
+export const publishDraft = (id: number) => postJson<ForgeDraft>(`/api/forge/drafts/${id}/publish`, {});
+export const updateRevision = (id: number, ai_specification: string) =>
+  patchJson<EnhancedTask>(`/api/forge/revisions/${id}`, { ai_specification });
+
+export const fetchForgePrompts = () => getJson<ForgePrompt[]>("/api/forge/prompts");
+export const createForgePrompt = (input: ForgePromptInput) => postJson<ForgePrompt>("/api/forge/prompts", input);
+export const updateForgePrompt = (id: number, input: ForgePromptInput) =>
+  patchJson<ForgePrompt>(`/api/forge/prompts/${id}`, input);
+export const deleteForgePrompt = (id: number) =>
+  sendJson<{ deleted: boolean }>("DELETE", `/api/forge/prompts/${id}`, {});
+
 // ── Vault (encrypted, master-password-gated credential store) ─────────────────
 
 import type { VaultItem as BVaultItem, VaultItemInput as BVaultItemInput, VaultStatus } from "@shared/vault";

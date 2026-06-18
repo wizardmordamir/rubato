@@ -15,6 +15,7 @@ import { CommandDetailPage, CommandsPage } from "./pages/CommandsPage";
 import { ConfigPage } from "./pages/ConfigPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DocsPage } from "./pages/DocsPage";
+import { ForgePage } from "./pages/ForgePage";
 import { AutomationBuilderPage } from "./pages/ExcelAutomations/AutomationBuilderPage";
 import { ExcelAutomationsPage } from "./pages/ExcelAutomations/ExcelAutomationsPage";
 import { HubPage } from "./pages/HubPage";
@@ -70,6 +71,7 @@ const PAGE_ELEMENTS: Record<string, ReactNode> = {
   "shell-aliases": <ShellAliasesPage />,
   vault: <VaultPage />,
   taskq: <TaskqPage />,
+  forge: <ForgePage />,
   customPages: <PagesPage />,
   tools: <ToolsPage />,
   docs: <DocsPage />,

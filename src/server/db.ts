@@ -563,8 +563,86 @@ export function getDb(): Database {
       value TEXT NOT NULL
     )
   `);
+  // ── Task Draft Forge ──────────────────────────────────────────────────────
+  // Rough human drafts (`task_drafts`, never overwritten) get rewritten by the
+  // local Ollama into queue-ready specs stored as `enhanced_tasks` revisions
+  // (one row per iteration). `forge_prompts` are reusable refinement prompts.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS task_drafts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      raw_content TEXT NOT NULL DEFAULT '',
+      target_status TEXT NOT NULL DEFAULT 'draft',
+      enhance_state TEXT NOT NULL DEFAULT 'idle',
+      pending_prompt TEXT,
+      pending_prompt_id INTEGER,
+      current_enhanced_id INTEGER,
+      published_task_id INTEGER,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS enhanced_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      draft_id INTEGER NOT NULL,
+      iteration INTEGER NOT NULL,
+      ai_specification TEXT NOT NULL,
+      status TEXT NOT NULL,
+      model_used TEXT,
+      prompt_used TEXT NOT NULL,
+      prompt_id INTEGER,
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_enhanced_draft ON enhanced_tasks (draft_id)`);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS forge_prompts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      body TEXT NOT NULL,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  // Seed the built-in default prompt once (first boot / empty table).
+  const promptCount = (db.query(`SELECT COUNT(*) AS n FROM forge_prompts`).get() as { n: number }).n;
+  if (promptCount === 0) {
+    const ts = new Date().toISOString();
+    db.run(`INSERT INTO forge_prompts (name, body, is_default, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`, [
+      'Technical Specification Writer',
+      DEFAULT_FORGE_PROMPT,
+      ts,
+      ts,
+    ]);
+  }
   return db;
 }
+
+/** The built-in default forge prompt: turn a rough draft into a queue-ready spec.
+ *  The trailing JSON line (model/think grade) is parsed off at publish time and
+ *  mapped to the taskq task's model/think — see `parseSpecMeta` in forge.ts. */
+export const DEFAULT_FORGE_PROMPT = [
+  'You are a Professional Technical Specification Writer for an autonomous coding task queue.',
+  "Rewrite the user's rough task draft into a clear, well-structured specification that an",
+  'autonomous coding agent can pick up and execute without further clarification.',
+  '',
+  'Output GitHub-flavored Markdown with these sections (omit one only if truly irrelevant):',
+  '- A one-line restated objective.',
+  '- **Context** — why this is needed and any relevant background.',
+  '- **Requirements** — concrete, testable bullet points.',
+  '- **Implementation notes** — likely files, approach, and edge cases.',
+  '- **Acceptance criteria** — how to verify it is done.',
+  '',
+  "Stay faithful to the user's intent; do not invent scope. Be concise but complete.",
+  '',
+  'After the markdown, output ONE final line of JSON ONLY (no code fence) grading the work:',
+  '{"model":"haiku|sonnet|opus","think":"off|low|medium|high|max"}',
+  'Pick the cheapest model + thinking that fits (mechanical → haiku/off; normal feature →',
+  'sonnet/low; hard design or debugging → opus/high).',
+].join('\n');
 
 /** Get a UI preference by key (returns null if not set). */
 export function getUiPref(key: string): string | null {

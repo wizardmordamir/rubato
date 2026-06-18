@@ -105,6 +105,7 @@ import { handleEnvDiscoveryApi } from './envDiscovery';
 import { listAppEnvFiles, readAppEnvFile, writeAppEnvFile } from './envFiles';
 import { handleExcelAutomationApi } from './excelAutomationRoutes';
 import { listOutputFiles, readOutputFile, resolveOutputFile } from './files';
+import { handleForgeApi } from './forgeRoutes';
 import { json, jsonError, readJsonBody } from './http';
 import { handleLinksApi } from './linksRoutes';
 import { handleOrchestrationApi } from './orchestrationRoutes';
@@ -452,6 +453,9 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
 
   // Links (bookmark / link manager + bookmarks-HTML import).
   if (pathname === '/api/links' || pathname.startsWith('/api/links/')) return handleLinksApi(pathname, req);
+
+  // Task Draft Forge (Ollama-enhanced task drafts → taskq queue).
+  if (pathname.startsWith('/api/forge/')) return handleForgeApi(pathname, req);
 
   // Shell aliases (user-defined name→command pairs, system shell config setup, ca export/import).
   if (pathname === '/api/shell-aliases' || pathname.startsWith('/api/shell-aliases/'))

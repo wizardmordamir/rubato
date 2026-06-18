@@ -57,6 +57,7 @@ export const PAGE_ICONS: Record<string, ReactNode> = {
   links: <IconExternal />,
   vault: <IconShield />,
   taskq: <IconClipboard />,
+  forge: <IconZap />,
   "orchestration-processing": <IconChartBar />,
   tools: <IconWrench />,
   docs: <IconFileText />,
