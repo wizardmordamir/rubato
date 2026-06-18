@@ -57,19 +57,30 @@ import { Alert, Badge, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLA
 import { useConfirm } from "../confirm";
 import { useToast } from "../toast";
 import { ForgePage } from "./ForgePage";
+import { OllamaPage } from "./OllamaPage";
 import { OrchestrationProcessingPage } from "./OrchestrationProcessingPage";
 
-type TaskqTab = "board" | "forge" | "workers" | "settings" | "history" | "usage" | "processing";
+type TaskqTab = "board" | "forge" | "ollama" | "workers" | "settings" | "history" | "usage" | "processing";
 const TASKQ_TABS: readonly { key: TaskqTab; label: string }[] = [
   { key: "board", label: "Board" },
   { key: "forge", label: "Forge" },
+  { key: "ollama", label: "Ollama" },
   { key: "workers", label: "Workers" },
   { key: "settings", label: "Settings" },
   { key: "history", label: "History" },
   { key: "usage", label: "Usage" },
   { key: "processing", label: "Processing" },
 ];
-const VALID_TABS = new Set<string>(["board", "forge", "workers", "settings", "history", "usage", "processing"]);
+const VALID_TABS = new Set<string>([
+  "board",
+  "forge",
+  "ollama",
+  "workers",
+  "settings",
+  "history",
+  "usage",
+  "processing",
+]);
 
 /**
  * Taskq — the v2 orchestrator board + builder, backed by the SQLite queue
@@ -403,6 +414,7 @@ export function TaskqPage() {
         {tab === "history" && <HistoryPanel />}
         {tab === "usage" && <UsagePanel />}
         {tab === "forge" && <ForgePage embedded />}
+        {tab === "ollama" && <OllamaPage embedded />}
         {tab === "processing" && <OrchestrationProcessingPage embedded />}
       </div>
 

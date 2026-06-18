@@ -110,6 +110,7 @@ import { listOutputFiles, readOutputFile, resolveOutputFile } from './files';
 import { handleForgeApi } from './forgeRoutes';
 import { json, jsonError, readJsonBody } from './http';
 import { handleLinksApi } from './linksRoutes';
+import { handleOllamaApi } from './ollamaRoutes';
 import { handleOrchestrationApi } from './orchestrationRoutes';
 import { handlePipelineApi } from './pipelineRoutes';
 import { handlePlansApi } from './plansRoutes';
@@ -458,6 +459,9 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
 
   // Task Draft Forge (Ollama-enhanced task drafts → taskq queue).
   if (pathname.startsWith('/api/forge/')) return handleForgeApi(pathname, req);
+
+  // Ollama daemon control (status + model management for the Orchestration tab).
+  if (pathname.startsWith('/api/ollama/')) return handleOllamaApi(pathname, req);
 
   // Shell aliases (user-defined name→command pairs, system shell config setup, ca export/import).
   if (pathname === '/api/shell-aliases' || pathname.startsWith('/api/shell-aliases/'))

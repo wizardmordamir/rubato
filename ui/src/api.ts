@@ -1296,6 +1296,22 @@ export const updateForgePrompt = (id: number, input: ForgePromptInput) =>
 export const deleteForgePrompt = (id: number) =>
   sendJson<{ deleted: boolean }>("DELETE", `/api/forge/prompts/${id}`, {});
 
+// ── Ollama daemon control (Orchestration "Ollama" tab) ───────────────────────
+
+import type { OllamaModel, OllamaRunningModel, OllamaStatus } from "@shared/ollama";
+
+export type { OllamaModel, OllamaRunningModel, OllamaStatus } from "@shared/ollama";
+
+export const fetchOllamaStatus = () => getJson<OllamaStatus>("/api/ollama/status");
+export const fetchOllamaModels = () => getJson<OllamaModel[]>("/api/ollama/models");
+export const fetchOllamaRunning = () => getJson<OllamaRunningModel[]>("/api/ollama/running");
+export const pullOllamaModel = (model: string) => postJson<{ status: string }>("/api/ollama/pull", { model });
+export const setOllamaModel = (model: string) => postJson<OllamaStatus>("/api/ollama/model", { model });
+export const stopOllamaModel = (model: string) => postJson<{ ok: boolean }>("/api/ollama/stop", { model });
+export const startOllamaDaemon = () => postJson<OllamaStatus>("/api/ollama/serve", {});
+export const deleteOllamaModel = (name: string) =>
+  sendJson<{ deleted: boolean }>("DELETE", `/api/ollama/models/${encodeURIComponent(name)}`, {});
+
 // ── Vault (encrypted, master-password-gated credential store) ─────────────────
 
 import type { VaultItem as BVaultItem, VaultItemInput as BVaultItemInput, VaultStatus } from "@shared/vault";
