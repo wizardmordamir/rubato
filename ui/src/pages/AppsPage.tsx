@@ -39,6 +39,7 @@ import {
   fetchAppLog,
   fetchAppOpenshift,
   fetchApps,
+  fetchConfig,
   fetchCommands,
   fetchAppStashes,
   fetchAppStashFileDiff,
@@ -59,7 +60,9 @@ import {
   saveAppEnvFile,
   saveAppLinks,
   saveAppTechTags,
-  scanAppsDir,
+  type ScanResult,
+  runAppsScan,
+  setCodeDirs,
   type StashAction,
   type StashDiffMode,
   type StashEntry,
@@ -207,11 +210,32 @@ function groupDir(absolutePath: string): string {
   return absolutePath.replace(/\/+$/, "").replace(/\/[^/]+$/, "") || "/";
 }
 
+/** Render a ScanResult summary as a human-readable toast message. */
+function scanSummary(res: ScanResult): string {
+  const parts: string[] = [];
+  if (res.newApps.length) parts.push(`${res.newApps.length} new`);
+  if (res.updatedCount) parts.push(`${res.updatedCount} updated`);
+  if (res.missingApps.length) parts.push(`${res.missingApps.length} missing`);
+  if (res.removedCount) parts.push(`${res.removedCount} removed`);
+  if (res.pinnedCount) parts.push(`${res.pinnedCount} pinned`);
+  const detail = parts.length ? ` (${parts.join(", ")})` : "";
+  return `Scanned ${res.reposFound} repos${detail}`;
+}
+
 /**
- * Folder-picker modal: navigate subdirectories and scan the selected folder for
- * git repos to register. Starts at the user's home directory.
+ * Folder-picker modal: navigate the filesystem, add a directory to codeDirs,
+ * and optionally kick off a full recursive rubato-scan immediately.
  */
-function FolderPickerModal({ onClose, onScanned }: { onClose: () => void; onScanned: () => void }) {
+function FolderPickerModal({
+  onClose,
+  codeDirs,
+  onDirsChanged,
+}: {
+  onClose: () => void;
+  codeDirs: string[];
+  onDirsChanged: () => void;
+}) {
+  const qc = useQueryClient();
   const { notify } = useToast();
   const [current, setCurrent] = useState<BrowseDirResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -231,80 +255,60 @@ function FolderPickerModal({ onClose, onScanned }: { onClose: () => void; onScan
     }
   };
 
-  // Load home dir on mount
   useEffect(() => { load(""); }, []);
-
-  const navigate = (dir: string) => {
-    if (!current) return;
-    load(`${current.path}/${dir}`);
-  };
 
   const goUp = () => {
     if (!current) return;
-    const parent = current.path.replace(/\/[^/]+$/, "") || "/";
-    load(parent);
+    load(current.path.replace(/\/[^/]+$/, "") || "/");
   };
 
-  const goHome = () => {
-    if (current) load(current.home);
-  };
-
-  const scan = useMutation({
-    mutationFn: () => scanAppsDir(current?.path ?? ""),
-    onSuccess: (res) => {
-      const msg = res.added.length
-        ? `Registered ${res.added.length} app${res.added.length > 1 ? "s" : ""}${res.skipped.length ? ` (${res.skipped.length} already registered)` : ""}`
-        : res.skipped.length
-          ? `All ${res.skipped.length} repo${res.skipped.length > 1 ? "s" : ""} already registered`
-          : "No git repos found in this folder";
-      notify(msg);
-      onScanned();
+  const addDir = useMutation({
+    mutationFn: async (andScan: boolean) => {
+      const path = current?.path ?? "";
+      const next = codeDirs.includes(path) ? codeDirs : [...codeDirs, path];
+      await setCodeDirs(next);
+      onDirsChanged();
+      if (andScan) {
+        const res = await runAppsScan();
+        qc.invalidateQueries({ queryKey: ["apps"] });
+        notify(scanSummary(res));
+      } else {
+        notify(`Added ${path} to scan roots`);
+      }
       onClose();
     },
-    onError: (e) => notify(e instanceof Error ? e.message : "scan failed"),
+    onError: (e) => notify(e instanceof Error ? e.message : "failed"),
   });
 
   const isHome = current ? current.path === current.home : false;
+  const alreadyAdded = current ? codeDirs.includes(current.path) : false;
 
   return (
-    <Modal title="Choose a folder to scan" onClose={onClose} widthClass="max-w-xl">
+    <Modal title="Add a scan root" onClose={onClose} widthClass="max-w-xl">
       <div className="flex flex-col gap-3">
-        {/* Path breadcrumb + manual input */}
+        <p className="text-xs text-gray-500">
+          Navigate to your code directory (e.g. <span className="font-mono">~/code</span>). rubato-scan
+          will recursively find all git repos inside it and register them as apps.
+        </p>
+
+        {/* Navigation bar */}
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className={BTN_GHOST_CLASS}
-            onClick={goHome}
-            disabled={loading || isHome}
-            title="Home"
-          >
-            ~
-          </button>
-          <button
-            type="button"
-            className={BTN_GHOST_CLASS}
-            onClick={goUp}
-            disabled={loading || !current || current.path === "/"}
-            title="Up"
-          >
-            ↑
-          </button>
+          <button type="button" className={BTN_GHOST_CLASS} onClick={() => load(current?.home ?? "")} disabled={loading || isHome} title="Home">~</button>
+          <button type="button" className={BTN_GHOST_CLASS} onClick={goUp} disabled={loading || !current || current.path === "/"} title="Up">↑</button>
           <input
             className={`${FIELD_CLASS} flex-1 font-mono text-xs`}
             value={inputFocused ? pathInput : (current?.path ?? "")}
             onChange={(e) => setPathInput(e.target.value)}
             onFocus={() => { setInputFocused(true); setPathInput(current?.path ?? ""); }}
             onBlur={() => setInputFocused(false)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") { load(pathInput); setInputFocused(false); }
-            }}
+            onKeyDown={(e) => { if (e.key === "Enter") { load(pathInput); setInputFocused(false); } }}
             placeholder="Type a path and press Enter"
             spellCheck={false}
           />
         </div>
 
         {/* Directory listing */}
-        <div className="max-h-64 overflow-auto rounded border border-gray-200 dark:border-gray-700">
+        <div className="max-h-56 overflow-auto rounded border border-gray-200 dark:border-gray-700">
           {loading ? (
             <p className="p-3 text-xs text-gray-400">Loading…</p>
           ) : !current || current.dirs.length === 0 ? (
@@ -316,7 +320,7 @@ function FolderPickerModal({ onClose, onScanned }: { onClose: () => void; onScan
                   <button
                     type="button"
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
-                    onClick={() => navigate(dir)}
+                    onClick={() => load(`${current.path}/${dir}`)}
                   >
                     <span className="text-gray-400">📁</span>
                     <span className="font-mono">{dir}</span>
@@ -327,24 +331,30 @@ function FolderPickerModal({ onClose, onScanned }: { onClose: () => void; onScan
           )}
         </div>
 
-        {/* Current selection + scan button */}
-        <div className="border-t border-gray-100 pt-3 dark:border-gray-800">
-          <p className="mb-2 text-xs text-gray-500">
-            Scanning will find immediate subdirectories that are git repos and register them as apps.
-          </p>
-          <div className="flex items-center gap-2">
-            <span className="flex-1 truncate font-mono text-xs text-gray-600 dark:text-gray-300">
-              {current?.path ?? "…"}
-            </span>
+        {/* Actions */}
+        <div className="flex items-center gap-2 border-t border-gray-100 pt-3 dark:border-gray-800">
+          <span className="flex-1 truncate font-mono text-xs text-gray-500">{current?.path ?? "…"}</span>
+          {alreadyAdded && <span className="text-xs text-gray-400">already a scan root</span>}
+          <Tooltip content="Save this directory as a scan root without running a scan yet">
+            <button
+              type="button"
+              className={BTN_GHOST_CLASS}
+              disabled={addDir.isPending || !current || alreadyAdded}
+              onClick={() => addDir.mutate(false)}
+            >
+              Add root
+            </button>
+          </Tooltip>
+          <Tooltip content="Save as a scan root and immediately run rubato-scan to discover all git repos inside it">
             <button
               type="button"
               className={BTN_PRIMARY_CLASS}
-              disabled={scan.isPending || !current}
-              onClick={() => scan.mutate()}
+              disabled={addDir.isPending || !current}
+              onClick={() => addDir.mutate(true)}
             >
-              {scan.isPending ? "Scanning…" : "Scan this folder"}
+              {addDir.isPending ? "Scanning…" : alreadyAdded ? "Scan now" : "Add + scan"}
             </button>
-          </div>
+          </Tooltip>
         </div>
       </div>
     </Modal>
@@ -362,6 +372,11 @@ function RepoTools() {
   const [url, setUrl] = useState("");
   const [dest, setDest] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  const { data: cfg } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
+  const codeDirs: string[] = Array.isArray((cfg as Record<string, unknown> | undefined)?.codeDirs)
+    ? ((cfg as Record<string, unknown>).codeDirs as string[])
+    : [];
 
   const clone = useMutation({
     mutationFn: () => cloneApp({ url: url.trim(), dest: dest.trim() }),
@@ -383,21 +398,39 @@ function RepoTools() {
     onError: (e) => notify(e instanceof Error ? e.message : "fill failed"),
   });
 
+  const scan = useMutation({
+    mutationFn: () => runAppsScan(),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["apps"] });
+      notify(scanSummary(res));
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "scan failed"),
+  });
+
   return (
     <div className="mb-3">
       {pickerOpen && (
         <FolderPickerModal
           onClose={() => setPickerOpen(false)}
-          onScanned={() => qc.invalidateQueries({ queryKey: ["apps"] })}
+          codeDirs={codeDirs}
+          onDirsChanged={() => qc.invalidateQueries({ queryKey: ["config"] })}
         />
       )}
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={BTN_GHOST_CLASS} onClick={() => setOpen((v) => !v)}>
           {open ? "▾ Repo tools" : "▸ Repo tools"}
         </button>
-        <Tooltip content="Browse your filesystem and register all git repos found in a chosen folder">
+        <Tooltip
+          multiline
+          content={`Recursively scans all configured scan roots (${codeDirs.length ? codeDirs.join(", ") : "none set"}) for git repos and merges them into the registry. Use "Add scan root…" to configure roots.`}
+        >
+          <button type="button" className={BTN_GHOST_CLASS} disabled={scan.isPending || codeDirs.length === 0} onClick={() => scan.mutate()}>
+            {scan.isPending ? "Scanning…" : "Run scan"}
+          </button>
+        </Tooltip>
+        <Tooltip content="Choose a directory to add as a scan root, then run the full recursive scan to discover all git repos inside it">
           <button type="button" className={BTN_GHOST_CLASS} onClick={() => setPickerOpen(true)}>
-            Scan folder…
+            Add scan root…
           </button>
         </Tooltip>
         <Tooltip

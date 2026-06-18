@@ -25,13 +25,13 @@ import {
   loadApps,
   readPackageJson,
   removeApp,
-  scanAndRegister,
   setAppDb,
   setAppLinks,
   setAppTags,
 } from '../lib/apps';
 import { renderCommandsByExample } from '../lib/commandsDoc';
 import { expandPath, loadConfig, OUTPUTS_DIR, type RubatoConfig, saveConfig, setUiConfig } from '../lib/config';
+import { runScan } from '../lib/scanApps';
 import { runWithCorrelation } from '../lib/correlation';
 import { detectTechFromPackageJson } from '../lib/detectAppTech';
 import { openInEditor } from '../lib/editor';
@@ -728,19 +728,15 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
     }
   }
 
-  // POST /api/apps/scan { dir } — discover git repos in a dir and register them.
-  if (pathname === '/api/apps/scan') {
+  // POST /api/apps/run-scan { dryRun? } — full recursive scan across all codeDirs.
+  if (pathname === '/api/apps/run-scan') {
     if (req.method !== 'POST') return jsonError('use POST', 405);
-    let body: Record<string, unknown>;
+    let body: Record<string, unknown> = {};
+    try { body = (await req.json()) as Record<string, unknown>; } catch { /* body is optional */ }
+    const dryRun = body.dryRun === true;
     try {
-      body = (await req.json()) as Record<string, unknown>;
-    } catch {
-      return jsonError('invalid JSON body', 400);
-    }
-    const dir = typeof body.dir === 'string' ? body.dir : '';
-    if (!dir) return jsonError('dir is required', 400);
-    try {
-      return json(await scanAndRegister(dir));
+      const cfg = await loadConfig();
+      return json(await runScan({ roots: cfg.codeDirs, ignore: cfg.ignore, dryRun }));
     } catch (err) {
       return jsonError(err instanceof Error ? err.message : 'scan failed', 400);
     }
@@ -1146,6 +1142,20 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
       );
     }
     return json(await appDetails(app));
+  }
+
+  // PATCH /api/config/code-dirs { dirs: string[] } — replace the codeDirs list.
+  if (pathname === '/api/config/code-dirs') {
+    if (req.method !== 'PATCH') return jsonError('use PATCH', 405);
+    let body: { dirs?: unknown };
+    try { body = (await req.json()) as typeof body; } catch { return jsonError('invalid JSON body', 400); }
+    if (!Array.isArray(body.dirs) || !body.dirs.every((d) => typeof d === 'string')) {
+      return jsonError('dirs must be an array of strings', 400);
+    }
+    const cfg = await loadConfig();
+    cfg.codeDirs = (body.dirs as string[]).map((d) => expandPath(d));
+    await saveConfig(cfg);
+    return json({ codeDirs: cfg.codeDirs });
   }
 
   // POST /api/config — overwrite ~/.rubato/config.json from the Config page editor.

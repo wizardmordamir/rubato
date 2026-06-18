@@ -239,9 +239,23 @@ export interface BrowseDirResult {
 }
 export const browseDir = (path: string) =>
   getJson<BrowseDirResult>(`/api/browse?path=${encodeURIComponent(path)}`);
-/** Scan a directory for git repos and register them. */
-export const scanAppsDir = (dir: string) =>
-  postJson<{ added: AppConfig[]; skipped: string[] }>("/api/apps/scan", { dir });
+
+export interface ScanResult {
+  reposFound: number;
+  newApps: AppConfig[];
+  updatedCount: number;
+  pinnedCount: number;
+  missingApps: AppConfig[];
+  removedCount: number;
+  conflicts: Array<{ kind: string; key: string; apps: Array<{ name: string; path: string }> }>;
+  dryRun: boolean;
+}
+/** Run the full recursive rubato-scan across all configured codeDirs. */
+export const runAppsScan = (dryRun = false) =>
+  postJson<ScanResult>("/api/apps/run-scan", { dryRun });
+/** Replace the codeDirs list in config (each entry expanded server-side). */
+export const setCodeDirs = (dirs: string[]) =>
+  patchJson<{ codeDirs: string[] }>("/api/config/code-dirs", { dirs });
 export const fetchAppDetails = (name: string) =>
   getJson<AppDetails>(`/api/apps/${encodeURIComponent(name)}/details`);
 /** Open an app's directory in the configured editor (uses gotab's mechanism server-side). */
