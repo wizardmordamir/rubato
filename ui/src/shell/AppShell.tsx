@@ -15,6 +15,7 @@ import { AppBreadcrumbs } from "../breadcrumbs";
 import { Tooltip } from "../components";
 import { HeaderSearch } from "../components/HeaderSearch";
 import { SideNav } from "../components/SideNav";
+import { ShortcutDock } from "../components/shortcuts/ShortcutDock";
 import { IconMenu } from "../icons";
 import { useLive } from "../useLive";
 
@@ -108,6 +109,7 @@ export function AppShell({ accent, label = appBrand(), pages, showSearch = appSh
           </div>
         </main>
       </div>
+      <ShortcutDock />
     </div>
   );
 }

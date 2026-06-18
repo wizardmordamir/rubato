@@ -348,3 +348,17 @@ export const IconClipboard = (p: IconProps) => (
     <path d="M9 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3" />
   </Svg>
 );
+
+// Shortcuts dock pin — a pushpin.
+export const IconPin = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 17v5M5 9l7-7 7 7-1.5 1.5L15 14l-1 3H10l-1-3-2.5-3.5L5 9z" />
+  </Svg>
+);
+
+// Collapse panel — a downward chevron.
+export const IconChevronDown = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m6 9 6 6 6-6" />
+  </Svg>
+);
