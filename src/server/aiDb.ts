@@ -6,6 +6,7 @@
  */
 
 import type { Database } from 'bun:sqlite';
+import { addColumnIfMissing } from 'cwip/sqlite';
 import type { StoredChunk } from '../lib/ai/types';
 import type { IndexStatus } from '../shared/types';
 import { getDb } from './db';
@@ -45,6 +46,10 @@ function db(): Database {
         last_error TEXT
       )
     `);
+    // App Map: a compact markdown overview of the app (routes/endpoints/dirs)
+    // prepended to the system prompt so the model isn't blind to the app's shape.
+    // Additive — older rows carry NULL until the next reindex.
+    addColumnIfMissing(conn, 'ai_index_status', 'app_map', 'TEXT');
     ensured = true;
   }
   return conn;
@@ -198,6 +203,19 @@ export function recordStatus(app: string, s: StatusInput): void {
        last_error = excluded.last_error`,
     [app, s.scorer, s.files, s.chunks, s.model ?? null, s.dims ?? null, Date.now(), s.error ?? null],
   );
+}
+
+/** Store the generated App Map markdown for an app (best-effort; status row must exist). */
+export function recordAppMap(app: string, appMap: string | null): void {
+  db().run('UPDATE ai_index_status SET app_map = ? WHERE app = ?', [appMap ?? null, app]);
+}
+
+/** The stored App Map markdown for an app, or null if none / never indexed. */
+export function getAppMap(app: string): string | null {
+  const row = db()
+    .query<{ app_map: string | null }, [string]>('SELECT app_map FROM ai_index_status WHERE app = ?')
+    .get(app);
+  return row?.app_map ?? null;
 }
 
 /** The stored index status for an app, or null if never indexed. */

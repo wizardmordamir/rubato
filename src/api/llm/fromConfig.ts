@@ -10,6 +10,7 @@ import { loadConfig } from '../../lib/config';
 import { optionalEnv } from '../env';
 import { createDirectProvider } from './direct';
 import { createFormSseProvider } from './formSse';
+import { createOllamaProvider } from './ollama';
 import type { LlmProvider } from './types';
 
 export async function llmFromConfig(app?: AppConfig): Promise<LlmProvider> {
@@ -24,12 +25,27 @@ export async function llmFromConfig(app?: AppConfig): Promise<LlmProvider> {
       );
     }
     const token = optionalEnv('RUBATO_LLM_TOKEN');
-    return createDirectProvider({
-      baseUrl,
-      path: ai.direct?.path,
-      model: app?.ai?.model ?? ai.direct?.model,
-      auth: token ? { type: 'bearer', token } : { type: 'none' },
-    });
+    const auth = token ? ({ type: 'bearer', token } as const) : ({ type: 'none' } as const);
+    const model = app?.ai?.model ?? ai.direct?.model;
+
+    // Native Ollama transport: the only path that honors num_ctx/repeat_penalty.
+    const flavor = app?.ai?.flavor ?? ai.direct?.flavor;
+    if (flavor === 'ollama') {
+      const d = ai.direct ?? {};
+      const a = app?.ai ?? {};
+      const options: Record<string, unknown> = {};
+      const numCtx = a.numCtx ?? d.numCtx;
+      const temperature = a.temperature ?? d.temperature;
+      const repeatPenalty = a.repeatPenalty ?? d.repeatPenalty;
+      const topP = a.topP ?? d.topP;
+      if (numCtx != null) options.num_ctx = numCtx;
+      if (temperature != null) options.temperature = temperature;
+      if (repeatPenalty != null) options.repeat_penalty = repeatPenalty;
+      if (topP != null) options.top_p = topP;
+      return createOllamaProvider({ baseUrl, model, auth, options, think: a.think ?? d.think });
+    }
+
+    return createDirectProvider({ baseUrl, path: ai.direct?.path, model, auth });
   }
 
   if (provider === 'form-sse') {

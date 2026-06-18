@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildGeneralPrompt, buildPrompt, formatAttachments } from './prompt';
+import { buildGeneralPrompt, buildPrompt, formatAttachments, packContext } from './prompt';
 import type { RetrievedChunk } from './types';
 
 const chunk = (path: string, text: string): RetrievedChunk => ({
@@ -8,6 +8,24 @@ const chunk = (path: string, text: string): RetrievedChunk => ({
   endLine: 5,
   text,
   score: 1,
+});
+
+describe('packContext', () => {
+  test('caps chunks per file so one file cannot crowd out others', () => {
+    const many: RetrievedChunk[] = [
+      ...Array.from({ length: 10 }, (_, i) => ({ relativePath: 'big.ts', startLine: i * 10 + 1, endLine: i * 10 + 9, text: 'x', score: 1 })),
+      { relativePath: 'other.ts', startLine: 1, endLine: 9, text: 'y', score: 0.5 },
+    ];
+    const kept = packContext(many, 100_000, 6);
+    expect(kept.filter((c) => c.relativePath === 'big.ts').length).toBe(6); // capped
+    expect(kept.some((c) => c.relativePath === 'other.ts')).toBe(true); // other file survives
+  });
+
+  test('prepends the app map to the system prompt when provided', () => {
+    const { messages } = buildPrompt('demo', 'q', [chunk('a.ts', 'code')], { appMap: '### App map\n- /private' });
+    expect(messages[0].role).toBe('system');
+    expect(messages[0].content).toContain('/private');
+  });
 });
 
 describe('buildPrompt (app-scoped)', () => {

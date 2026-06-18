@@ -10,6 +10,7 @@
 
 import { shouldLogMessage } from 'cwip';
 import { embeddingFromConfig } from '../api/embeddings/fromConfig';
+import { DEFAULT_RERANK_MODEL, rerank, rerankAvailable } from '../api/embeddings/rerank';
 import { bm25Search } from '../lib/ai/bm25';
 import { vectorSearch } from '../lib/ai/cosine';
 import { expandFileContext } from '../lib/ai/expand';
@@ -82,11 +83,18 @@ export async function retrieve(
   opts: { topK?: number; expand?: boolean } = {},
 ): Promise<RetrievedChunk[]> {
   const ai = (await loadConfig()).ai ?? {};
-  const topK = opts.topK ?? ai.topK ?? 12;
+  const topK = opts.topK ?? ai.topK ?? 20;
   const chunks = loadChunks(app.name);
   if (chunks.length === 0) return [];
 
-  const ranked = await rank(app, question, chunks, topK, ai);
+  // Cross-encoder re-rank: pull a WIDER candidate pool from the fast retriever,
+  // then re-score that pool with the cross-encoder and keep the true top-K. Only
+  // when a rerank model is staged (else it's a no-op and we just take top-K).
+  const rerankModel = app.ai?.rerankModel ?? ai.rerankModel ?? DEFAULT_RERANK_MODEL;
+  const rerankOn = (app.ai?.rerank ?? ai.rerank ?? true) && rerankAvailable(rerankModel);
+  const poolK = rerankOn ? topK * 3 : topK;
+  const pool = await rank(app, question, chunks, poolK, ai);
+  const ranked = rerankOn ? await rerank(question, pool, { model: rerankModel, topK }) : pool;
 
   // Expand ranked files to their sibling chunks so whole-file / enumeration
   // questions aren't answered from a single slice. On by default; opts wins.

@@ -44,6 +44,8 @@ export interface AgenticGatherArgs {
   maxRounds: number;
   /** Prior conversation turns to replay (multi-turn memory), oldest-first. */
   history?: LlmMessage[];
+  /** Compact App Map prepended to the system prompt for global app awareness. */
+  appMap?: string;
   /** Optional timing recorder; records seed retrieval, model rounds, tool calls. */
   tracer?: Tracer;
 }
@@ -85,7 +87,7 @@ function fsSystem(root: string): string {
 }
 
 export async function runAgenticGather(args: AgenticGatherArgs): Promise<AgenticGatherResult> {
-  const { app, fsRoot, question, provider, model, conversationId, messageId, maxRounds, history, tracer } = args;
+  const { app, fsRoot, question, provider, model, conversationId, messageId, maxRounds, history, appMap, tracer } = args;
   const status = (text: string) => emit({ type: 'ask:status', conversationId, messageId, text });
 
   // Two tool sets: app-scoped (indexed repo tools) or general filesystem tools
@@ -135,8 +137,12 @@ export async function runAgenticGather(args: AgenticGatherArgs): Promise<Agentic
       addSource({ relativePath: c.relativePath, startLine: c.startLine, endLine: c.endLine, score: c.score });
   }
 
+  const mapBlock = appMap?.trim()
+    ? `\n\nUse this map of the app's structure to orient yourself and connect references ` +
+      `(e.g. a "privacy page" to the "/private" route) before using the tools:\n\n${appMap}`
+    : '';
   const messages: LlmMessage[] = [
-    { role: 'system', content: `${system}\n\n${renderToolInstructions(tools.map((t) => t.spec))}` },
+    { role: 'system', content: `${system}${mapBlock}\n\n${renderToolInstructions(tools.map((t) => t.spec))}` },
     ...(history ?? []),
     { role: 'user', content: `Question: ${question}\n\nInitial context:\n${seedContext}` },
   ];

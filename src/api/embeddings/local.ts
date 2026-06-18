@@ -18,6 +18,16 @@ export const MODELS_DIR = resolve(RUBATO_HOME, 'models');
 export const DEFAULT_EMBED_MODEL = 'Xenova/all-MiniLM-L6-v2';
 export const DEFAULT_EMBED_DIMS = 384;
 
+/**
+ * Air-gapped switch. `OFFLINE_MODE=true` forbids any Hub access — the runtime
+ * loads ONLY pre-staged models and retrieval degrades to BM25 if one is missing.
+ * Unset/false (a connected machine) lets transformers.js download + cache a model
+ * on first use, so the best embedder is fetched automatically. Default: connected.
+ */
+export function isOfflineMode(): boolean {
+  return process.env.OFFLINE_MODE === 'true';
+}
+
 /** A minimal view of the transformers.js feature-extraction pipeline. */
 type FeaturePipeline = (
   texts: string[],
@@ -52,7 +62,9 @@ export function createLocalEmbeddingProvider(config: LocalEmbeddingConfig = {}):
         const { env, pipeline } = mod;
         env.localModelPath = MODELS_DIR;
         env.cacheDir = MODELS_DIR;
-        env.allowRemoteModels = false; // staged offline; never reach for the Hub
+        // Offline: never reach for the Hub (must be pre-staged). Connected: allow
+        // a one-time download+cache so the configured model just works.
+        env.allowRemoteModels = !isOfflineMode();
         return (await pipeline('feature-extraction', model, { dtype: 'q8' })) as unknown as FeaturePipeline;
       })();
     }

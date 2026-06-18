@@ -369,6 +369,8 @@ export interface IndexStatus {
   model?: string;
   lastIndexedAt?: number;
   error?: string;
+  /** Non-fatal advisory shown after a successful index (e.g. indexed a stale backup path). */
+  warning?: string;
 }
 
 /** POST /api/ask acknowledgement — the answer is persisted (Phase 1) / streams over /ws (Phase 2). */

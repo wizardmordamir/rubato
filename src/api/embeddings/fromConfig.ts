@@ -11,7 +11,7 @@ import type { AppConfig } from '../../lib/apps';
 import { loadConfig } from '../../lib/config';
 import { optionalEnv } from '../env';
 import type { EmbeddingProvider } from '../llm/types';
-import { createLocalEmbeddingProvider, DEFAULT_EMBED_DIMS, DEFAULT_EMBED_MODEL, MODELS_DIR } from './local';
+import { createLocalEmbeddingProvider, DEFAULT_EMBED_DIMS, DEFAULT_EMBED_MODEL, isOfflineMode, MODELS_DIR } from './local';
 import { createRemoteEmbeddingProvider, DEFAULT_REMOTE_EMBED_DIMS } from './remote';
 
 /** The model id rubato will use for an app (per-app → global → default). */
@@ -52,8 +52,10 @@ export async function embeddingAvailable(app?: AppConfig): Promise<boolean> {
     if ((emb.provider ?? 'local') === 'remote') {
       return Boolean(emb.baseUrl ?? optionalEnv('RUBATO_EMBEDDINGS_URL'));
     }
-    // Local needs BOTH the model files staged AND the optional package present.
-    return localEmbeddingsInstalled() && modelStaged(await resolveEmbedModel(app));
+    // Local always needs the optional package. Offline, the model must also be
+    // pre-staged (no Hub); connected, it can be fetched on first use.
+    if (!localEmbeddingsInstalled()) return false;
+    return isOfflineMode() ? modelStaged(await resolveEmbedModel(app)) : true;
   } catch {
     return false;
   }

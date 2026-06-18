@@ -24,11 +24,29 @@ const toRetrieved = (c: StoredChunk, score: number): RetrievedChunk => ({
 });
 
 /**
+ * Pick a contiguous window of `total` sibling indices, size ≤ `max`, that covers
+ * the matched range [lo, hi] and extends outward (balanced) to fill the budget —
+ * so a big file expands AROUND its relevant region, not from its (irrelevant)
+ * start. Returns inclusive [start, end] indices into the line-ordered siblings.
+ */
+function centeredWindow(lo: number, hi: number, total: number, max: number): [number, number] {
+  if (total <= max) return [0, total - 1]; // small file: take all of it
+  // Center a window of exactly `max` on the matched range's midpoint, clamped to
+  // bounds — so even matches spread across a huge file yield at most `max` chunks.
+  const mid = Math.floor((lo + hi) / 2);
+  let start = Math.max(0, mid - Math.floor(max / 2));
+  const end = Math.min(total - 1, start + max - 1);
+  start = Math.max(0, end - max + 1); // re-clamp if we bumped the right edge
+  return [start, end];
+}
+
+/**
  * Expand `ranked` (best-first) by inlining the sibling chunks of its top files.
  * Each expanded file's chunks are emitted contiguously, in line order, at the
- * rank of its best-scoring chunk; non-expanded chunks keep their position.
- * Sibling chunks inherit the file's best score (for source display); dedup is by
- * `relativePath:startLine`.
+ * rank of its best-scoring chunk, as a window CENTERED on that file's matched
+ * chunks (so a large file contributes its relevant region, not its header).
+ * Non-expanded chunks keep their position. Sibling chunks inherit the file's best
+ * score (for source display); dedup is by `relativePath:startLine`.
  */
 export function expandFileContext(
   ranked: RetrievedChunk[],
@@ -45,6 +63,14 @@ export function expandFileContext(
     if (!bestScore.has(c.relativePath)) bestScore.set(c.relativePath, c.score);
   }
   const expandable = new Set([...bestScore.keys()].slice(0, maxFiles));
+  // Matched start lines per expandable file, so we expand around them (not the head).
+  const matched = new Map<string, Set<number>>();
+  for (const c of ranked) {
+    if (!expandable.has(c.relativePath)) continue;
+    const set = matched.get(c.relativePath) ?? new Set<number>();
+    set.add(c.startLine);
+    matched.set(c.relativePath, set);
+  }
 
   // All stored chunks grouped by file, line-ordered, for sibling lookup.
   const byFile = new Map<string, StoredChunk[]>();
@@ -65,7 +91,13 @@ export function expandFileContext(
     if (expandable.has(path)) {
       if (emitted.has(path)) continue; // file already inlined at its best chunk
       emitted.add(path);
-      const siblings = (byFile.get(path) ?? []).slice(0, maxChunksPerFile);
+      const all = byFile.get(path) ?? [];
+      const matchLines = matched.get(path) ?? new Set([c.startLine]);
+      const positions = all.map((s, i) => (matchLines.has(s.startLine) ? i : -1)).filter((i) => i >= 0);
+      const lo = positions.length ? Math.min(...positions) : 0;
+      const hi = positions.length ? Math.max(...positions) : 0;
+      const [from, to] = centeredWindow(lo, hi, all.length, maxChunksPerFile);
+      const siblings = all.slice(from, to + 1);
       const score = bestScore.get(path) ?? c.score;
       for (const s of siblings) {
         const k = key(path, s.startLine);

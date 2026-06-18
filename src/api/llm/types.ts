@@ -27,6 +27,10 @@ export interface ChatOptions {
   temperature?: number;
   maxTokens?: number;
   signal?: AbortSignal;
+  /** Ollama native `options` passthrough (num_ctx, repeat_penalty, top_p, …); honored by the ollama provider. */
+  options?: Record<string, unknown>;
+  /** Reasoning toggle/budget for thinking-capable models (Ollama native). */
+  think?: boolean | 'low' | 'medium' | 'high';
 }
 
 /** Streams a chat completion as normalized chunks. */

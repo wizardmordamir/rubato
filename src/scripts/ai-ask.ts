@@ -14,7 +14,7 @@ import { llmFromConfig } from '../api/llm/fromConfig';
 import { buildPrompt } from '../lib/ai/prompt';
 import { resolveApp } from '../lib/apps';
 import { loadConfig } from '../lib/config';
-import { getStatus } from '../server/aiDb';
+import { getAppMap, getStatus } from '../server/aiDb';
 import { indexApp } from '../server/aiIndex';
 import { retrieve } from '../server/aiRetrieve';
 
@@ -36,7 +36,8 @@ async function main(): Promise<void> {
   const cfg = await loadConfig();
   const chunks = await retrieve(app, question);
   const maxContextTokens = app.ai?.maxContextTokens ?? cfg.ai?.maxContextTokens ?? 6000;
-  const { messages, used } = buildPrompt(app.name, question, chunks, { maxContextTokens });
+  const appMap = getAppMap(app.name) ?? undefined;
+  const { messages, used } = buildPrompt(app.name, question, chunks, { maxContextTokens, appMap });
 
   const provider = await llmFromConfig(app);
   const model = app.ai?.model ?? cfg.ai?.direct?.model;

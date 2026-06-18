@@ -246,7 +246,26 @@ export interface AppAiConfig {
   tools?: boolean;
   /** Max tool rounds when `tools` is on. Overrides global. */
   maxToolRounds?: number;
+  /** Override the chat transport for this app ("ollama" enables native `/api/chat` options). */
+  flavor?: LlmFlavor;
+  /** Sampling temperature override (ollama flavor). */
+  temperature?: number;
+  /** Context window (num_ctx) override (ollama flavor). */
+  numCtx?: number;
+  /** Repeat-penalty override (ollama flavor). */
+  repeatPenalty?: number;
+  /** Nucleus sampling top_p override (ollama flavor). */
+  topP?: number;
+  /** Reasoning toggle/budget for thinking-capable models (ollama flavor). */
+  think?: boolean | 'low' | 'medium' | 'high';
+  /** Cross-encoder re-ranking of retrieval candidates. Overrides global. */
+  rerank?: boolean;
+  /** Cross-encoder model id for re-ranking. Overrides global. */
+  rerankModel?: string;
 }
+
+/** Chat transport shape for a direct endpoint: OpenAI-compat `/v1` or Ollama-native `/api/chat`. */
+export type LlmFlavor = 'openai' | 'ollama';
 
 /** A direct LLM endpoint: an OpenAI-compatible (or custom-shaped) chat URL. */
 export interface DirectLlmConfig {
@@ -256,6 +275,21 @@ export interface DirectLlmConfig {
   path?: string;
   /** Default chat model id. */
   model?: string;
+  /**
+   * Transport flavor. "openai" (default) → OpenAI-compat `/v1/chat/completions`.
+   * "ollama" → native `/api/chat`, the only path that honors `num_ctx`/`repeat_penalty`.
+   */
+  flavor?: LlmFlavor;
+  /** Sampling temperature (ollama flavor; default 0.1 for grounded code answers). */
+  temperature?: number;
+  /** Context window size — Ollama `num_ctx` (ollama flavor; e.g. 32768). */
+  numCtx?: number;
+  /** Repeat penalty — Ollama `repeat_penalty` (ollama flavor; e.g. 1.1). */
+  repeatPenalty?: number;
+  /** Nucleus sampling — Ollama `top_p` (ollama flavor; e.g. 0.9). */
+  topP?: number;
+  /** Reasoning toggle/budget for thinking-capable models (ollama flavor). */
+  think?: boolean | 'low' | 'medium' | 'high';
 }
 
 /** A generic multipart-form-POST endpoint that returns named-event SSE. */
@@ -327,4 +361,13 @@ export interface AiGlobalConfig {
   tools?: boolean;
   /** Max tool rounds when `tools` is on (default 4). */
   maxToolRounds?: number;
+  /**
+   * Cross-encoder re-ranking: re-score the top retrieval candidates with a local
+   * cross-encoder so the most relevant chunks lead the context. On by default
+   * when the rerank model is staged; set false to force off. Falls back to the
+   * RRF order when the model/package is absent.
+   */
+  rerank?: boolean;
+  /** Cross-encoder model id used for re-ranking (default "Xenova/ms-marco-MiniLM-L-6-v2"). */
+  rerankModel?: string;
 }

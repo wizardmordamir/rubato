@@ -68,6 +68,16 @@ describe('expandFileContext', () => {
     expect(out.length).toBe(5);
   });
 
+  test('centers the window on the matched chunk, not the file head', () => {
+    // 30-chunk file; the match is deep inside it (chunk 20, startLine 201).
+    const big = Array.from({ length: 30 }, (_, i) => stored('big.ts', i, i * 10 + 1));
+    const out = expandFileContext([retrieved('big.ts', 201, 0.9)], big, { maxChunksPerFile: 6 });
+    expect(out.length).toBe(6);
+    const lines = out.map((c) => c.startLine);
+    expect(lines).toContain(201); // the matched region is included…
+    expect(Math.min(...lines)).toBeGreaterThan(150); // …and the window is NOT the file head (1..51)
+  });
+
   test('maxFiles <= 0 disables expansion', () => {
     const out = expandFileContext([retrieved('routes.tsx', 21, 0.9)], routes, { maxFiles: 0 });
     expect(out.map((c) => c.startLine)).toEqual([21]);

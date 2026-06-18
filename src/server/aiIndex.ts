@@ -14,15 +14,30 @@
  */
 
 import { embeddingAvailable, embeddingFromConfig, resolveEmbedModel } from '../api/embeddings/fromConfig';
-import { chunkFile } from '../lib/ai/chunk';
+import { buildAppMap } from '../lib/ai/appMap';
+import { chunkContent } from '../lib/ai/codeChunk';
 import { readTextFiles } from '../lib/ai/textFiles';
 import type { AppConfig } from '../lib/apps';
 import { loadConfig } from '../lib/config';
 import { gitExcludePatterns } from '../lib/git';
 import { walkFiles } from '../lib/walkFiles';
 import type { IndexStatus } from '../shared/types';
-import { countIndex, deleteApp, deleteFile, fileSignatures, getStatus, recordStatus, replaceFileChunks } from './aiDb';
+import {
+  countIndex,
+  deleteApp,
+  deleteFile,
+  fileSignatures,
+  getStatus,
+  recordAppMap,
+  recordStatus,
+  replaceFileChunks,
+} from './aiDb';
 import { emit } from './events';
+
+/** A path that looks like a stale backup/mirror rather than the live working tree. */
+function looksStale(absolutePath: string): boolean {
+  return /[/\\](backups?|stale|mirror|archive)[/\\]/i.test(absolutePath);
+}
 
 export async function indexApp(app: AppConfig, opts: { force?: boolean } = {}): Promise<IndexStatus> {
   emit({ type: 'index:status', status: { app: app.name, state: 'indexing' } });
@@ -55,7 +70,7 @@ export async function indexApp(app: AppConfig, opts: { force?: boolean } = {}): 
       const hash = Bun.hash(f.content).toString(16);
       if (existing.get(f.relativePath)?.hash === hash) continue; // unchanged
 
-      const chunks = chunkFile(f.content, { lines, overlap });
+      const chunks = chunkContent(f.relativePath, f.content, { lines, overlap });
       if (chunks.length === 0) {
         deleteFile(app.name, f.relativePath);
         continue;
@@ -89,6 +104,23 @@ export async function indexApp(app: AppConfig, opts: { force?: boolean } = {}): 
 
     const { files: fileCount, chunks: chunkCount } = countIndex(app.name);
     recordStatus(app.name, { scorer: targetScorer, files: fileCount, chunks: chunkCount, model: embedModel, dims });
+
+    // App Map: built from the files we just read (no second walk) and stored for
+    // the ask path to prepend to the system prompt. Best-effort — a failure here
+    // must not fail the index.
+    try {
+      recordAppMap(app.name, buildAppMap(texts) || null);
+    } catch {
+      /* non-fatal: leave the map untouched */
+    }
+
+    // Loudly flag indexing a stale backup/mirror path — almost always a misconfig
+    // (e.g. apps.json points at /backups/<app> instead of the live working tree).
+    const warning = looksStale(app.absolutePath)
+      ? `Indexed a path that looks like a stale backup/mirror: ${app.absolutePath}. ` +
+        'Point this app at your live working tree if answers seem out of date.'
+      : undefined;
+
     const status: IndexStatus = {
       app: app.name,
       state: 'indexed',
@@ -97,6 +129,7 @@ export async function indexApp(app: AppConfig, opts: { force?: boolean } = {}): 
       chunks: chunkCount,
       model: embedModel ?? undefined,
       lastIndexedAt: Date.now(),
+      warning,
     };
     emit({ type: 'index:status', status });
     return status;

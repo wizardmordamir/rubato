@@ -20,16 +20,35 @@ export interface PromptOptions {
   attachments?: AskAttachment[];
   /** Prior conversation turns to replay (multi-turn memory), oldest-first. */
   history?: LlmMessage[];
+  /** Compact App Map (routes/endpoints/dirs) prepended to the system prompt for global awareness. */
+  appMap?: string;
 }
 
-/** Greedily keep chunks (best-first) until the token budget is reached. */
-export function packContext(chunks: RetrievedChunk[], maxTokens: number): RetrievedChunk[] {
+/** Prepend the App Map (when present) to a system prompt for global app awareness. */
+function withAppMap(system: string, appMap?: string): string {
+  return appMap?.trim()
+    ? `${system}\n\nUse this map of the app's structure to orient yourself and connect references ` +
+        `(e.g. a "privacy page" to the "/private" route) before relying on the snippets below:\n\n${appMap}`
+    : system;
+}
+
+/**
+ * Greedily keep chunks (best-first) until the token budget is reached, with a
+ * per-file cap so one large file (e.g. a 2000-line schema whose siblings all
+ * expanded in) can't crowd every other file out of the context. Once a file hits
+ * the cap, later chunks of it are skipped in favor of chunks from other files.
+ */
+export function packContext(chunks: RetrievedChunk[], maxTokens: number, maxPerFile = 6): RetrievedChunk[] {
   const kept: RetrievedChunk[] = [];
+  const perFile = new Map<string, number>();
   let used = 0;
   for (const c of chunks) {
+    const count = perFile.get(c.relativePath) ?? 0;
+    if (count >= maxPerFile) continue; // diversity: don't let one file dominate
     const cost = estimateTokens(c.text) + 16; // + header line
     if (kept.length > 0 && used + cost > maxTokens) break;
     kept.push(c);
+    perFile.set(c.relativePath, count + 1);
     used += cost;
   }
   return kept;
@@ -79,7 +98,7 @@ export function buildPrompt(
   // to that app's code. Tell it to answer those from its own knowledge, and only
   // flag the missing index when the question genuinely needs this app's code.
   const hasContext = used.length > 0 || att.block.length > 0;
-  const system = hasContext
+  const baseSystem = hasContext
     ? `You are a coding assistant answering questions about the app "${appName}". ` +
       `Use the provided context${attachments.length ? ' and attached files' : ''} to answer. ` +
       'Cite the file path and line range (e.g. src/foo.ts:10-20) for facts you rely on. ' +
@@ -89,6 +108,7 @@ export function buildPrompt(
       "to this app's own code), answer it directly and accurately from your own knowledge. If it " +
       "does depend on this app's code, note that the app isn't indexed for this question yet and " +
       'answer as best you can, flagging uncertainty rather than guessing.';
+  const system = withAppMap(baseSystem, opts.appMap);
 
   const sections: string[] = [];
   if (att.block) sections.push(`Attached files:\n\n${att.block}`);

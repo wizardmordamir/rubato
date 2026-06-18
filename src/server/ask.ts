@@ -21,15 +21,15 @@ import { loadConfig } from '../lib/config';
 import { startDiagnostics } from '../lib/diagnostics';
 import type { AskAttachment, AskSource, ToolEvent } from '../shared/types';
 import { runAgenticGather } from './agenticAsk';
-import { getStatus } from './aiDb';
+import { getAppMap, getStatus } from './aiDb';
 import { indexApp } from './aiIndex';
 import { retrieve } from './aiRetrieve';
 import { addMessage, createConversation, getConversation, getMessages, setConversationTitle } from './db';
 import { emit } from './events';
 import { Tracer } from './trace';
 
-/** Hard cap on chunks accumulated across self-ask rounds (loop backstop). */
-const MAX_TOTAL_CHUNKS = 80;
+/** Hard cap on chunks accumulated across self-ask rounds (loop backstop; scales with the larger context window). */
+const MAX_TOTAL_CHUNKS = 120;
 
 /**
  * Gather context for a question, optionally over several self-ask rounds: each
@@ -249,6 +249,11 @@ async function streamAnswer(
       await tracer.span('Index (first question)', 'index', () => indexApp(app), { detail: app.name });
     }
 
+    // Global app awareness: the compact App Map (routes/endpoints/dirs) built at
+    // index time, prepended to the system prompt so the model isn't blind to the
+    // app's shape before retrieval even runs.
+    const appMap = getAppMap(app.name) ?? undefined;
+
     // Two gather strategies. Tools (opt-in): the model drives retrieval via the
     // tool protocol, then we stream the answer from the accumulated transcript.
     // Otherwise: the bounded self-ask loop packs a one-shot context prompt.
@@ -265,6 +270,7 @@ async function streamAnswer(
         messageId,
         maxRounds: maxToolRounds,
         history,
+        appMap,
         tracer,
       });
       messages = gathered.messages;
@@ -272,9 +278,9 @@ async function streamAnswer(
       toolEvents.push(...gathered.toolEvents); // tool rounds already emitted live
     } else {
       mode = 'self-ask';
-      const maxRounds = Math.max(1, app.ai?.maxRetrievalRounds ?? cfg.ai?.maxRetrievalRounds ?? 2);
+      const maxRounds = Math.max(1, app.ai?.maxRetrievalRounds ?? cfg.ai?.maxRetrievalRounds ?? 4);
       const chunks = await gatherContext(app, question, provider, model, maxRounds, status, tracer);
-      const built = buildPrompt(app.name, question, chunks, { maxContextTokens, attachments, history });
+      const built = buildPrompt(app.name, question, chunks, { maxContextTokens, attachments, history, appMap });
       messages = built.messages;
       answerSources = built.used.map((c) => ({
         relativePath: c.relativePath,
