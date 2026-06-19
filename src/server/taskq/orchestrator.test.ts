@@ -100,6 +100,35 @@ describe('runDrain', () => {
     expect(listTasks(db, { status: 'ready' }).length).toBe(0);
   });
 
+  test('refills an idle worker when NEW work appears while a long task pins another', async () => {
+    const db = fresh();
+    // Only the long task is ready at start; it pins slot 0 for a while.
+    addTask(db, { title: 'long' }, { at: 'bottom' });
+    let lateId = -1;
+    const completedBy: Record<number, number> = {};
+    const summary = await runDrain(db, {
+      jobs: 2,
+      tickMs: 5,
+      executor: async (task) => {
+        if (task.title === 'long') {
+          // Slot 1 has already idled out (nothing else was ready). Add new work
+          // mid-run, then stay busy far longer than the late task takes — so if
+          // refill is broken the late task can only be picked up AFTER this one.
+          if (lateId === -1) lateId = addTask(db, { title: 'late' }, { at: 'bottom' });
+          await sleep(60);
+        }
+        return { ok: true };
+      },
+      onEvent: (e) => {
+        if (e.type === 'completed') completedBy[e.taskId] = e.worker;
+      },
+    });
+    expect(summary.completed).toBe(2);
+    // The late task ran on a REFILLED slot (worker 1) while slot 0 was still on
+    // the long task — not picked up by slot 0 after the long task finished.
+    expect(completedBy[lateId]).toBe(1);
+  });
+
   test('shrinks: a worker retires when its slot index passes desiredJobs', async () => {
     const db = fresh();
     for (let i = 0; i < 8; i++) addTask(db, { title: `t${i}` }, { at: 'bottom' });

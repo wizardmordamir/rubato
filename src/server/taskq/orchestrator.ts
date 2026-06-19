@@ -15,6 +15,7 @@ import {
   completeTask,
   failTask,
   heartbeat,
+  nextEligibleId,
   reapExpired,
   recordRun,
   setStatus,
@@ -109,12 +110,15 @@ const DEFAULT_TICK_MS = 5_000;
  * Drain the queue: reap stranded leases, then run a worker pool until no
  * eligible task remains (or stop is requested). Resolves with a run summary.
  *
- * The pool is *adaptive*. It starts at `jobs` workers and a supervisor re-reads
- * {@link DrainOptions.desiredJobs} every `tickMs`: it spawns new slots when the
- * target grows (so a mid-run JOBS bump applies live), and a worker retires once
- * its slot index passes the current target (shrink). Workers still exit when
- * the queue empties; a slot that has retired is never re-spawned, so the drain
- * still terminates once all work is done (launchd relaunches it for new work).
+ * The pool is *adaptive*. A supervisor re-reads {@link DrainOptions.desiredJobs}
+ * every `tickMs` and keeps slots `[0, desired)` filled: it (re)spawns any idle
+ * slot that currently has claimable work — so a mid-run JOBS bump applies live
+ * AND a slot that idled out earlier is brought back when NEW work appears while
+ * a long task pins another worker (the case launchd can't help with, since it
+ * won't re-fire while this drain is still alive). A worker whose slot index is
+ * now ≥ the target retires after its task (shrink). The drain still terminates
+ * when nothing is active and no slot has claimable work — i.e. the queue is
+ * drained — so launchd's relaunch-for-new-work model is preserved.
  */
 export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSummary> {
   const now = opts.now ?? (() => Date.now());
@@ -191,33 +195,49 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
   };
 
   // Adaptive pool: `active` maps a live slot index → its (never-rejecting)
-  // worker promise. `spawned` is a monotonic high-water mark — we only ever ADD
-  // new slots, so a worker that idled out (queue empty) is never resurrected and
-  // the drain still terminates when all work is done. A worker that throws
-  // fatally (e.g. a DB error) records `fatal`, which is rethrown after the loop.
+  // worker promise. A worker that throws fatally (e.g. a DB error) records
+  // `fatal`, which is rethrown after the loop.
   const active = new Map<number, Promise<void>>();
-  let spawned = 0;
   let fatal: unknown;
-  const spawnUpTo = (target: number) => {
-    for (let i = spawned; i < target; i++) {
-      const p = worker(i)
-        .catch((e) => {
-          fatal ??= e;
-        })
-        .finally(() => active.delete(i));
-      active.set(i, p);
+  const filtersForSlot = (i: number): ClaimFilters => opts.worker?.(i)?.filters ?? {};
+  // Is there a claimable task RIGHT NOW for this slot's tier filter? Drives both
+  // refill (only spawn a slot that has work) and termination (no work + nothing
+  // active ⇒ drained). Cheap, indexed, read-only — safe to poll each tick.
+  const slotHasWork = (i: number): boolean => {
+    try {
+      return nextEligibleId(db, now(), filtersForSlot(i)) != null;
+    } catch {
+      return false;
     }
-    if (target > spawned) spawned = target;
+  };
+  const spawn = (i: number) => {
+    const p = worker(i)
+      .catch((e) => {
+        fatal ??= e;
+      })
+      .finally(() => active.delete(i));
+    active.set(i, p);
+  };
+  // Fill every idle slot in [0, desired) that has claimable work. Returns true
+  // if any worker is active afterward. Over-spawning is harmless — a slot that
+  // loses the claim race just idles out and is re-evaluated next tick.
+  const refill = (): boolean => {
+    if (!opts.shouldStop?.()) {
+      const target = desired();
+      for (let i = 0; i < target; i++) if (!active.has(i) && slotHasWork(i)) spawn(i);
+    }
+    return active.size > 0;
   };
 
   opts.onTick?.(); // initial liveness stamp
-  spawnUpTo(desired());
+  refill();
 
-  // Supervise: each tick stamp liveness + grow toward the live target. Wake on
-  // either the tick OR all current workers settling, whichever comes first, so
-  // an empty queue exits promptly and a long single task still heartbeats. The
-  // tick timer is cleared after every wake so a finished drain exits at once —
-  // a dangling setTimeout would otherwise pin the event loop for up to tickMs.
+  // Supervise: each tick stamp liveness + refill idle slots that have work. Wake
+  // on either the tick OR all current workers settling, whichever comes first, so
+  // newly-ready work is picked up within a tick, an empty queue exits promptly,
+  // and a long single task still heartbeats. The tick timer is cleared after
+  // every wake so a finished drain exits at once — a dangling setTimeout would
+  // otherwise pin the event loop for up to tickMs.
   while (active.size > 0 && fatal === undefined) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = new Promise<void>((resolve) => {
@@ -226,7 +246,7 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
     await Promise.race([tick, Promise.all([...active.values()])]);
     if (timer) clearTimeout(timer);
     opts.onTick?.();
-    if (fatal === undefined && !opts.shouldStop?.()) spawnUpTo(desired());
+    if (fatal === undefined) refill();
   }
   if (fatal !== undefined) throw fatal;
   return summary;
