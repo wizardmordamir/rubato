@@ -108,8 +108,29 @@ export interface RubatoConfig {
   auth?: AuthConfig;
   /** Settings for the unattended task-queue workflows (Orchestration page). */
   orchestration?: OrchestrationConfig;
+  /** Cross-app sync with a cursedalchemy deployment (pull tasks, push fleet data). */
+  caSync?: CaSyncConfig;
   /** Named SSH server connections for quick prod-server access (localhost only). */
   servers?: ServersConfig;
+}
+
+/**
+ * ca → rubato bridge: pull owner-authored tasks from a cursedalchemy deployment
+ * into the taskq queue and push orchestration data back. The base URL + host id
+ * may live here; the API KEY is env-only (CA_SYNC_API_KEY in ~/.rubato/.env), and
+ * env (CA_SYNC_URL / CA_SYNC_HOST_ID) overrides these. See server/caSync.
+ */
+export interface CaSyncConfig {
+  /** Disable the sync even when a URL + key are configured. Default: enabled. */
+  enabled?: boolean;
+  /** cursedalchemy origin (no trailing slash, no /api). Env CA_SYNC_URL overrides. */
+  url?: string;
+  /** Stable id for this rubato machine. Env CA_SYNC_HOST_ID overrides; default hostname. */
+  hostId?: string;
+  /** Seconds between task pulls (min 10, default 60). */
+  pullSeconds?: number;
+  /** Seconds between data pushes (min 10, default 60). */
+  pushSeconds?: number;
 }
 
 /** SSH connection config for a named remote server. */
@@ -232,6 +253,7 @@ export async function loadConfig(): Promise<RubatoConfig> {
       // and never re-written back by a later saveConfig.
       automations: raw.automations?.timeout != null ? { timeout: raw.automations.timeout } : undefined,
       orchestration: raw.orchestration,
+      caSync: raw.caSync,
       servers: raw.servers,
     };
     configCache = { mtimeMs: st.mtimeMs, size: st.size, value };

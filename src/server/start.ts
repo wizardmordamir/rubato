@@ -13,6 +13,7 @@ import { type RegisteredScript, registerScripts } from '../lib/scriptRegistry';
 import type { PluginRouteHandler } from '../plugin/types';
 import type { UiPage } from '../shared/ui';
 import { BUILTIN_SCRIPTS } from './builtinScripts';
+import { startCaSync } from './caSync';
 import { initDebugCapture } from './debugCapture';
 import { subscribe } from './events';
 import { startForgeWorker } from './forge';
@@ -76,6 +77,9 @@ export function startServer(options: StartOptions = {}): ServerHandle {
   // Background poller: real Claude Code usage telemetry (`/usage` + ccusage) —
   // auto-calibrates the usage buckets and feeds the Usage tab live numbers.
   startUsagePoller();
+  // Background sync with a cursedalchemy deployment: pull owner-authored tasks
+  // into the queue and push orchestration data back. No-op unless configured.
+  void startCaSync();
   const envPort = Number(process.env.RUBATO_PORT);
   const port = options.port ?? (Number.isInteger(envPort) && envPort > 0 ? envPort : 4747);
   const hostname = options.hostname ?? '127.0.0.1';
