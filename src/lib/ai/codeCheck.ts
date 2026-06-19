@@ -102,9 +102,8 @@ export function asyncShapeCheck(blocks: CodeBlock[]): CodeIssue[] {
   // `await someFn(… , (args) => …)` — awaiting a call that also passes a callback.
   const awaitWithCb = /await\s+[\w.]+\s*\([^;()]*,\s*(?:async\s*)?\([^)]*\)\s*=>/g;
   for (const b of blocks) {
-    const promisified = /promisify|node:child_process\/promises|child_process\/promises|fs\/promises|Bun\.\$|Bun\.spawn/.test(
-      b.code,
-    );
+    const promisified =
+      /promisify|node:child_process\/promises|child_process\/promises|fs\/promises|Bun\.\$|Bun\.spawn/.test(b.code);
     if (!promisified) {
       let m: RegExpExecArray | null;
       awaitExec.lastIndex = 0;
@@ -115,7 +114,7 @@ export function asyncShapeCheck(blocks: CodeBlock[]): CodeIssue[] {
           line: lineAt(b.code, m.index),
           rule: 'await-callback-exec',
           message:
-            "Awaiting `exec` — child_process.exec is callback-style and returns a ChildProcess, not a Promise. Use `const { stdout } = await promisify(exec)(cmd)`, `Bun.$`, or `Bun.spawn`.",
+            'Awaiting `exec` — child_process.exec is callback-style and returns a ChildProcess, not a Promise. Use `const { stdout } = await promisify(exec)(cmd)`, `Bun.$`, or `Bun.spawn`.',
         });
       }
     }

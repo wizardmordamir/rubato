@@ -12,7 +12,7 @@
  *   GET/POST/PATCH/DELETE /api/forge/prompts[/:id]  → saved prompt CRUD
  */
 
-import type { EnhanceRequest, ForgePromptInput, ForgeDraftInput, ForgeDraftPatch } from '../shared/forge';
+import type { EnhanceRequest, ForgeDraftInput, ForgeDraftPatch, ForgePromptInput } from '../shared/forge';
 import {
   createDraft,
   createPrompt,

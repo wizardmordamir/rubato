@@ -27,9 +27,7 @@ describe('buildAppMap', () => {
   });
 
   test('dedups and sorts routes', () => {
-    const md = buildAppMap([
-      { relativePath: 'a.tsx', content: `path="/x" path="/x" path="/a"` },
-    ]);
+    const md = buildAppMap([{ relativePath: 'a.tsx', content: `path="/x" path="/x" path="/a"` }]);
     const idxA = md.indexOf('/a');
     const idxX = md.indexOf('/x');
     expect(idxA).toBeGreaterThanOrEqual(0);

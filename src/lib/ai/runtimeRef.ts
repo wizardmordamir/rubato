@@ -70,10 +70,7 @@ async function probeVersion(cmd: string): Promise<string | null> {
       // bare invocation in odd setups; the timeout kills anything that hangs.
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
-    const [out, err] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
+    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     await proc.exited;
     const text = (out.trim() || err.trim()).split('\n')[0]?.trim() ?? '';
     if (!text) return null;

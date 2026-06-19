@@ -18,8 +18,16 @@ import {
 
 /** Directory names never descended into while looking for repos. */
 export const SCAN_PRUNE = new Set([
-  'node_modules', '.git', '.svn', '.hg', 'dist', 'build', '.next',
-  '.cache', 'vendor', 'target',
+  'node_modules',
+  '.git',
+  '.svn',
+  '.hg',
+  'dist',
+  'build',
+  '.next',
+  '.cache',
+  'vendor',
+  'target',
 ]);
 
 /** Walk `root`, returning the path of every git repo (not descending into one). */
@@ -83,11 +91,7 @@ export interface ScanResult {
 }
 
 /** Run the full rubato-scan merge against the given roots + ignore list. */
-export async function runScan(opts: {
-  roots: string[];
-  ignore: string[];
-  dryRun?: boolean;
-}): Promise<ScanResult> {
+export async function runScan(opts: { roots: string[]; ignore: string[]; dryRun?: boolean }): Promise<ScanResult> {
   const { roots, ignore, dryRun = false } = opts;
   const ignoreSet = new Set(ignore);
 

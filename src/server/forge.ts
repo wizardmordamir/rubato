@@ -21,12 +21,12 @@ import { loadConfig } from '../lib/config';
 import type {
   DraftDetail,
   EnhancedTask,
-  ForgePrompt,
-  ForgePromptInput,
-  ForgeTargetStatus,
   ForgeDraft,
   ForgeDraftInput,
   ForgeDraftPatch,
+  ForgePrompt,
+  ForgePromptInput,
+  ForgeTargetStatus,
 } from '../shared/forge';
 import { DEFAULT_FORGE_PROMPT, getDb } from './db';
 import { getTaskqDb } from './taskqDb';
@@ -120,13 +120,10 @@ export function createPrompt(input: ForgePromptInput): ForgePrompt {
   const ts = now();
   const db = getDb();
   if (input.is_default) db.run(`UPDATE forge_prompts SET is_default = 0`);
-  const res = db.run(`INSERT INTO forge_prompts (name, body, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`, [
-    input.name.trim(),
-    input.body,
-    input.is_default ? 1 : 0,
-    ts,
-    ts,
-  ]);
+  const res = db.run(
+    `INSERT INTO forge_prompts (name, body, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+    [input.name.trim(), input.body, input.is_default ? 1 : 0, ts, ts],
+  );
   return getPrompt(Number(res.lastInsertRowid)) as ForgePrompt;
 }
 
@@ -161,7 +158,9 @@ export function deletePrompt(id: number): boolean {
 // ── Drafts CRUD ──────────────────────────────────────────────────────────────
 
 export function listDrafts(): ForgeDraft[] {
-  return (getDb().query(`SELECT * FROM task_drafts ORDER BY updated_at DESC, id DESC`).all() as DraftRow[]).map(toDraft);
+  return (getDb().query(`SELECT * FROM task_drafts ORDER BY updated_at DESC, id DESC`).all() as DraftRow[]).map(
+    toDraft,
+  );
 }
 
 export function getDraft(id: number): ForgeDraft | null {
@@ -290,9 +289,10 @@ export function publishDraft(id: number, publish: PublishFn = defaultPublish): F
   if (!draft) return null;
   if (draft.published_task_id != null) return draft; // already published — no-op.
   if (draft.current_enhanced_id == null) return draft; // nothing to publish yet.
-  const rev = getDb()
-    .query(`SELECT * FROM enhanced_tasks WHERE id = ?`)
-    .get(draft.current_enhanced_id) as EnhancedRow | undefined | null;
+  const rev = getDb().query(`SELECT * FROM enhanced_tasks WHERE id = ?`).get(draft.current_enhanced_id) as
+    | EnhancedRow
+    | undefined
+    | null;
   if (!rev) return draft;
   const { body, model, think } = parseSpecMeta(rev.ai_specification);
   const taskId = publish({
@@ -328,7 +328,9 @@ export interface EnhanceResult {
 
 /** Process the single oldest queued draft. Returns null when none are queued.
  *  Errors are caught and stored on the draft (state → 'error'); the worker moves on. */
-export async function enhanceOnce(deps: { complete?: CompleteFn; publish?: PublishFn } = {}): Promise<EnhanceResult | null> {
+export async function enhanceOnce(
+  deps: { complete?: CompleteFn; publish?: PublishFn } = {},
+): Promise<EnhanceResult | null> {
   const db = getDb();
   const row = db
     .query(`SELECT * FROM task_drafts WHERE enhance_state = 'queued' ORDER BY updated_at ASC, id ASC LIMIT 1`)
@@ -361,9 +363,11 @@ export async function enhanceOnce(deps: { complete?: CompleteFn; publish?: Publi
     const { text, model } = await complete(messages);
     if (!text.trim()) throw new Error('Ollama returned an empty response');
 
-    const prevIter = (db.query(`SELECT MAX(iteration) AS m FROM enhanced_tasks WHERE draft_id = ?`).get(row.id) as {
-      m: number | null;
-    }).m;
+    const prevIter = (
+      db.query(`SELECT MAX(iteration) AS m FROM enhanced_tasks WHERE draft_id = ?`).get(row.id) as {
+        m: number | null;
+      }
+    ).m;
     const iteration = (prevIter ?? 0) + 1;
     const res = db.run(
       `INSERT INTO enhanced_tasks (draft_id, iteration, ai_specification, status, model_used, prompt_used, prompt_id, created_at)

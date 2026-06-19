@@ -39,7 +39,9 @@ async function main(): Promise<void> {
     for (const model of models) {
       const ok = modelStaged(model);
       allOk &&= ok;
-      console.log(ok ? `✓ ${model} is staged at ${modelDir(model)}` : `✗ ${model} is NOT staged (under ${modelDir(model)})`);
+      console.log(
+        ok ? `✓ ${model} is staged at ${modelDir(model)}` : `✗ ${model} is NOT staged (under ${modelDir(model)})`,
+      );
     }
     process.exit(allOk ? 0 : 1);
   }

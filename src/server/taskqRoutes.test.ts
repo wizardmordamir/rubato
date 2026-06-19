@@ -98,7 +98,12 @@ describe('taskq routes', () => {
   test('usage/live: GET returns a snapshot envelope (cold before any poll)', async () => {
     const res = await call('GET', '/api/taskq/usage/live');
     expect(res.status).toBe(200);
-    const snap = (await res.json()) as { telemetryStatus: string; costStatus: string; telemetry: unknown; cost: unknown };
+    const snap = (await res.json()) as {
+      telemetryStatus: string;
+      costStatus: string;
+      telemetry: unknown;
+      cost: unknown;
+    };
     // Background poller hasn't run in this isolated test process — sources cold.
     expect(['never', 'fallback', 'live']).toContain(snap.telemetryStatus);
     expect(['never', 'fallback', 'live']).toContain(snap.costStatus);

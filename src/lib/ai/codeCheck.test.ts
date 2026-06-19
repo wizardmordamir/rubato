@@ -33,7 +33,9 @@ describe('syntaxCheckBlocks', () => {
   });
 
   test('passes clean TypeScript (incl. type annotations, no imports needed)', () => {
-    const blocks = extractCodeBlocks(fence('ts', 'const n: number = 1;\nexport function f(x: string): string { return x; }'));
+    const blocks = extractCodeBlocks(
+      fence('ts', 'const n: number = 1;\nexport function f(x: string): string { return x; }'),
+    );
     expect(syntaxCheckBlocks(blocks)).toEqual([]);
   });
 });
@@ -46,7 +48,9 @@ describe('asyncShapeCheck', () => {
   });
 
   test('does NOT flag top-level await (valid in Bun/ESM)', () => {
-    const blocks = extractCodeBlocks(fence('ts', "const res = await fetch('https://example.com');\nconst body = await res.text();"));
+    const blocks = extractCodeBlocks(
+      fence('ts', "const res = await fetch('https://example.com');\nconst body = await res.text();"),
+    );
     expect(asyncShapeCheck(blocks)).toEqual([]);
   });
 
@@ -82,7 +86,7 @@ describe('lintCodePaths', () => {
 
 describe('runCodeChecks + formatIssuesForRepair', () => {
   test('clean answer → no issues', async () => {
-    const md = `Here you go:\n${fence('ts', "export const add = (a: number, b: number): number => a + b;")}`;
+    const md = `Here you go:\n${fence('ts', 'export const add = (a: number, b: number): number => a + b;')}`;
     const { issues } = await runCodeChecks(md);
     expect(issues).toEqual([]);
   });

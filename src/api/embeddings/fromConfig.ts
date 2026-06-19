@@ -11,7 +11,13 @@ import type { AppConfig } from '../../lib/apps';
 import { loadConfig } from '../../lib/config';
 import { optionalEnv } from '../env';
 import type { EmbeddingProvider } from '../llm/types';
-import { createLocalEmbeddingProvider, DEFAULT_EMBED_DIMS, DEFAULT_EMBED_MODEL, isOfflineMode, MODELS_DIR } from './local';
+import {
+  createLocalEmbeddingProvider,
+  DEFAULT_EMBED_DIMS,
+  DEFAULT_EMBED_MODEL,
+  isOfflineMode,
+  MODELS_DIR,
+} from './local';
 import { createRemoteEmbeddingProvider, DEFAULT_REMOTE_EMBED_DIMS } from './remote';
 
 /** The model id rubato will use for an app (per-app → global → default). */

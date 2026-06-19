@@ -6,7 +6,7 @@
  * Unknown fields are preserved across re-scans, so user additions are safe.
  */
 
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { $ } from 'bun';
 import type { AppAiConfig, AppApi, CommandType, KnownApiName } from './appApis';
@@ -668,7 +668,6 @@ export async function browseDir(dir: string): Promise<BrowseDirResult> {
   }
   return { path: resolved, dirs: entries, home };
 }
-
 
 /** Parse a repo's package.json, or undefined if absent/unreadable. */
 export async function readPackageJson(repoPath: string): Promise<Record<string, unknown> | undefined> {

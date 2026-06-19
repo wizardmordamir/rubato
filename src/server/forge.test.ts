@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { addTask, listTasks, migrate, type NewTask, type TaskqDb } from 'cwip/taskq';
 import type { LlmMessage } from '../api/llm/types';
 import { __resetDbForTests } from './db';
@@ -9,9 +9,9 @@ import {
   drainForgeQueue,
   enhanceOnce,
   getDraftDetail,
+  type PublishFn,
   parseSpecMeta,
   publishDraft,
-  type PublishFn,
   requestEnhance,
 } from './forge';
 
@@ -23,7 +23,9 @@ function memQueue(): { db: TaskqDb; publish: PublishFn } {
 }
 
 // A fake LLM that echoes a deterministic spec; records concurrency.
-function fakeComplete(opts: { active: { n: number; max: number }; reply?: (m: LlmMessage[]) => string } = { active: { n: 0, max: 0 } }): CompleteFn {
+function fakeComplete(
+  opts: { active: { n: number; max: number }; reply?: (m: LlmMessage[]) => string } = { active: { n: 0, max: 0 } },
+): CompleteFn {
   return async (messages) => {
     opts.active.n++;
     opts.active.max = Math.max(opts.active.max, opts.active.n);

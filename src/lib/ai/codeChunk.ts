@@ -26,13 +26,32 @@ export interface CodeChunkOptions extends ChunkOptions {
 
 /** Extensions chunked structurally; everything else uses the line-window fallback. */
 const CODE_EXT = new Set([
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-  '.py', '.go', '.rb', '.rs', '.java', '.kt',
-  '.c', '.cc', '.cpp', '.h', '.hpp', '.cs', '.php', '.swift', '.scala',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.py',
+  '.go',
+  '.rb',
+  '.rs',
+  '.java',
+  '.kt',
+  '.c',
+  '.cc',
+  '.cpp',
+  '.h',
+  '.hpp',
+  '.cs',
+  '.php',
+  '.swift',
+  '.scala',
 ]);
 
 /** A top-level declaration that should start a fresh logical chunk. */
-const DECL_RE = /^(?:export\s+|default\s+|async\s+|public\s+|private\s+|protected\s+|static\s+)*(?:function|class|interface|type|enum|const|let|var|struct|impl|def|func|router\.|app\.)\b/;
+const DECL_RE =
+  /^(?:export\s+|default\s+|async\s+|public\s+|private\s+|protected\s+|static\s+)*(?:function|class|interface|type|enum|const|let|var|struct|impl|def|func|router\.|app\.)\b/;
 /** Lines that "attach" to the declaration below them (so the block starts above the decl). */
 const ATTACHABLE_RE = /^\s*(?:\/\*\*|\*\/|\*|\/\/|@[A-Za-z])/;
 /** A doc-comment opener or decorator — itself the top of a logical block. */
@@ -79,7 +98,10 @@ function chunkCode(content: string, opts: CodeChunkOptions): Chunk[] {
     const size = current.join('\n').length;
     // Flush BEFORE a new logical unit once the current chunk is substantial, or
     // when a hard size/line cap is hit (safety against one huge block).
-    if (current.length > 0 && ((isBlockStart(lines, i) && size >= minChars) || current.length >= maxLines || size >= target * 1.5)) {
+    if (
+      current.length > 0 &&
+      ((isBlockStart(lines, i) && size >= minChars) || current.length >= maxLines || size >= target * 1.5)
+    ) {
       flush(i + 1); // lines are 1-based; chunk so far is [startLine, i]
     }
     current.push(lines[i]);
