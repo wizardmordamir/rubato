@@ -139,9 +139,9 @@ describe('taskq routes', () => {
     const get = (await (await call('GET', '/api/taskq/config')).json()) as { config: { taskTimeoutMs: number } };
     expect(get.config.taskTimeoutMs).toBeGreaterThanOrEqual(60_000);
 
-    const saved = (await (
-      await call('POST', '/api/taskq/config', { taskTimeoutMs: 30 * 60_000 })
-    ).json()) as { config: { taskTimeoutMs: number } };
+    const saved = (await (await call('POST', '/api/taskq/config', { taskTimeoutMs: 30 * 60_000 })).json()) as {
+      config: { taskTimeoutMs: number };
+    };
     expect(saved.config.taskTimeoutMs).toBe(30 * 60_000);
 
     expect((await call('POST', '/api/taskq/config', { taskTimeoutMs: 1000 })).status).toBe(400); // < 1 min

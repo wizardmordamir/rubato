@@ -1,9 +1,9 @@
-import { allBucketStates, listTasks, type TaskRow } from 'cwip/taskq';
 import { logger } from 'cwip';
+import { allBucketStates, listTasks, type TaskRow } from 'cwip/taskq';
 import type {
   CaCapacityPayload,
-  CaTasksPayload,
   CaTaskSummary,
+  CaTasksPayload,
   CaTimingsPayload,
   CaUsagePayload,
 } from '../../shared/caSync';
@@ -60,9 +60,20 @@ export function buildTasks(): CaTasksPayload {
   const byUpdatedDesc = (a: TaskRow, b: TaskRow) => (a.updated_at < b.updated_at ? 1 : -1);
   return {
     counts,
-    ready: all.filter((t) => t.status === 'ready').slice(0, 20).map(summary),
-    claimed: all.filter((t) => t.status === 'claimed').sort(byUpdatedDesc).slice(0, 20).map(summary),
-    recentDone: all.filter((t) => t.status === 'done').sort(byUpdatedDesc).slice(0, 20).map(summary),
+    ready: all
+      .filter((t) => t.status === 'ready')
+      .slice(0, 20)
+      .map(summary),
+    claimed: all
+      .filter((t) => t.status === 'claimed')
+      .sort(byUpdatedDesc)
+      .slice(0, 20)
+      .map(summary),
+    recentDone: all
+      .filter((t) => t.status === 'done')
+      .sort(byUpdatedDesc)
+      .slice(0, 20)
+      .map(summary),
     at: nowIso(),
   };
 }

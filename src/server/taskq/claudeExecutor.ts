@@ -229,10 +229,7 @@ const defaultSpawn: SpawnFn = async (cmd, cwd, env, opts) => {
         }, timeoutMs)
       : undefined;
   try {
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
+    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     const exitCode = await proc.exited;
     if (stderr) process.stderr.write(stderr);
     return { exitCode, stdout, stderr, timedOut };
@@ -273,9 +270,14 @@ export async function probeClaudeCapacity(spawn: SpawnFn = defaultSpawn): Promis
     ];
     // A trivial probe should return in seconds — cap it so a hung CLI can't
     // wedge the empty-queue self-heal path.
-    const { exitCode, stdout, stderr, timedOut } = await spawn(cmd, process.cwd(), { PATH: agentPath() }, {
-      timeoutMs: 120_000,
-    });
+    const { exitCode, stdout, stderr, timedOut } = await spawn(
+      cmd,
+      process.cwd(),
+      { PATH: agentPath() },
+      {
+        timeoutMs: 120_000,
+      },
+    );
     if (timedOut) return { rateLimited: false, ok: false, detail: 'probe timed out' };
     const rateLimited = isUsageLimitMessage(`${stdout}\n${stderr ?? ''}`);
     if (rateLimited) return { rateLimited: true, ok: false, detail: 'usage-limit error on probe' };

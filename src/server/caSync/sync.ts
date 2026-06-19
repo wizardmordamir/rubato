@@ -1,5 +1,5 @@
-import { addTask, type NewTask } from 'cwip/taskq';
 import { getErrorMessage, logger } from 'cwip';
+import { addTask, type NewTask } from 'cwip/taskq';
 import type { PulledTask } from '../../shared/caSync';
 import { createDraft, kickForgeWorker } from '../forge';
 import { getTaskqDb } from '../taskqDb';
@@ -34,8 +34,7 @@ export interface SyncDeps {
   enqueueOllama?: (t: PulledTask) => void;
 }
 
-const defaultEnqueueDirect = (t: PulledTask): number =>
-  addTask(getTaskqDb(), toNewTask(t), { at: 'bottom' });
+const defaultEnqueueDirect = (t: PulledTask): number => addTask(getTaskqDb(), toNewTask(t), { at: 'bottom' });
 
 const defaultEnqueueOllama = (t: PulledTask): void => {
   createDraft({

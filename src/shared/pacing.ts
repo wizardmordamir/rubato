@@ -9,8 +9,8 @@
  * Pure + dependency-free (browser- and server-safe).
  */
 
-import type { ActionType, LeafAction, Step } from './automation';
 import { uid } from 'cwip';
+import type { ActionType, LeafAction, Step } from './automation';
 
 export type RunSpeed = 'off' | 'slow' | 'slower';
 

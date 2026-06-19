@@ -82,7 +82,7 @@ describe('pullOnce routing', () => {
     expect(updates[0].payload.status).toBe('enhancing');
   });
 
-  test("a `hold` task is queued as on_hold", async () => {
+  test('a `hold` task is queued as on_hold', async () => {
     const { client, updates } = stubClient([task({ id: 'h1', status: 'hold' })]);
     let captured: PulledTask | null = null;
     await pullOnce({
@@ -98,10 +98,7 @@ describe('pullOnce routing', () => {
   });
 
   test('a per-task failure is isolated and reported as failed', async () => {
-    const { client, updates } = stubClient([
-      task({ id: 'bad' }),
-      task({ id: 'good' }),
-    ]);
+    const { client, updates } = stubClient([task({ id: 'bad' }), task({ id: 'good' })]);
     const res = await pullOnce({
       settings: enabled,
       client,
