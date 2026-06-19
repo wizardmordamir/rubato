@@ -2272,9 +2272,15 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
           {/* Last fired */}
           <div className="mt-1.5 space-y-0.5 text-xs text-gray-400">
             {s?.lastFireMs != null ? (
-              <Tooltip content={`Last drain started at ${new Date(s.lastFireMs).toLocaleString()}`}>
+              <Tooltip
+                content={
+                  s?.running
+                    ? `Drain active — heartbeat at ${new Date(s.lastFireMs).toLocaleString()}. While a pass runs it re-stamps every tick (it can run for many minutes on long tasks), so this stays fresh instead of freezing at the start time.`
+                    : `Last drain tick at ${new Date(s.lastFireMs).toLocaleString()}`
+                }
+              >
                 <div className="cursor-help">
-                  last fired{" "}
+                  {s?.running ? "heartbeat" : "last fired"}{" "}
                   <span className="font-medium text-gray-600 dark:text-gray-300">
                     {fmtTimeAgo(s.lastFireMs, now)}
                   </span>
@@ -2287,8 +2293,9 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
             ) : s?.watchdogLoaded ? (
               <div>last fired: <span className="text-gray-500">not yet this session</span></div>
             ) : null}
-            {/* Countdown to next fire */}
-            {s?.watchdogLoaded && interval != null && nextFireAt != null && (
+            {/* Countdown to next fire — only meaningful while idle; a running drain
+                heartbeats instead of re-firing (launchd coalesces while it's alive). */}
+            {!s?.running && s?.watchdogLoaded && interval != null && nextFireAt != null && (
               <div>
                 next in{" "}
                 <span className="font-medium text-gray-600 dark:text-gray-300">

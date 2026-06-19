@@ -19,7 +19,12 @@ export interface DrainerStatus {
   running: boolean;
   /** The graceful-stop sentinel (`~/.taskq/.stop`) is present. */
   stopped: boolean;
-  /** Unix ms timestamp when the drain last started (from `.last-fire` stamp file). */
+  /**
+   * Unix ms of the drain's last activity (from the `.last-fire` stamp). Written
+   * when a drain starts AND re-stamped on every supervisor tick while it runs,
+   * so it stays fresh during a long pass instead of freezing at the start time
+   * (launchd can't re-fire while one drain is still alive).
+   */
   lastFireMs?: number;
 }
 

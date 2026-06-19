@@ -27,6 +27,7 @@ import {
 } from 'cwip/taskq';
 import { agentPath, dryRunExecutor, makeClaudeExecutor, probeClaudeCapacity } from '../server/taskq/claudeExecutor';
 import { loadTaskqConfig } from '../server/taskq/config';
+import { currentInterval } from '../server/taskq/control';
 import { taskqLaunchdPlist } from '../server/taskq/launchd';
 import { runDrain } from '../server/taskq/orchestrator';
 import { runEpicDecomposition, runTriage } from '../server/taskq/triage';
@@ -85,38 +86,59 @@ async function main(): Promise<void> {
     );
   }
 
-  // Per-worker tier filters: flatten fleet tiers into one filter per worker slot.
-  const perWorker: ClaimFilters[] = [];
-  if (config.fleet?.length) {
-    for (const tier of config.fleet) for (let i = 0; i < tier.jobs; i++) perWorker.push({ models: tier.models });
-  }
-  const maxJobs = perWorker.length || config.jobs;
-
-  // Token-aware scheduling: throttle based on current capacity (never pause — auto-recalibrate on success).
-  const buckets = allBucketStates(db, Date.now());
-  const wasExhausted: BucketState[] = buckets.filter((b) => b.remaining <= 0);
-  const decision = scheduleDecision(buckets, { maxJobs, baseJobs: config.jobs, pauseOnExhausted: false });
-  const jobs = Math.min(maxJobs, decision.recommendedJobs);
-
   const stopFile = join(taskqHome(), '.stop');
+  const lastFireFile = join(taskqHome(), '.last-fire');
+
+  // Recompute the drain plan (per-worker tier filters + capacity-throttled job
+  // count) from the CURRENT config + token buckets. Called live on every
+  // supervisor tick so a mid-run change — the user bumps JOBS, edits fleet
+  // tiers, or capacity frees up — takes effect WITHOUT restarting the drain.
+  const planDrain = () => {
+    const cfg = loadTaskqConfig();
+    const perWorker: ClaimFilters[] = [];
+    if (cfg.fleet?.length) {
+      for (const tier of cfg.fleet) for (let i = 0; i < tier.jobs; i++) perWorker.push({ models: tier.models });
+    }
+    const maxJobs = perWorker.length || cfg.jobs;
+    const decision = scheduleDecision(allBucketStates(db, Date.now()), {
+      maxJobs,
+      baseJobs: cfg.jobs,
+      pauseOnExhausted: false,
+    });
+    return { perWorker, maxJobs, decision, jobs: Math.min(maxJobs, decision.recommendedJobs) };
+  };
+
+  // Capacity snapshot for the empty-queue self-heal probe (start of run only).
+  const wasExhausted: BucketState[] = allBucketStates(db, Date.now()).filter((b) => b.remaining <= 0);
+
+  const plan0 = planDrain();
   process.stdout.write(
-    `${ts()} taskq drain: ${jobs}/${maxJobs} worker(s)${dryRun ? ' [DRY RUN]' : ''} — ${decision.reason}${decision.preferLight ? ' (prefer light)' : ''}, db=${taskqHome()}\n`,
+    `${ts()} taskq drain: ${plan0.jobs}/${plan0.maxJobs} worker(s)${dryRun ? ' [DRY RUN]' : ''} — ${plan0.decision.reason}${plan0.decision.preferLight ? ' (prefer light)' : ''}, db=${taskqHome()}\n`,
   );
 
-  const drainDecision = decision.preferLight ? 'throttled' : decision.burnExpiring ? 'burning' : 'normal';
+  const drainDecision = plan0.decision.preferLight ? 'throttled' : plan0.decision.burnExpiring ? 'burning' : 'normal';
   const drainRunId = insertDrainRun(db, {
     startedAt: Date.now(),
     decision: drainDecision,
-    reason: decision.reason,
-    jobs,
-    maxJobs,
+    reason: plan0.decision.reason,
+    jobs: plan0.jobs,
+    maxJobs: plan0.maxJobs,
   });
 
+  // Heartbeat / pool-resize cadence: re-read config and refresh the liveness
+  // stamp on the watchdog interval, capped at 30s so the UI's "last fired" stays
+  // current even during a long pass (it would otherwise freeze at the launchd
+  // start time, since launchd can't re-fire while this process is still alive).
+  const tickMs = Math.min(currentInterval(), 30) * 1000;
+
   const summary = await runDrain(db, {
-    jobs,
+    jobs: plan0.jobs,
+    desiredJobs: () => planDrain().jobs,
     executor,
     leaseTtlMs: config.leaseTtlMs,
-    worker: (i) => ({ filters: perWorker[i] ?? {} }),
+    worker: (i) => ({ filters: planDrain().perWorker[i] ?? {} }),
+    tickMs,
+    onTick: () => writeFileSync(lastFireFile, String(Date.now())),
     shouldStop: () => existsSync(stopFile),
     onEvent: (e) => {
       if (e.type === 'completed') {

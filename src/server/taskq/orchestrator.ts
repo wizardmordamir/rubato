@@ -59,8 +59,16 @@ export type DrainEvent =
   | { type: 'error'; worker: number; taskId: number; error: string };
 
 export interface DrainOptions {
-  /** Number of concurrent workers. */
+  /** Initial concurrent worker count (the pool size at drain start). */
   jobs: number;
+  /**
+   * Live target worker count, re-read on every supervisor tick so a mid-run
+   * config change (e.g. the user bumps JOBS from 1→4) takes effect WITHOUT
+   * restarting the drain: the pool grows new slots toward this number and a
+   * worker whose slot index is now ≥ the target retires after its current task.
+   * Defaults to a constant `jobs`. Result is clamped to ≥ 1.
+   */
+  desiredJobs?: () => number;
   /** Runs each claimed task (inject the real `claude -p` runner or a fake). */
   executor: TaskExecutor;
   /** Per-worker identity/filters (e.g. fleet tiers). Defaults: taskq-w<i>, no filter. */
@@ -70,6 +78,19 @@ export interface DrainOptions {
   leaseTtlMs?: number;
   /** Heartbeat cadence while a task runs (default 60s). */
   heartbeatMs?: number;
+  /**
+   * Supervisor cadence (ms): how often the pool re-reads {@link desiredJobs},
+   * resizes, and fires {@link onTick}. Default 5s. While a single long task
+   * runs this is the only thing still ticking, so it doubles as the liveness
+   * clock that keeps {@link onTick} firing.
+   */
+  tickMs?: number;
+  /**
+   * Called once at start and on every supervisor tick while the drain is alive.
+   * The drainer uses it to stamp a liveness heartbeat so the UI's "last fired"
+   * stays fresh during a long pass instead of freezing at the launchd start.
+   */
+  onTick?: () => void;
   /** Cooperative stop: when it returns true, workers exit between tasks. */
   shouldStop?: () => boolean;
   onEvent?: (e: DrainEvent) => void;
@@ -82,14 +103,24 @@ export interface DrainSummary {
 }
 
 const DEFAULT_HEARTBEAT_MS = 60_000;
+const DEFAULT_TICK_MS = 5_000;
 
 /**
- * Drain the queue: reap stranded leases, then run `jobs` workers until no
+ * Drain the queue: reap stranded leases, then run a worker pool until no
  * eligible task remains (or stop is requested). Resolves with a run summary.
+ *
+ * The pool is *adaptive*. It starts at `jobs` workers and a supervisor re-reads
+ * {@link DrainOptions.desiredJobs} every `tickMs`: it spawns new slots when the
+ * target grows (so a mid-run JOBS bump applies live), and a worker retires once
+ * its slot index passes the current target (shrink). Workers still exit when
+ * the queue empties; a slot that has retired is never re-spawned, so the drain
+ * still terminates once all work is done (launchd relaunches it for new work).
  */
 export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSummary> {
   const now = opts.now ?? (() => Date.now());
   const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
+  const tickMs = opts.tickMs ?? DEFAULT_TICK_MS;
+  const desired = () => Math.max(1, Math.floor(opts.desiredJobs?.() ?? opts.jobs));
   const emit = (e: DrainEvent) => opts.onEvent?.(e);
   const summary: DrainSummary = { completed: 0, failed: 0, reaped: 0 };
 
@@ -106,7 +137,8 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
       filters: partial.filters ?? {},
     };
 
-    while (!opts.shouldStop?.()) {
+    // Retire when stopped or when this slot is now beyond the (possibly shrunk) target.
+    while (!opts.shouldStop?.() && index < desired()) {
       const task = claimNext(db, {
         workerId: ctx.workerId,
         worktree: ctx.worktree,
@@ -158,6 +190,44 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
     }
   };
 
-  await Promise.all(Array.from({ length: Math.max(1, opts.jobs) }, (_, i) => worker(i)));
+  // Adaptive pool: `active` maps a live slot index → its (never-rejecting)
+  // worker promise. `spawned` is a monotonic high-water mark — we only ever ADD
+  // new slots, so a worker that idled out (queue empty) is never resurrected and
+  // the drain still terminates when all work is done. A worker that throws
+  // fatally (e.g. a DB error) records `fatal`, which is rethrown after the loop.
+  const active = new Map<number, Promise<void>>();
+  let spawned = 0;
+  let fatal: unknown;
+  const spawnUpTo = (target: number) => {
+    for (let i = spawned; i < target; i++) {
+      const p = worker(i)
+        .catch((e) => {
+          fatal ??= e;
+        })
+        .finally(() => active.delete(i));
+      active.set(i, p);
+    }
+    if (target > spawned) spawned = target;
+  };
+
+  opts.onTick?.(); // initial liveness stamp
+  spawnUpTo(desired());
+
+  // Supervise: each tick stamp liveness + grow toward the live target. Wake on
+  // either the tick OR all current workers settling, whichever comes first, so
+  // an empty queue exits promptly and a long single task still heartbeats. The
+  // tick timer is cleared after every wake so a finished drain exits at once —
+  // a dangling setTimeout would otherwise pin the event loop for up to tickMs.
+  while (active.size > 0 && fatal === undefined) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, tickMs);
+    });
+    await Promise.race([tick, Promise.all([...active.values()])]);
+    if (timer) clearTimeout(timer);
+    opts.onTick?.();
+    if (fatal === undefined && !opts.shouldStop?.()) spawnUpTo(desired());
+  }
+  if (fatal !== undefined) throw fatal;
   return summary;
 }

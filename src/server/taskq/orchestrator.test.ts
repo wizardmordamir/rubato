@@ -10,6 +10,8 @@ function fresh(): TaskqDb {
   return d;
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 /** Fake executor: succeeds unless the title is "boom". */
 const okExecutor: TaskExecutor = async (task) =>
   task.title === 'boom' ? { ok: false, reason: 'kaboom' } : { ok: true, commit: 'abc1234', summary: 'did it' };
@@ -73,5 +75,66 @@ describe('runDrain', () => {
     });
     expect(summary.failed).toBe(1);
     expect(listTasks(db, { status: 'failed' })[0]?.note).toContain('executor threw');
+  });
+
+  test('grows the pool to a raised desiredJobs mid-run (no restart)', async () => {
+    const db = fresh();
+    for (let i = 0; i < 12; i++) addTask(db, { title: `t${i}` }, { at: 'bottom' });
+    // Start at 1 worker; bump the live target to 3 as soon as the first task runs.
+    let target = 1;
+    const slotsThatWorked = new Set<number>();
+    const summary = await runDrain(db, {
+      jobs: 1,
+      desiredJobs: () => target,
+      tickMs: 5, // resize quickly so the test is fast
+      executor: async (_task, ctx) => {
+        slotsThatWorked.add(ctx.index);
+        target = 3; // a config bump lands while the drain is already running
+        await sleep(10); // stay busy long enough for a supervisor tick to grow the pool
+        return { ok: true };
+      },
+    });
+    expect(summary.completed).toBe(12);
+    // The extra slots actually claimed work — not just slot 0 doing everything.
+    expect(slotsThatWorked.size).toBeGreaterThan(1);
+    expect(listTasks(db, { status: 'ready' }).length).toBe(0);
+  });
+
+  test('shrinks: a worker retires when its slot index passes desiredJobs', async () => {
+    const db = fresh();
+    for (let i = 0; i < 8; i++) addTask(db, { title: `t${i}` }, { at: 'bottom' });
+    let target = 3;
+    const summary = await runDrain(db, {
+      jobs: 3,
+      desiredJobs: () => target,
+      tickMs: 5,
+      executor: async () => {
+        target = 1; // drop to a single worker; slots 1 & 2 should retire after their task
+        await sleep(5);
+        return { ok: true };
+      },
+    });
+    // Still drains everything — shrinking never strands tasks.
+    expect(summary.completed).toBe(8);
+    expect(listTasks(db, { status: 'ready' }).length).toBe(0);
+  });
+
+  test('onTick fires as a liveness heartbeat across a long pass', async () => {
+    const db = fresh();
+    addTask(db, { title: 'slow' });
+    let ticks = 0;
+    await runDrain(db, {
+      jobs: 1,
+      tickMs: 5,
+      onTick: () => {
+        ticks++;
+      },
+      executor: async () => {
+        await sleep(40); // ~8 ticks worth of work
+        return { ok: true };
+      },
+    });
+    // Initial stamp + several heartbeats while the single task ran.
+    expect(ticks).toBeGreaterThan(2);
   });
 });
