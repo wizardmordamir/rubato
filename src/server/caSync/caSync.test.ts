@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { ApiClient } from '../../api/client';
 import type { PulledTask } from '../../shared/caSync';
+import type { CaClient } from './client';
 import { makeCaClient } from './client';
 import type { CaSyncSettings } from './config';
 import { resolveCaSync } from './config';
-import { type CaClient, pullOnce } from './sync';
+import { pullOnce } from './sync';
 
 const enabled: CaSyncSettings = {
   enabled: true,
