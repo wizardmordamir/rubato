@@ -49,6 +49,14 @@ export const OUTPUTS_DIR = resolve(RUBATO_HOME, 'outputs');
 /** Where discoverable custom `*.ts` scripts live (the file half of "custom functions"). */
 export const SCRIPTS_DIR = resolve(RUBATO_HOME, 'scripts');
 /**
+ * Where the admin-only "reset from scratch" setup scripts live (the ollama/conda/
+ * fooocus/orchestrator/SES/EC2/Cloudflare + rubato/ca provisioning scripts). Under
+ * RUBATO_HOME so they're per-machine and OUTSIDE git — the repo ships sanitized
+ * templates that are seeded here; the editable copies (which may hold machine- and
+ * account-specific values) never get committed. Only the Admin panel surfaces them.
+ */
+export const SETUP_SCRIPTS_DIR = resolve(RUBATO_HOME, 'setup-scripts');
+/**
  * Where locally-generated art/image assets are written, one subdir per app
  * (`generated-assets/<appId>/art_asset_*.png`). Under RUBATO_HOME (not the repo's
  * `public/`) so assets are machine-local runtime state, served via a GET route —

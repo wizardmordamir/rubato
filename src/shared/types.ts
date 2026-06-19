@@ -31,6 +31,34 @@ export interface SystemFileDoc extends SystemFileInfo {
   content: string;
 }
 
+/**
+ * One admin-only "setup script" — a shell script under `~/.rubato/setup-scripts/`
+ * that resets/provisions the machine from scratch (ollama, miniconda, fooocus, the
+ * orchestrator, AWS SES/EC2, Cloudflare, rubato + ca). These live OUTSIDE git; the
+ * repo ships sanitized templates seeded here, and only the Admin panel surfaces them.
+ * `GET /api/admin/setup-scripts` lists these (sans `content`).
+ */
+export interface SetupScriptInfo {
+  /** Bare file name — the key the UI passes to read/write/delete it. */
+  name: string;
+  /** Human label (from the bundled template, else the file name). */
+  label: string;
+  /** Absolute path of the file on disk (shown in the UI for local editing). */
+  path: string;
+  size: number;
+  modifiedAt: number;
+  /** Whether a bundled default template of this name exists (can be restored). */
+  isTemplate: boolean;
+  /** One-line description (bundled templates only). */
+  description?: string;
+}
+
+/** A setup script plus its current contents. `GET/POST /api/admin/setup-scripts/:name`. */
+export interface SetupScriptDoc extends SetupScriptInfo {
+  content: string;
+  exists: boolean;
+}
+
 /** A command run recorded by the server (for the activity/notifications feed). */
 export interface RunRecord {
   id: number;

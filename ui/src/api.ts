@@ -54,6 +54,8 @@ import type {
   ServiceInfo,
   ServiceRunRequest,
   ServiceRunResponse,
+  SetupScriptDoc,
+  SetupScriptInfo,
   SplunkAppInfo,
   SplunkQueryRequest,
   SplunkQueryResponse,
@@ -744,6 +746,25 @@ export const fetchSystemFiles = () => getJson<SystemFileInfo[]>("/api/system-fil
 export const fetchSystemFile = (key: string) => getJson<SystemFileDoc>(`/api/system-files/${encodeURIComponent(key)}`);
 export const saveSystemFile = (key: string, content: string) =>
   postJson<SystemFileDoc>(`/api/system-files/${encodeURIComponent(key)}`, { content });
+
+// ── Setup scripts (admin-only reset/provision shell scripts; Admin panel) ─────
+
+export type { SetupScriptDoc, SetupScriptInfo } from "@shared/types";
+
+const SETUP_SCRIPTS = "/api/admin/setup-scripts";
+
+export const fetchSetupScripts = () => getJson<SetupScriptInfo[]>(SETUP_SCRIPTS);
+export const fetchSetupScript = (name: string) =>
+  getJson<SetupScriptDoc>(`${SETUP_SCRIPTS}/${encodeURIComponent(name)}`);
+export const saveSetupScript = (name: string, content: string) =>
+  postJson<SetupScriptDoc>(`${SETUP_SCRIPTS}/${encodeURIComponent(name)}`, { content });
+export const resetSetupScript = (name: string) =>
+  postJson<SetupScriptDoc>(`${SETUP_SCRIPTS}/${encodeURIComponent(name)}/reset`, {});
+export const seedSetupScripts = () => postJson<{ created: string[] }>(`${SETUP_SCRIPTS}/seed`, {});
+export async function deleteSetupScript(name: string): Promise<void> {
+  const res = await fetch(`${SETUP_SCRIPTS}/${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete failed → ${res.status}`);
+}
 
 export async function archiveRun(command: string): Promise<ArchiveRecord> {
   const res = await fetch("/api/archive", {

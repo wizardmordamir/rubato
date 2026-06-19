@@ -15,6 +15,12 @@
  *   GET    /api/admin/db/tables                         live tables + counts
  *   GET    /api/admin/db/stats                          live per-table stats
  *   POST   /api/admin/db/tables/:table/query            query a live table
+ *   GET    /api/admin/setup-scripts                      list reset/setup scripts (seeds defaults)
+ *   POST   /api/admin/setup-scripts/seed                 re-seed any missing default scripts
+ *   GET    /api/admin/setup-scripts/:name                read one script's contents
+ *   POST   /api/admin/setup-scripts/:name                write one script {content}
+ *   DELETE /api/admin/setup-scripts/:name                delete one script
+ *   POST   /api/admin/setup-scripts/:name/reset          restore one script to its template
  */
 
 import { loadConfig } from '../lib/config';
@@ -32,6 +38,14 @@ import { dbStats, listDbTables, queryDbTable } from './admin/dbViewer';
 import { listDiagnostics, readDiagnostic } from './diagnostics';
 import { resolveOutputFile } from './files';
 import { json, jsonError, readJsonBody } from './http';
+import {
+  deleteSetupScript,
+  listSetupScripts,
+  readSetupScript,
+  resetSetupScript,
+  seedSetupScripts,
+  writeSetupScript,
+} from './setupScripts';
 
 /** Stream an output-dir file as a download (scoped to the diagnostics subdir). */
 async function downloadDiagnostic(req: Request): Promise<Response> {
@@ -99,6 +113,46 @@ export async function handleAdminApi(pathname: string, req: Request): Promise<Re
     // /diagnostics/download?path=  → stream the file as an attachment
     if (parts[1] === 'download' && parts.length === 2 && req.method === 'GET') {
       return downloadDiagnostic(req);
+    }
+    return jsonError(`not found: ${pathname}`, 404);
+  }
+
+  // ── Setup scripts (reset-from-scratch shell scripts under ~/.rubato/setup-scripts)
+  if (parts[0] === 'setup-scripts') {
+    // /setup-scripts            → list (seeds missing defaults first)
+    if (parts.length === 1 && req.method === 'GET') {
+      return guard(() => listSetupScripts());
+    }
+    // /setup-scripts/seed       → (re-)seed any missing default scripts
+    if (parts.length === 2 && parts[1] === 'seed' && req.method === 'POST') {
+      return guard(async () => ({ created: await seedSetupScripts() }));
+    }
+    // /setup-scripts/:name/reset  → restore one script to its bundled template
+    if (parts.length === 3 && parts[2] === 'reset' && req.method === 'POST') {
+      const name = seg(parts[1]);
+      const doc = await resetSetupScript(name);
+      return doc ? json(doc) : jsonError(`no bundled template for: ${name}`, 404);
+    }
+    // /setup-scripts/:name      → read (GET) / write (POST) / delete (DELETE)
+    if (parts.length === 2) {
+      const name = seg(parts[1]);
+      if (req.method === 'GET') {
+        const doc = await readSetupScript(name);
+        return doc ? json(doc) : jsonError(`unknown setup script: ${name}`, 404);
+      }
+      if (req.method === 'POST') {
+        const body = (await readJsonBody<{ content?: string }>(req)) ?? {};
+        if (typeof body.content !== 'string') return jsonError('content (string) required', 400);
+        return guard(async () => {
+          const doc = await writeSetupScript(name, body.content as string);
+          if (!doc) throw new Error(`invalid setup script name: ${name}`);
+          return doc;
+        });
+      }
+      if (req.method === 'DELETE') {
+        return guard(async () => ({ deleted: await deleteSetupScript(name) }));
+      }
+      return jsonError('use GET, POST, or DELETE', 405);
     }
     return jsonError(`not found: ${pathname}`, 404);
   }
