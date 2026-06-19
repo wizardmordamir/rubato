@@ -10,7 +10,7 @@ import { IconChevronDown, IconGrip, IconPin, IconPlus, IconX } from "../../icons
 function resolveLabel(url: string): string {
   const path = url.split("?")[0];
   const page = UI_PAGES.find((p) => p.path === path || (p.path !== "/" && path.startsWith(`${p.path}/`)));
-  return page?.label ?? path.replace(/^\//, "").replace(/-/g, " ") || "Home";
+  return (page?.label ?? path.replace(/^\//, "").replace(/-/g, " ")) || "Home";
 }
 
 // Inline label editor — shows on double-click, right-click, or long-press (touch).
