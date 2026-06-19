@@ -13,6 +13,7 @@ import {
 } from "../api";
 import { Alert, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLASS, PageHeading, Tooltip } from "../components";
 import { useConfirm } from "../confirm";
+import { IconGrip } from "../icons";
 
 /**
  * Board — a simple Jira-like kanban for work tasks. Four fixed status columns;
@@ -142,27 +143,43 @@ export function BoardPage() {
                 const { isDragging, insertBefore, insertAfter, style, ...itemRest } = getItemProps(status, task.id);
                 const handle = getHandleProps(status, task.id);
                 return (
-                  <button
+                  <div
                     key={task.id}
-                    type="button"
-                    onClick={() => setEditing(task)}
                     {...itemRest}
-                    onPointerDown={handle.onPointerDown}
-                    style={{ ...handle.style, ...style }}
-                    className={`${CARD_CLASS} p-3 text-left text-sm transition hover:border-accent/60`}
+                    style={style}
+                    className="relative"
                   >
                     {insertBefore && <DropIndicator orientation="horizontal" side="start" />}
-                    <span className="font-medium">{task.title}</span>
-                    {task.description && <p className="mt-1 line-clamp-2 text-xs text-gray-500">{task.description}</p>}
-                    {(task.links.length > 0 || task.images.length > 0) && (
-                      <p className="mt-1 text-xs text-gray-400">
-                        {task.links.length > 0 && `${task.links.length} link(s)`}
-                        {task.links.length > 0 && task.images.length > 0 && " · "}
-                        {task.images.length > 0 && `${task.images.length} image(s)`}
-                      </p>
-                    )}
+                    <div className={`${CARD_CLASS} flex items-stretch gap-1 p-2 text-sm transition hover:border-accent/60`}>
+                      {/* Drag grip — only this has touchAction:none so columns scroll freely on mobile */}
+                      <button
+                        type="button"
+                        {...handle}
+                        aria-label={`Drag ${task.title}`}
+                        title="Drag to move"
+                        className="flex shrink-0 items-center justify-center rounded px-1 text-gray-300 hover:text-gray-500 pointer-coarse:min-h-[44px] pointer-coarse:px-2 dark:text-gray-600 dark:hover:text-gray-400"
+                      >
+                        <IconGrip size={12} />
+                      </button>
+                      {/* Card content — tap to open editor */}
+                      <button
+                        type="button"
+                        onClick={() => setEditing(task)}
+                        className="min-w-0 flex-1 py-1 text-left"
+                      >
+                        <span className="font-medium">{task.title}</span>
+                        {task.description && <p className="mt-1 line-clamp-2 text-xs text-gray-500">{task.description}</p>}
+                        {(task.links.length > 0 || task.images.length > 0) && (
+                          <p className="mt-1 text-xs text-gray-400">
+                            {task.links.length > 0 && `${task.links.length} link(s)`}
+                            {task.links.length > 0 && task.images.length > 0 && " · "}
+                            {task.images.length > 0 && `${task.images.length} image(s)`}
+                          </p>
+                        )}
+                      </button>
+                    </div>
                     {insertAfter && <DropIndicator orientation="horizontal" side="end" />}
-                  </button>
+                  </div>
                 );
               })}
             </section>

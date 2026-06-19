@@ -1,6 +1,6 @@
 import { UI_PAGES } from "@shared/ui";
 import { DropIndicator, useDragReorder, useDragToMove } from "cwip/react";
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { Shortcut } from "../../hooks/useShortcuts";
 import { useShortcuts } from "../../hooks/useShortcuts";
@@ -16,10 +16,14 @@ function resolveLabel(url: string): string {
 // Inline label editor — shows on double-click, right-click, or long-press (touch).
 function ShortcutChip({
   shortcut,
+  handleProps,
   onRename,
   onUnpin,
 }: {
   shortcut: Shortcut;
+  /** Props from useDragReorder's getHandleProps — spread onto the grip button so
+   *  only the grip has touchAction:none (mobile can still scroll/tap the link). */
+  handleProps: { style: CSSProperties; onPointerDown: (e: ReactPointerEvent) => void };
   onRename: (label: string) => void;
   onUnpin: () => void;
 }) {
@@ -73,6 +77,16 @@ function ShortcutChip({
           : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:border-gray-600"
       }`}
     >
+      {/* Drag grip — only this element has touchAction:none so the link stays tappable and the list scrollable on mobile */}
+      <button
+        type="button"
+        {...handleProps}
+        aria-label="Drag to reorder"
+        title="Drag to reorder"
+        className="flex shrink-0 items-center justify-center pl-2 pr-1 text-gray-300 hover:text-gray-500 pointer-coarse:min-h-[44px] pointer-coarse:px-2.5 dark:text-gray-600 dark:hover:text-gray-400"
+      >
+        <IconGrip size={12} />
+      </button>
       <div className="min-w-0 flex-1">
         <Link
           to={shortcut.url}
@@ -102,7 +116,7 @@ function ShortcutChip({
           onPointerMove={clearTimer}
           onPointerCancel={clearTimer}
           title={`${shortcut.label} — double-click or right-click to rename`}
-          className="flex min-w-0 w-full items-center gap-1.5 py-1.5 pl-3 pr-1 hover:cursor-pointer"
+          className="flex min-w-0 w-full items-center gap-1.5 py-1.5 pl-1 pr-1 hover:cursor-pointer"
         >
           <span className="truncate">{shortcut.label}</span>
         </Link>
@@ -216,14 +230,14 @@ export function ShortcutDock() {
             <div
               key={s.id}
               {...handlers}
-              onPointerDown={handle.onPointerDown}
-              style={{ ...style, ...handle.style }}
+              style={style}
               className="relative"
             >
               {insertBefore && <DropIndicator orientation="horizontal" side="start" />}
               {insertAfter && <DropIndicator orientation="horizontal" side="end" />}
               <ShortcutChip
                 shortcut={s}
+                handleProps={handle}
                 onRename={(label) => rename(s.id, label)}
                 onUnpin={() => unpin(s.id)}
               />
