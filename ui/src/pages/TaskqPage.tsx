@@ -2149,6 +2149,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
   const { data } = useQuery({ queryKey: ["taskq-drainer"], queryFn: fetchTaskqDrainer, refetchInterval: 5000 });
   const configQ = useQuery({ queryKey: ["taskq-config"], queryFn: fetchTaskqConfig });
   const { data: cap } = useQuery({ queryKey: ["taskq-capacity"], queryFn: fetchTaskqCapacity, refetchInterval: 8000 });
+  const { data: recentRuns } = useQuery({ queryKey: ["taskq-drain-runs-1"], queryFn: () => fetchTaskqDrainRuns(1), refetchInterval: 5000 });
   const qc = useQueryClient();
   const { notify } = useToast();
   const run = useMutation({
@@ -2218,13 +2219,14 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
         : null;
   const msUntilNext = nextFireAt != null ? Math.max(0, nextFireAt - now) : null;
   const nextFireTime = nextFireAt != null ? new Date(nextFireAt).toLocaleTimeString() : null;
+  const lastRun = recentRuns?.[0] ?? null;
 
   return (
     <div className={`${CARD_CLASS} mb-3 p-3`}>
       {/* Status row */}
       <div className="mb-3 flex flex-wrap items-start gap-6">
         {/* Scheduler section */}
-        <div className="min-w-[140px]">
+        <div className="min-w-[180px]">
           <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Scheduler</div>
           <Tooltip
             multiline
@@ -2250,6 +2252,50 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
               </Tooltip>
             </div>
           )}
+          {/* Last fired */}
+          <div className="mt-1.5 space-y-0.5 text-xs text-gray-400">
+            {s?.lastFireMs != null ? (
+              <Tooltip content={`Last drain started at ${new Date(s.lastFireMs).toLocaleString()}`}>
+                <div className="cursor-help">
+                  last fired{" "}
+                  <span className="font-medium text-gray-600 dark:text-gray-300">
+                    {fmtTimeAgo(s.lastFireMs, now)}
+                  </span>
+                  {" "}at{" "}
+                  <span className="font-medium text-gray-600 dark:text-gray-300">
+                    {new Date(s.lastFireMs).toLocaleTimeString()}
+                  </span>
+                </div>
+              </Tooltip>
+            ) : s?.watchdogLoaded ? (
+              <div>last fired: <span className="text-gray-500">not yet this session</span></div>
+            ) : null}
+            {/* Countdown to next fire */}
+            {s?.watchdogLoaded && interval != null && nextFireAt != null && (
+              <div>
+                next in{" "}
+                <span className="font-medium text-gray-600 dark:text-gray-300">
+                  {msUntilNext != null && msUntilNext > 0 ? fmtDur(msUntilNext) : "now"}
+                </span>
+                {" "}at{" "}
+                <span className="font-medium text-gray-600 dark:text-gray-300">{nextFireTime}</span>
+              </div>
+            )}
+            {/* Last run result */}
+            {lastRun != null && (
+              <Tooltip
+                multiline
+                content={`Drain at ${new Date(lastRun.started_at).toLocaleTimeString()}: ${lastRun.reason}${lastRun.completed != null && lastRun.completed > 0 ? ` · ${lastRun.completed} task${lastRun.completed === 1 ? "" : "s"} completed` : ""}${lastRun.failed != null && lastRun.failed > 0 ? ` · ${lastRun.failed} failed` : ""}${lastRun.reaped != null && lastRun.reaped > 0 ? ` · ${lastRun.reaped} reaped` : ""}`}
+              >
+                <div className="cursor-help">
+                  last run:{" "}
+                  <span className={`font-medium ${lastRunColor(lastRun.decision)}`}>
+                    {lastRunSummary(lastRun)}
+                  </span>
+                </div>
+              </Tooltip>
+            )}
+          </div>
         </div>
 
         {/* Active drain section */}
@@ -2273,26 +2319,6 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
           </Tooltip>
           {s?.running && (
             <div className="mt-1 text-xs text-gray-400">workers are claiming tasks</div>
-          )}
-          {!s?.running && s?.watchdogLoaded && interval != null && (
-            <div className="mt-1 space-y-0.5 text-xs text-gray-400">
-              {nextFireAt != null ? (
-                <>
-                  <div>
-                    next check at <span className="font-medium text-gray-600 dark:text-gray-300">{nextFireTime}</span>
-                  </div>
-                  <div>
-                    {msUntilNext != null && msUntilNext > 0 ? (
-                      <>in <span className="font-medium text-gray-600 dark:text-gray-300">{fmtDur(msUntilNext)}</span></>
-                    ) : (
-                      <span className="text-emerald-600 dark:text-emerald-400">due now</span>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <div>fires every <span className="font-medium text-gray-600 dark:text-gray-300">{fmtIntervalSec(interval)}</span></div>
-              )}
-            </div>
           )}
         </div>
 
@@ -2405,6 +2431,35 @@ function fmtIntervalSec(seconds: number): string {
   if (seconds % 3600 === 0) return `${seconds / 3600}h`;
   if (seconds >= 60) return `${Math.floor(seconds / 60)}m`;
   return `${seconds}s`;
+}
+
+function fmtTimeAgo(epochMs: number, now: number): string {
+  const ms = now - epochMs;
+  if (ms < 5000) return "just now";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s ago`;
+  return `${Math.floor(m / 60)}h ${m % 60}m ago`;
+}
+
+function lastRunSummary(run: TaskqDrainRun): string {
+  const completed = run.completed ?? 0;
+  const failed = run.failed ?? 0;
+  if (run.decision === "paused") return "paused";
+  if (run.decision === "stopped") return "stopped";
+  if (run.decision === "throttled") {
+    return completed > 0 ? `throttled · ${completed} done` : "throttled · no tasks";
+  }
+  if (completed > 0) return `${completed} task${completed === 1 ? "" : "s"} done${failed > 0 ? ` · ${failed} failed` : ""}`;
+  if (failed > 0) return `${failed} failed`;
+  return "no tasks found";
+}
+
+function lastRunColor(decision: string): string {
+  if (decision === "paused" || decision === "stopped") return "text-amber-600 dark:text-amber-400";
+  if (decision === "throttled") return "text-amber-600 dark:text-amber-400";
+  return "text-gray-600 dark:text-gray-300";
 }
 
 /** Live worker instances (current leases) + per-instance release. */
