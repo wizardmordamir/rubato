@@ -45,6 +45,30 @@ function logReconcile(actions: ReturnType<typeof reconcileUsageObservation>): vo
   for (const a of actions) process.stdout.write(`  ↻ ${a.key}: ${a.reason}\n`);
 }
 
+/**
+ * Last-resort safety valve against an unforeseen wedge. The per-task timeout
+ * (claudeExecutor) already bounds any single hung agent and the loop terminates
+ * when the queue drains — but if the process ever got stuck for some reason we
+ * HAVEN'T fixed, launchd could never relaunch it (it can't re-fire while this
+ * one is alive). So force-exit after a hard ceiling: launchd's next tick starts
+ * a clean pass, and any in-flight lease is reaped by that pass. Generous by
+ * default (8h, well past any healthy drain) and tunable via TASKQ_MAX_RUNTIME_MS
+ * (0 disables). `unref()` so the timer itself never keeps the process alive.
+ */
+function installRuntimeBackstop(): void {
+  const envRaw = process.env.TASKQ_MAX_RUNTIME_MS;
+  const parsed = envRaw != null ? Number(envRaw) : NaN;
+  const maxMs = Number.isFinite(parsed) && parsed >= 0 ? parsed : 8 * 60 * 60_000;
+  if (maxMs <= 0) return;
+  const guard = setTimeout(() => {
+    process.stderr.write(
+      `${ts()} taskq drain exceeded max runtime ${Math.round(maxMs / 60_000)}m — force-exiting so launchd can relaunch\n`,
+    );
+    process.exit(0); // clean exit; StartInterval re-fires, the reaper reclaims any in-flight lease
+  }, maxMs);
+  guard.unref?.();
+}
+
 function regenerateView(db: ReturnType<typeof getTaskqDb>): void {
   const rows = listTasks(db);
   const needs: Record<number, string[]> = {};
@@ -71,6 +95,8 @@ async function main(): Promise<void> {
 
   // Stamp the fire time so the UI can compute a real countdown to the next tick.
   writeFileSync(join(taskqHome(), '.last-fire'), String(Date.now()));
+
+  installRuntimeBackstop();
 
   const config = loadTaskqConfig();
   const db = getTaskqDb();
@@ -147,11 +173,17 @@ async function main(): Promise<void> {
         // if any bucket was reading exhausted, grow its limit + re-anchor so the
         // estimate stops blocking and tracks reality more closely next time.
         logReconcile(reconcileUsageObservation(db, 'not-exhausted'));
+      } else if (e.type === 'rate-limited') {
+        // A genuine usage-limit error: the task was RELEASED back to ready (not
+        // failed) and the pool is winding down. Confirm we ARE out so the
+        // estimate predicts the wall sooner; the next pass resumes after reset.
+        process.stdout.write(`  ⏸ #${e.taskId}: usage limit (${e.reason}) — released, backing off this pass\n`);
+        logReconcile(reconcileUsageObservation(db, 'exhausted'));
       } else if (e.type === 'failed') {
         process.stdout.write(`  ✗ #${e.taskId}: ${e.reason}\n`);
-        // A genuine usage-limit error confirms we ARE out (shrink the estimate so
-        // it predicts the wall sooner). Any other failure still proves the call
-        // reached the API → treat it as a not-exhausted signal.
+        // The call reached the API (it just didn't finish the task) → proof we
+        // are NOT out, so treat it as a not-exhausted signal. (Real usage-limit
+        // failures come through the 'rate-limited' branch above instead.)
         logReconcile(reconcileUsageObservation(db, e.rateLimited ? 'exhausted' : 'not-exhausted'));
       } else if (e.type === 'reaped') process.stdout.write(`  reaped ${e.count} stranded lease(s)\n`);
     },
@@ -159,8 +191,10 @@ async function main(): Promise<void> {
 
   // Empty-queue self-heal: nothing ran to give us a signal, yet the estimate
   // says we're out. Fire ONE cheap probe to find out for real, then reconcile —
-  // so a stuck "0% remaining" corrects itself without waiting for a task.
-  if (!dryRun && wasExhausted.length > 0 && summary.completed + summary.failed === 0) {
+  // so a stuck "0% remaining" corrects itself without waiting for a task. Skip it
+  // when a worker already hit a real usage limit this pass (summary.rateLimited):
+  // we KNOW we're out, so a probe would just waste a call during the outage.
+  if (!dryRun && !summary.rateLimited && wasExhausted.length > 0 && summary.completed + summary.failed === 0) {
     process.stdout.write(`${ts()} estimate read 0% but nothing ran — probing real capacity…\n`);
     const probe = await probeClaudeCapacity();
     if (probe.rateLimited) {

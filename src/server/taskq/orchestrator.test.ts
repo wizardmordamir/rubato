@@ -37,6 +37,31 @@ describe('runDrain', () => {
     expect(failed[0]?.note).toBe('kaboom');
   });
 
+  test('a rate-limited result releases the task back to ready and winds the pool down', async () => {
+    const db = fresh();
+    for (let i = 0; i < 4; i++) addTask(db, { title: `t${i}` }, { at: 'bottom' });
+    let calls = 0;
+    const types: string[] = [];
+    const summary = await runDrain(db, {
+      jobs: 1,
+      executor: async () => {
+        calls++;
+        return { ok: false, reason: 'Claude usage limit reached', rateLimited: true };
+      },
+      onEvent: (e) => types.push(e.type),
+    });
+    // The claimed task is back to ready (NOT failed/done), nothing was burned.
+    expect(summary.rateLimited).toBe(true);
+    expect(summary.failed).toBe(0);
+    expect(summary.completed).toBe(0);
+    expect(listTasks(db, { status: 'ready' }).length).toBe(4);
+    expect(listTasks(db, { status: 'failed' }).length).toBe(0);
+    expect(listTasks(db, { status: 'claimed' }).length).toBe(0);
+    // Wound down after the FIRST limit hit — didn't thrash through the whole queue.
+    expect(calls).toBe(1);
+    expect(types).toContain('rate-limited');
+  });
+
   test('shouldStop halts further claims', async () => {
     const db = fresh();
     for (let i = 0; i < 5; i++) addTask(db, { title: `t${i}` }, { at: 'bottom' });

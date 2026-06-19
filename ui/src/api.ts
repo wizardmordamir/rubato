@@ -1789,6 +1789,8 @@ export interface TaskqConfig {
   fast?: boolean;
   fleet?: TaskqFleetTier[];
   leaseTtlMs: number;
+  /** Hard ceiling (ms) on one worker's agent run — kills a hung agent so it can't wedge the drain. */
+  taskTimeoutMs: number;
   triage?: { enabled: boolean };
   repos: Record<string, string>;
   /** Background `/usage` telemetry poll interval, minutes (0 = off, manual only). */
@@ -1803,6 +1805,7 @@ export interface TaskqConfigPatch {
   fast?: boolean;
   fleet?: TaskqFleetTier[] | null;
   leaseTtlMs?: number;
+  taskTimeoutMs?: number;
   triageEnabled?: boolean;
   usagePollMinutes?: number;
   usageCostPollMinutes?: number;

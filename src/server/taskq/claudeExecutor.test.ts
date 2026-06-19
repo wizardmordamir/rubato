@@ -107,6 +107,35 @@ describe('makeClaudeExecutor (injected spawn)', () => {
     const exec = makeClaudeExecutor(loadTaskqConfig(), async () => ({ exitCode: 1, stdout: '' }));
     expect((await exec(task(), { index: 0, workerId: 'w', worktree: 'wt', filters: {} })).ok).toBe(false);
   });
+
+  test('passes the configured taskTimeoutMs to the spawn', async () => {
+    let seenOpts: { timeoutMs?: number } | undefined;
+    const exec = makeClaudeExecutor(loadTaskqConfig(), async (_cmd, _cwd, _env, opts) => {
+      seenOpts = opts;
+      return { exitCode: 0, stdout: JSON.stringify({ subtype: 'success', is_error: false, result: 'ok' }) };
+    });
+    await exec(task(), { index: 0, workerId: 'w', worktree: 'wt', filters: {} });
+    expect(seenOpts?.timeoutMs).toBe(loadTaskqConfig().taskTimeoutMs);
+  });
+
+  test('a timed-out run → failure with a timeout reason, never rate-limited', async () => {
+    const exec = makeClaudeExecutor(loadTaskqConfig(), async () => ({ exitCode: 143, stdout: '', timedOut: true }));
+    const res = await exec(task(), { index: 0, workerId: 'w', worktree: 'wt', filters: {} });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain('timed out');
+    expect(res.rateLimited).toBe(false);
+  });
+
+  test('nonzero exit with a usage-limit message on STDERR → rateLimited', async () => {
+    const exec = makeClaudeExecutor(loadTaskqConfig(), async () => ({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'Error: Claude usage limit reached. Resets at 5pm',
+    }));
+    const res = await exec(task(), { index: 0, workerId: 'w', worktree: 'wt', filters: {} });
+    expect(res.ok).toBe(false);
+    expect(res.rateLimited).toBe(true);
+  });
 });
 
 describe('usage-limit classification', () => {

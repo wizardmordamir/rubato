@@ -18,6 +18,7 @@ import {
   nextEligibleId,
   reapExpired,
   recordRun,
+  releaseLease,
   setStatus,
   type TaskqDb,
   type TaskRow,
@@ -56,6 +57,7 @@ export type DrainEvent =
   | { type: 'claimed'; worker: number; task: TaskRow }
   | { type: 'completed'; worker: number; taskId: number; durationS: number }
   | { type: 'failed'; worker: number; taskId: number; reason: string; rateLimited?: boolean }
+  | { type: 'rate-limited'; worker: number; taskId: number; reason: string }
   | { type: 'idle'; worker: number }
   | { type: 'error'; worker: number; taskId: number; error: string };
 
@@ -101,6 +103,13 @@ export interface DrainSummary {
   completed: number;
   failed: number;
   reaped: number;
+  /**
+   * True when a worker hit a genuine usage/rate limit and the pool wound down
+   * early. The released task is back to `ready` (NOT burned to `failed`), so the
+   * next drain pass — after the limit resets — picks it up. Lets the caller skip
+   * a redundant capacity probe: we already KNOW we're out.
+   */
+  rateLimited: boolean;
 }
 
 const DEFAULT_HEARTBEAT_MS = 60_000;
@@ -126,11 +135,17 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
   const tickMs = opts.tickMs ?? DEFAULT_TICK_MS;
   const desired = () => Math.max(1, Math.floor(opts.desiredJobs?.() ?? opts.jobs));
   const emit = (e: DrainEvent) => opts.onEvent?.(e);
-  const summary: DrainSummary = { completed: 0, failed: 0, reaped: 0 };
+  const summary: DrainSummary = { completed: 0, failed: 0, reaped: 0, rateLimited: false };
 
   // Reclaim leases stranded by a prior crashed run before we start.
   summary.reaped = reapExpired(db, now());
   if (summary.reaped) emit({ type: 'reaped', count: summary.reaped });
+
+  // Set when a worker hits a real usage limit: stop claiming/refilling and let
+  // the pool drain out, so we don't thrash the queue releasing every task during
+  // an outage. Treated like a cooperative stop everywhere we check `shouldStop`.
+  let rateLimited = false;
+  const stopping = () => rateLimited || (opts.shouldStop?.() ?? false);
 
   const worker = async (index: number): Promise<void> => {
     const partial = opts.worker?.(index) ?? {};
@@ -141,8 +156,9 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
       filters: partial.filters ?? {},
     };
 
-    // Retire when stopped or when this slot is now beyond the (possibly shrunk) target.
-    while (!opts.shouldStop?.() && index < desired()) {
+    // Retire when stopped, rate-limited, or when this slot is now beyond the
+    // (possibly shrunk) target.
+    while (!stopping() && index < desired()) {
       const task = claimNext(db, {
         workerId: ctx.workerId,
         worktree: ctx.worktree,
@@ -173,6 +189,16 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
           }
           summary.completed++;
           emit({ type: 'completed', worker: index, taskId: task.id, durationS });
+        } else if (res.rateLimited) {
+          // We're genuinely out of tokens — DON'T burn the task. Return it to
+          // `ready` (it never really ran) and signal the pool to wind down so the
+          // next pass, after the limit resets, runs it instead of marking it
+          // failed. This is the "resume after a break" path.
+          releaseLease(db, task.id);
+          rateLimited = true;
+          summary.rateLimited = true;
+          emit({ type: 'rate-limited', worker: index, taskId: task.id, reason: res.reason ?? 'usage limit' });
+          return;
         } else {
           failTask(db, task.id, res.reason ?? 'task failed', now());
           summary.failed++;
@@ -222,7 +248,7 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
   // if any worker is active afterward. Over-spawning is harmless — a slot that
   // loses the claim race just idles out and is re-evaluated next tick.
   const refill = (): boolean => {
-    if (!opts.shouldStop?.()) {
+    if (!stopping()) {
       const target = desired();
       for (let i = 0; i < target; i++) if (!active.has(i) && slotHasWork(i)) spawn(i);
     }

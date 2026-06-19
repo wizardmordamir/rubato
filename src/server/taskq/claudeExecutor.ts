@@ -140,11 +140,28 @@ export function parseClaudeResult(stdout: string): TaskResult {
   };
 }
 
+/** The outcome of one spawned agent run. */
+export interface SpawnResult {
+  exitCode: number;
+  stdout: string;
+  /** Captured stderr (an agent's usage-limit / crash detail often lands here). */
+  stderr?: string;
+  /** True when the run was killed for exceeding {@link SpawnOpts.timeoutMs}. */
+  timedOut?: boolean;
+}
+
+/** Per-spawn options (a hard timeout is the only knob today). */
+export interface SpawnOpts {
+  /** Kill the process after this many ms (0 / omitted ⇒ no timeout). */
+  timeoutMs?: number;
+}
+
 export type SpawnFn = (
   cmd: string[],
   cwd: string,
   env: Record<string, string>,
-) => Promise<{ exitCode: number; stdout: string }>;
+  opts?: SpawnOpts,
+) => Promise<SpawnResult>;
 
 export function makeClaudeExecutor(config: TaskqConfig, spawn: SpawnFn = defaultSpawn): TaskExecutor {
   return async (task: TaskRow): Promise<TaskResult> => {
@@ -165,18 +182,64 @@ export function makeClaudeExecutor(config: TaskqConfig, spawn: SpawnFn = default
     const thinkLevel = task.think ?? config.think;
     const think = thinkLevel ? THINK_TOKENS[thinkLevel] : undefined;
     if (think) env.MAX_THINKING_TOKENS = String(think);
-    const { exitCode, stdout } = await spawn(cmd, cwd, env);
+    const { exitCode, stdout, stderr, timedOut } = await spawn(cmd, cwd, env, { timeoutMs: config.taskTimeoutMs });
+    if (timedOut)
+      return {
+        ok: false,
+        reason: `claude -p timed out after ${Math.round(config.taskTimeoutMs / 60_000)}m and was killed`,
+        // A hang is not a usage-limit signal — don't let it skew the estimate.
+        rateLimited: false,
+      };
     if (exitCode !== 0)
-      return { ok: false, reason: `claude -p exited ${exitCode}`, rateLimited: isUsageLimitMessage(stdout) };
+      // Scan BOTH streams: a non-zero exit usually prints the reason to stderr,
+      // and a usage-limit error there must still be classified as rate-limited.
+      return {
+        ok: false,
+        reason: `claude -p exited ${exitCode}`,
+        rateLimited: isUsageLimitMessage(`${stdout}\n${stderr ?? ''}`),
+      };
     return parseClaudeResult(stdout);
   };
 }
 
-/** Default spawn: run the command with the agent PATH, capture stdout. */
-const defaultSpawn: SpawnFn = async (cmd, cwd, env) => {
-  const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'inherit', env: { ...process.env, ...env } });
-  const stdout = await new Response(proc.stdout).text();
-  return { exitCode: await proc.exited, stdout };
+/**
+ * Default spawn: run the command with the agent PATH, capturing stdout AND
+ * stderr. A hard `timeoutMs` kills a hung run (SIGTERM, then SIGKILL after a
+ * grace period) so a stuck agent can never wedge the drain. stderr is still
+ * forwarded to our own stderr afterward so the watchdog log keeps showing it.
+ */
+const defaultSpawn: SpawnFn = async (cmd, cwd, env, opts) => {
+  const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, ...env } });
+  const timeoutMs = opts?.timeoutMs ?? 0;
+  let timedOut = false;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  const timer =
+    timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          try {
+            proc.kill(); // SIGTERM
+          } catch {}
+          // Escalate to SIGKILL if it ignores the polite signal.
+          killTimer = setTimeout(() => {
+            try {
+              proc.kill(9);
+            } catch {}
+          }, 10_000);
+        }, timeoutMs)
+      : undefined;
+  try {
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    const exitCode = await proc.exited;
+    if (stderr) process.stderr.write(stderr);
+    return { exitCode, stdout, stderr, timedOut };
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (killTimer) clearTimeout(killTimer);
+  }
 };
 
 /** What a capacity probe learned about the account's true limit state. */
@@ -208,8 +271,13 @@ export async function probeClaudeCapacity(spawn: SpawnFn = defaultSpawn): Promis
       'json',
       '--dangerously-skip-permissions',
     ];
-    const { exitCode, stdout } = await spawn(cmd, process.cwd(), { PATH: agentPath() });
-    const rateLimited = isUsageLimitMessage(stdout);
+    // A trivial probe should return in seconds — cap it so a hung CLI can't
+    // wedge the empty-queue self-heal path.
+    const { exitCode, stdout, stderr, timedOut } = await spawn(cmd, process.cwd(), { PATH: agentPath() }, {
+      timeoutMs: 120_000,
+    });
+    if (timedOut) return { rateLimited: false, ok: false, detail: 'probe timed out' };
+    const rateLimited = isUsageLimitMessage(`${stdout}\n${stderr ?? ''}`);
     if (rateLimited) return { rateLimited: true, ok: false, detail: 'usage-limit error on probe' };
     if (exitCode !== 0) return { rateLimited: false, ok: false, detail: `probe exited ${exitCode}` };
     const res = parseClaudeResult(stdout);

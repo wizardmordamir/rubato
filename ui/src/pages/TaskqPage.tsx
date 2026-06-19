@@ -2756,6 +2756,7 @@ function ConfigForm({ config, interval, watchdogLoaded }: { config: TaskqConfig;
   const [think, setThink] = useState(config.think ?? "");
   const [fast, setFast] = useState(!!config.fast);
   const [ttlMin, setTtlMin] = useState(Math.round(config.leaseTtlMs / 60000));
+  const [timeoutMin, setTimeoutMin] = useState(Math.round(config.taskTimeoutMs / 60000));
   const [triage, setTriage] = useState(!!config.triage?.enabled);
   const [fleet, setFleet] = useState<TaskqFleetTier[]>(config.fleet ?? []);
   const [intervalS, setIntervalS] = useState(interval);
@@ -2768,6 +2769,7 @@ function ConfigForm({ config, interval, watchdogLoaded }: { config: TaskqConfig;
         think,
         fast,
         leaseTtlMs: ttlMin * 60000,
+        taskTimeoutMs: timeoutMin * 60000,
         triageEnabled: triage,
         fleet: fleet.length ? fleet : null,
       };
@@ -2821,6 +2823,9 @@ function ConfigForm({ config, interval, watchdogLoaded }: { config: TaskqConfig;
           </Field>
           <Field label="Lease TTL (min)" hint="A worker must heartbeat within this window or its lease is reaped and the task is returned to 'ready' for retry.">
             <input type="number" min={1} className={FIELD_CLASS} value={ttlMin} onChange={(e) => setTtlMin(Number(e.target.value))} />
+          </Field>
+          <Field label="Task timeout (min)" hint="Hard ceiling on one worker's 'claude -p' run. A hung agent keeps heartbeating, so the lease never expires — this kills it so the task fails, the worker frees up, and the queue keeps flowing (a hang can otherwise wedge the whole drain).">
+            <input type="number" min={1} max={1440} className={FIELD_CLASS} value={timeoutMin} onChange={(e) => setTimeoutMin(Number(e.target.value))} />
           </Field>
           <Tooltip content="Pass --fast to 'claude -p', enabling fast mode (Opus with faster output). Uses more tokens per session. Can be overridden per-task with (fast:) markers.">
             <label className="flex cursor-help items-center gap-2 text-sm">

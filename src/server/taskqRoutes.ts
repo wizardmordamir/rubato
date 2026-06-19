@@ -115,6 +115,38 @@ function backfillNumericSlugs(db: ReturnType<typeof getTaskqDb>): void {
   );
 }
 
+/** Config knobs that change what/how a drain pass runs (vs. pure UI/telemetry). */
+const EXECUTION_KNOBS: (keyof TaskqConfigPatch)[] = [
+  'jobs',
+  'fleet',
+  'model',
+  'think',
+  'fast',
+  'leaseTtlMs',
+  'taskTimeoutMs',
+];
+
+/**
+ * After a settings change, kick a drain pass immediately so the new config takes
+ * effect now instead of waiting up to a full watchdog interval for the next
+ * launchd tick — the "after I change settings, nothing starts" gap. Only when an
+ * execution knob actually changed AND the watchdog is loaded, the drainer isn't
+ * explicitly stopped, and none is already running (a live drain re-reads jobs/
+ * fleet itself each tick, so it needs no kick; model/think/fast apply on its next
+ * launch). Best-effort and non-fatal: a failed kick must never fail the save.
+ */
+function maybeKickDrainer(patch: TaskqConfigPatch): void {
+  try {
+    if (process.env.TASKQ_NO_AUTOKICK === '1') return; // tests set this — never spawn a real drain
+    if (!EXECUTION_KNOBS.some((k) => patch[k] !== undefined)) return;
+    const st = drainerStatus();
+    if (!st.watchdogLoaded || st.stopped || st.running) return;
+    runDrainerNow();
+  } catch {
+    // never let an auto-kick break the config save
+  }
+}
+
 /** Rebuild the whole board (tasks + needs + per-status counts + runtime data). */
 function board(): TaskqBoard {
   const db = getTaskqDb();
@@ -323,6 +355,7 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       try {
         const config = saveTaskqConfig(body);
         applyUsagePollConfig(); // pick up any usage poll-interval change immediately
+        maybeKickDrainer(body); // start a pass now if an execution knob changed while idle
         return json({ config, interval: currentInterval() });
       } catch (e) {
         return jsonError(e instanceof Error ? e.message : 'invalid config', 400);

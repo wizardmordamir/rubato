@@ -32,6 +32,15 @@ export interface TaskqConfig {
   fleet?: FleetTier[];
   /** Lease TTL ms (worker must heartbeat within this). */
   leaseTtlMs: number;
+  /**
+   * Hard ceiling (ms) on a single worker's `claude -p` agent run. A hung agent
+   * keeps heartbeating, so the lease never expires and the reaper can't free it —
+   * which pins the worker AND prevents the drain from ever exiting (launchd can't
+   * relaunch while it's alive). This timeout kills such a run so the task fails,
+   * the worker moves on, and the queue keeps flowing. Default 2h (well above any
+   * legitimate task; only catches genuine hangs).
+   */
+  taskTimeoutMs: number;
   /** repo alias → absolute checkout root. */
   repos: Record<string, string>;
   /** Opt-in auto-triage / epic decomposition (off by default — conservative). */
@@ -46,7 +55,15 @@ export interface TaskqConfig {
 export type TaskqConfigPatch = Partial<
   Pick<
     TaskqConfig,
-    'jobs' | 'model' | 'think' | 'fast' | 'fleet' | 'leaseTtlMs' | 'usagePollMinutes' | 'usageCostPollMinutes'
+    | 'jobs'
+    | 'model'
+    | 'think'
+    | 'fast'
+    | 'fleet'
+    | 'leaseTtlMs'
+    | 'taskTimeoutMs'
+    | 'usagePollMinutes'
+    | 'usageCostPollMinutes'
   > & { triageEnabled: boolean }
 >;
 
@@ -59,6 +76,7 @@ function defaults(): TaskqConfig {
     jobs: 2,
     model: 'opus',
     leaseTtlMs: 15 * 60_000,
+    taskTimeoutMs: 2 * 60 * 60_000,
     usagePollMinutes: 5,
     usageCostPollMinutes: 30,
     repos: {
@@ -115,6 +133,12 @@ export function validateConfigPatch(patch: TaskqConfigPatch): TaskqConfigPatch {
     if (!Number.isInteger(patch.leaseTtlMs) || patch.leaseTtlMs < 60_000) throw new Error('leaseTtlMs must be ≥ 60000');
     out.leaseTtlMs = patch.leaseTtlMs;
   }
+  if (patch.taskTimeoutMs !== undefined) {
+    // ≥ 1 min (a real task takes minutes); ≤ 24h (a safety ceiling, not a budget).
+    if (!Number.isInteger(patch.taskTimeoutMs) || patch.taskTimeoutMs < 60_000 || patch.taskTimeoutMs > 86_400_000)
+      throw new Error('taskTimeoutMs must be 60000–86400000');
+    out.taskTimeoutMs = patch.taskTimeoutMs;
+  }
   if (patch.triageEnabled !== undefined) {
     if (typeof patch.triageEnabled !== 'boolean') throw new Error('triageEnabled must be boolean');
     out.triageEnabled = patch.triageEnabled;
@@ -169,6 +193,7 @@ export function saveTaskqConfig(patch: TaskqConfigPatch): TaskqConfig {
   if ('think' in clean) raw.think = clean.think;
   if (clean.fast !== undefined) raw.fast = clean.fast;
   if (clean.leaseTtlMs !== undefined) raw.leaseTtlMs = clean.leaseTtlMs;
+  if (clean.taskTimeoutMs !== undefined) raw.taskTimeoutMs = clean.taskTimeoutMs;
   if (clean.usagePollMinutes !== undefined) raw.usagePollMinutes = clean.usagePollMinutes;
   if (clean.usageCostPollMinutes !== undefined) raw.usageCostPollMinutes = clean.usageCostPollMinutes;
   if (clean.triageEnabled !== undefined) raw.triage = { enabled: clean.triageEnabled };

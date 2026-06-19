@@ -27,6 +27,11 @@ function isolate(envVar: string, prefix: string): void {
 isolate('RUBATO_HOME', 'rubato-test-home-');
 isolate('CLAUDE_CONFIG_DIR', 'rubato-test-claude-');
 
+// Never let a test auto-spawn a real taskq drain subprocess: the config route's
+// "kick the drainer after a settings change" reads GLOBAL machine state
+// (launchctl/pgrep) and would otherwise fire against the real watchdog/queue.
+process.env.TASKQ_NO_AUTOKICK ??= '1';
+
 // Best-effort cleanup of the temp dirs we created.
 process.on('exit', () => {
   for (const dir of created) {
