@@ -827,7 +827,7 @@ export const fetchCaptures = () => getJson<CaptureSummary[]>("/api/capture");
 export const fetchCaptureManifest = (id: string) => getJson<CaptureManifest>(`/api/capture/${encodeURIComponent(id)}`);
 /** Lift a capture into an unsaved, editable builder draft (keeps a capture-track ref). */
 export const fetchCaptureDraft = (id: string) =>
-  getJson<Pick<Automation, "name" | "description" | "startUrl" | "steps" | "capture">>(
+  getJson<Pick<Automation, "name" | "description" | "folder" | "startUrl" | "steps" | "capture">>(
     `/api/capture/${encodeURIComponent(id)}/draft`,
   );
 export async function deleteCapture(id: string): Promise<void> {
