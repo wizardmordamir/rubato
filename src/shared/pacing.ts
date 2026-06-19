@@ -10,7 +10,7 @@
  */
 
 import type { ActionType, LeafAction, Step } from './automation';
-import { uid } from './stepEdit';
+import { uid } from 'cwip';
 
 export type RunSpeed = 'off' | 'slow' | 'slower';
 

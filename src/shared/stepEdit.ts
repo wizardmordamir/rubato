@@ -5,12 +5,10 @@
  * tests can all share one implementation.
  */
 
+import { uid } from 'cwip';
 import type { Step, Target } from './automation';
 
-/** A stable id for a step (or any keyed row). Prefers crypto.randomUUID. */
-export function uid(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `s-${Math.random().toString(36).slice(2, 10)}`;
-}
+export { uid };
 
 /** Deep-clone a Target, including a nested container scope. */
 function cloneTarget(t: Target): Target {
