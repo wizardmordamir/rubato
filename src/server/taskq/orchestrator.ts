@@ -17,6 +17,7 @@ import {
   heartbeat,
   reapExpired,
   recordRun,
+  setStatus,
   type TaskqDb,
   type TaskRow,
 } from 'cwip/taskq';
@@ -128,6 +129,12 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
           const durationS = Math.round((now() - startedAt) / 1000);
           completeTask(db, task.id, { commit: res.commit, summary: res.summary, startedAt, durationS }, now());
           if (res.outputTokens) recordRun(db, { at: now(), model: task.model, outputTokens: res.outputTokens });
+          // Saved tasks (no interval) auto-return to on_hold after completion.
+          // Clear any stale failure note from a previous run so the UI doesn't
+          // show an old "executor threw: …" reason for a task that just succeeded.
+          if (task.is_saved && !task.recur_interval_ms) {
+            setStatus(db, task.id, 'on_hold', null);
+          }
           summary.completed++;
           emit({ type: 'completed', worker: index, taskId: task.id, durationS });
         } else {

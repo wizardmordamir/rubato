@@ -148,7 +148,10 @@ function board(): TaskqBoard {
     if (t.status === 'claimed') {
       return { ...base, claimed_at: leaseByTaskId.get(t.id) ?? null };
     }
-    if (t.status === 'done') {
+    // Include last-completion data for done tasks AND for saved tasks sitting in
+    // on_hold after a successful run — so the UI can show "last run Jun 15" and
+    // the AI summary rather than showing nothing about why the task is parked there.
+    if (t.status === 'done' || (t.status === 'on_hold' && t.is_saved)) {
       const c = completionByTaskId.get(t.id);
       if (c)
         return {
@@ -465,11 +468,17 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       }
       if (sub === '/status') {
         if (req.method !== 'POST') return jsonError('use POST', 405);
-        const body = await readJsonBody<{ status?: string; note?: string }>(req);
+        const body = await readJsonBody<{ status?: string; note?: string | null }>(req);
         if (!body?.status || !(TASK_STATUSES as readonly string[]).includes(body.status)) {
           return jsonError(`status must be one of ${TASK_STATUSES.join(', ')}`, 400);
         }
-        setStatus(getTaskqDb(), id, body.status as TaskStatus, body.note);
+        const db = getTaskqDb();
+        // When re-queuing to ready, clear any stale hold/failure note unless the
+        // caller explicitly passed one. This prevents an old failure reason from
+        // persisting on a task that's been re-queued for a fresh run.
+        const noteArg: string | null | undefined =
+          body.note !== undefined ? body.note : body.status === 'ready' ? null : undefined;
+        setStatus(db, id, body.status as TaskStatus, noteArg);
         return json({ board: board() });
       }
       // /move

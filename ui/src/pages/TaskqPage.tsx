@@ -549,7 +549,22 @@ function TaskCard({
       return (
         <span className="flex flex-wrap gap-x-3">
           <span>created {fmtIso(task.created_at)}</span>
-          <span className="text-sky-500 dark:text-sky-400">saved — queue to run again</span>
+          {task.ended_at != null ? (
+            <span className="text-sky-500 dark:text-sky-400">
+              last run {fmtTs(task.ended_at)}
+              {task.duration_s != null ? ` · took ${Math.round(task.duration_s / 60)}m` : ""}
+            </span>
+          ) : (
+            <span className="text-sky-500 dark:text-sky-400">saved — queue to run again</span>
+          )}
+        </span>
+      );
+    }
+    if (task.status === "on_hold" || task.status === "failed") {
+      return (
+        <span className="flex flex-wrap gap-x-3">
+          <span>created {fmtIso(task.created_at)}</span>
+          <span className="text-gray-500">updated {fmtIso(task.updated_at)}</span>
         </span>
       );
     }
@@ -639,7 +654,7 @@ function TaskCard({
             )}
           </div>
         </div>
-        {(task.body || (task.status === "done" && task.summary)) && (
+        {(task.body || ((task.status === "done" || (isSaved && task.status === "on_hold")) && task.summary)) && (
           <button type="button" onClick={() => setOpen((o) => !o)} className="mt-2 text-xs text-accent hover:underline">
             {open ? "Hide details" : "Show details"}
           </button>
@@ -651,9 +666,11 @@ function TaskCard({
                 {task.body}
               </pre>
             )}
-            {task.status === "done" && task.summary && (
+            {(task.status === "done" || (isSaved && task.status === "on_hold")) && task.summary && (
               <div className="rounded-lg bg-emerald-50 p-2 dark:bg-emerald-950/40">
-                <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">AI summary</p>
+                <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                  {task.status === "done" ? "AI summary" : "Last run summary"}
+                </p>
                 <pre className="whitespace-pre-wrap text-xs text-emerald-800 dark:text-emerald-300">{task.summary}</pre>
               </div>
             )}
