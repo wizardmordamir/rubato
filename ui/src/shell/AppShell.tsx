@@ -7,7 +7,7 @@
 // scope the nav. See the plugin-system plan (Stage 4).
 
 import type { UiPage } from "@shared/ui";
-import { ScrollToTopButton } from "cwip/react";
+import { PageBottom, ScrollToTopButton, useKeyboardInset } from "cwip/react";
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { appBrand, appShowSearch } from "../brand";
@@ -46,6 +46,7 @@ export interface AppShellProps {
 
 export function AppShell({ accent, label = appBrand(), pages, showSearch = appShowSearch(), children }: AppShellProps) {
   const live = useLive();
+  useKeyboardInset();
 
   // Mobile nav drawer: hidden off-canvas below `md`, always-on static at `md+`.
   const [navOpen, setNavOpen] = useState(false);
@@ -106,6 +107,7 @@ export function AppShell({ accent, label = appBrand(), pages, showSearch = appSh
           <div className="h-full w-full">
             <AppBreadcrumbs />
             {children}
+            <PageBottom />
           </div>
         </main>
       </div>
