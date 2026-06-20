@@ -341,9 +341,10 @@ export function TaskqPage() {
                     />,
                   ];
                 }
-                // Split on_hold: saved tasks get their own section; everything else stays in On hold.
-                const savedTasks = allTasks.filter((t) => t.is_saved === 1);
-                const holdTasks = allTasks.filter((t) => t.is_saved !== 1);
+                // Split on_hold: saved tasks and templates (things we store to re-run) get their own
+                // section; everything else stays in On hold (waiting on something).
+                const savedTasks = allTasks.filter((t) => t.is_saved === 1 || t.is_template === 1);
+                const holdTasks = allTasks.filter((t) => t.is_saved !== 1 && t.is_template !== 1);
                 const sharedProps = {
                   status: "on_hold" as TaskqStatus,
                   reorderable: true,
