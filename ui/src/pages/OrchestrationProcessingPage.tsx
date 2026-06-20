@@ -6,6 +6,7 @@ import {
   CategoryDonut,
   ChartThemeProvider,
   chartThemeFor,
+  DisclosureButton,
   type DonutSlice,
   formatMs,
   StatTile,
@@ -528,16 +529,15 @@ function RecentRows({ rows, total }: { rows: OrchTimingRow[]; total: number }) {
   if (!rows.length) return null;
   return (
     <div className={`mt-4 ${CARD_CLASS}`}>
-      <button
-        type="button"
-        className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-gray-700 dark:text-gray-300"
-        onClick={() => setOpen((o) => !o)}
+      <DisclosureButton
+        open={open}
+        onToggle={() => setOpen((o) => !o)}
+        className="px-4 py-3 text-sm font-semibold text-gray-700 dark:text-gray-300"
       >
         <span>
           Recent events <span className="font-normal text-gray-400">({rows.length} shown of {total})</span>
         </span>
-        <span className="text-gray-400">{open ? "▲" : "▼"}</span>
-      </button>
+      </DisclosureButton>
       {open && (
         <div className="overflow-auto border-t border-gray-200 dark:border-gray-800">
           <table className="w-full text-sm">

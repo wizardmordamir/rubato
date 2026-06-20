@@ -4,6 +4,7 @@ import {
   CategoryBars,
   ChartThemeProvider,
   chartThemeFor,
+  DisclosureButton,
   DragHandle,
   DropIndicator,
   ModalShell,
@@ -2019,11 +2020,7 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
 
       {/* Ready task eligibility */}
       <div className={`${CARD_CLASS} p-3`}>
-        <button
-          type="button"
-          className="mb-2 flex w-full items-center justify-between gap-2 text-left"
-          onClick={() => setReadyOpen((o) => !o)}
-        >
+        <DisclosureButton open={readyOpen} onToggle={() => setReadyOpen((o) => !o)} className="mb-2">
           <Tooltip
             multiline
             content="Tasks currently in 'ready' status and eligible for the next drain pass. A task is unclaimable when no worker slot can serve its model requirement (Fleet mode mismatch). Fix by adding the required model to a fleet tier, or switch to Flat mode."
@@ -2038,8 +2035,7 @@ function CapacityPanel({ onGoToSettings }: { onGoToSettings: () => void }) {
               )
             </div>
           </Tooltip>
-          <span className="text-xs text-gray-400">{readyOpen ? "▼" : "▶"}</span>
-        </button>
+        </DisclosureButton>
 
         {readyOpen && cap.totalReady === 0 ? (
           <p className="text-xs text-gray-400">No ready tasks — queue is empty or all tasks are blocked/on hold.</p>
