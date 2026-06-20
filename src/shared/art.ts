@@ -121,3 +121,16 @@ export function normalizeArtStyles(styles: string[] | undefined): string[] {
   const withEngine = chosen.includes(QUALITY_ENGINE_STYLE) ? chosen : [QUALITY_ENGINE_STYLE, ...chosen];
   return [...new Set(withEngine)];
 }
+
+/**
+ * Gentler cleanup for the user's *configured* default style stack (the tuning
+ * page), which may legitimately reference live engine styles beyond the curated
+ * 20. Unlike {@link normalizeArtStyles} it does NOT drop unknown names (the picker
+ * only offers real ones) and does NOT force the quality engine — so the user can
+ * deliberately remove "Fooocus V2". It only trims, drops blanks, dedupes, caps the
+ * count, and falls back to the default stack when the selection is empty.
+ */
+export function cleanStyleStack(styles: string[] | undefined, max = 16): string[] {
+  const cleaned = [...new Set((styles ?? []).map((s) => s.trim()).filter(Boolean))].slice(0, max);
+  return cleaned.length ? cleaned : DEFAULT_ART_STYLES;
+}

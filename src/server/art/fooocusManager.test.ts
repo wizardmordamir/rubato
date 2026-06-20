@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { fooocusServerView, type FooocusServerStatus } from '../../shared/fooocus';
+import { type FooocusServerStatus, fooocusServerView } from '../../shared/fooocus';
 import { resolveFooocusSpec } from './fooocusManager';
 
 /** Build an `exists` predicate from an explicit set of present paths. */
@@ -64,19 +64,49 @@ describe('resolveFooocusSpec — discovery', () => {
     expect(spec.args).toEqual(['main.py', '--extra']);
   });
 
-  test('a bare python command override is left for PATH lookup, not absolutized', () => {
-    const spec = resolveFooocusSpec('api', { python: 'python3.11' }, {
-      candidateDirs: ['/opt/real/Fooocus-API'],
-      exists: existsFromSet(['/opt/real/Fooocus-API/main.py']),
+  test('extraArgs (memory/VRAM flags) append after base + override args, in order', () => {
+    const spec = resolveFooocusSpec(
+      'api',
+      { args: ['--queue-size', '8'] },
+      {
+        candidateDirs: ['/opt/real/Fooocus-API'],
+        exists: existsFromSet(['/opt/real/Fooocus-API/main.py']),
+        extraArgs: ['--always-low-vram', '--all-in-fp16'],
+      },
+    );
+    expect(spec.args).toEqual(['main.py', '--queue-size', '8', '--always-low-vram', '--all-in-fp16']);
+  });
+
+  test('ui: extraArgs append after the --port pair', () => {
+    const spec = resolveFooocusSpec('ui', undefined, {
+      candidateDirs: ['/opt/real/Fooocus'],
+      exists: existsFromSet(['/opt/real/Fooocus/launch.py']),
+      extraArgs: ['--always-low-vram'],
     });
+    expect(spec.args).toEqual(['launch.py', '--port', '7865', '--always-low-vram']);
+  });
+
+  test('a bare python command override is left for PATH lookup, not absolutized', () => {
+    const spec = resolveFooocusSpec(
+      'api',
+      { python: 'python3.11' },
+      {
+        candidateDirs: ['/opt/real/Fooocus-API'],
+        exists: existsFromSet(['/opt/real/Fooocus-API/main.py']),
+      },
+    );
     expect(spec.python).toBe('python3.11'); // NOT resolved to a cwd-relative path
   });
 
   test('a python override that is a path is expanded', () => {
-    const spec = resolveFooocusSpec('api', { python: '/usr/bin/python3' }, {
-      candidateDirs: ['/opt/real/Fooocus-API'],
-      exists: existsFromSet(['/opt/real/Fooocus-API/main.py']),
-    });
+    const spec = resolveFooocusSpec(
+      'api',
+      { python: '/usr/bin/python3' },
+      {
+        candidateDirs: ['/opt/real/Fooocus-API'],
+        exists: existsFromSet(['/opt/real/Fooocus-API/main.py']),
+      },
+    );
     expect(spec.python).toBe('/usr/bin/python3');
   });
 

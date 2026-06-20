@@ -34,6 +34,10 @@ export interface DiffusionRequest {
   seed?: number;
   /** Base checkpoint filename override (must exist in the server's models dir). */
   baseModel?: string;
+  /** Refiner checkpoint filename, or "None" to disable (a real memory lever). fooocus-only. */
+  refinerModel?: string;
+  /** Refiner switch point (0.1–1.0). fooocus-only. */
+  refinerSwitch?: number;
 }
 
 /** One generated image plus the seed the backend actually used (for reproducibility). */
@@ -157,19 +161,30 @@ async function fooocus(baseUrl: string, req: DiffusionRequest, deps: DiffusionDe
     image_seed: req.seed ?? -1,
     require_base64: true,
     async_process: false,
+    // Headless engine: never render progress previews or keep intermediate image
+    // buffers — they only feed a live UI and cost memory we want back (the user's
+    // 32 GB-RAM problem). The final image is unaffected.
+    advanced_params: { disable_preview: true, disable_intermediate_results: true },
   };
   if (req.styles?.length) body.style_selections = req.styles;
   if (req.performance) body.performance_selection = req.performance;
   if (req.guidanceScale != null) body.guidance_scale = req.guidanceScale;
   if (req.sharpness != null) body.sharpness = req.sharpness;
   if (req.baseModel) body.base_model_name = req.baseModel;
+  if (req.refinerModel) body.refiner_model_name = req.refinerModel;
+  if (req.refinerSwitch != null) body.refiner_switch = req.refinerSwitch;
 
   const res = await diffusionFetch(
     doFetch,
     // The plain text-to-image endpoint is /v1 (the /v2 twin is "…-with-ip", for
     // image prompts only). Both take the same CommonRequest body.
     `${trimUrl(baseUrl)}/v1/generation/text-to-image`,
-    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: deps.signal },
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: deps.signal,
+    },
     baseUrl,
   );
   const data = (await res.json()) as FooocusImageResult[];

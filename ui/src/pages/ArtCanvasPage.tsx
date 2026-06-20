@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ART_PERFORMANCE_OPTIONS, CURATED_ART_STYLES } from "@shared/art";
 import {
   type ArtPerformance,
@@ -146,7 +146,14 @@ export function ArtCanvasPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeading title="Art Canvas" />
+      <PageHeading
+        title="Art Canvas"
+        actions={
+          <Link to="/art-tuning" className={`${BTN_GHOST_CLASS} px-2 py-0.5 text-xs`}>
+            ⚙ Tuning
+          </Link>
+        }
+      />
 
       <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-[minmax(320px,420px)_1fr]">
         {/* Left: inputs */}

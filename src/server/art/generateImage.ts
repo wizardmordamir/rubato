@@ -8,10 +8,17 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { clampNumber, DEFAULT_PERFORMANCE, type FooocusPerformance, normalizeArtStyles, normalizePerformance } from '../../shared/art';
 import { enrichPrompt } from '../../lib/ai/promptEnricher';
 import type { ArtBackend, ArtPresetType } from '../../lib/appApis';
 import { GENERATED_ASSETS_DIR, loadConfig } from '../../lib/config';
+import {
+  clampNumber,
+  cleanStyleStack,
+  DEFAULT_PERFORMANCE,
+  type FooocusPerformance,
+  normalizeArtStyles,
+  normalizePerformance,
+} from '../../shared/art';
 import type { ArtGeneration } from '../../shared/types';
 import { insertArtGeneration, listArtGenerations } from '../db';
 import { DEFAULT_BACKEND_URL, type DiffusionDeps, generateImageBuffer } from './diffusion';
@@ -33,6 +40,11 @@ export interface ResolvedArtConfig {
   guidanceScale: number;
   sharpness: number;
   baseModel?: string;
+  refinerModel?: string;
+  refinerSwitch: number;
+  /** Default generation size when a request doesn't override it. */
+  width: number;
+  height: number;
   negativePrompt: string;
 }
 
@@ -50,11 +62,16 @@ export async function resolveArtConfig(): Promise<ResolvedArtConfig> {
     backend,
     url: art.url ?? DEFAULT_BACKEND_URL[backend],
     steps: art.steps ?? 4,
-    styles: normalizeArtStyles(art.styles),
+    // The configured default may include live engine styles, so clean (not curated-filter) it.
+    styles: cleanStyleStack(art.styles),
     performance: art.performance ?? DEFAULT_PERFORMANCE,
     guidanceScale: art.guidanceScale ?? 4.0,
     sharpness: art.sharpness ?? 2.0,
     baseModel: art.baseModel,
+    refinerModel: art.refinerModel,
+    refinerSwitch: clampNumber(art.refinerSwitch, 0.1, 1.0) ?? 0.8,
+    width: clampNumber(art.width, 256, 2048) ?? 1024,
+    height: clampNumber(art.height, 256, 2048) ?? 1024,
     negativePrompt: art.negativePrompt ?? '',
   };
 }
@@ -98,6 +115,10 @@ export interface GenerateArtInput {
   seed?: number;
   /** Base checkpoint override. */
   baseModel?: string;
+  /** Refiner checkpoint override, or "None" to disable. */
+  refinerModel?: string;
+  /** Refiner switch point override (0.1–1.0). */
+  refinerSwitch?: number;
 }
 
 export interface GenerateArtResult {
@@ -134,8 +155,10 @@ export async function generateArt(input: GenerateArtInput, deps: DiffusionDeps =
   if (!cfg.enabled) throw new Error('Art generation is disabled (set `art.enabled` in ~/.rubato/config.json).');
 
   const appId = sanitizeAppId(input.appId);
-  const width = input.width ?? 1024;
-  const height = input.height ?? 1024;
+  // Fall back to the configured default size (a memory/speed lever) before the
+  // hard 1024² floor, so lowering `art.width/height` shrinks unspecified requests.
+  const width = input.width ?? cfg.width;
+  const height = input.height ?? cfg.height;
 
   // Positive prompt: preset modifiers enrich the subject. Negative prompt: the
   // caller's override (the co-pilot crafts its own) else the preset's, with the
@@ -146,12 +169,16 @@ export async function generateArt(input: GenerateArtInput, deps: DiffusionDeps =
 
   // Validate/clamp untrusted inputs (the route forwards raw body values) so a bad
   // value falls back to a sane default rather than reaching the engine as a 400.
-  const styles = normalizeArtStyles(input.styles ?? cfg.styles);
+  // A per-request override is untrusted → curated-filter it; otherwise use the
+  // already-cleaned configured default (which may carry live engine styles).
+  const styles = input.styles ? normalizeArtStyles(input.styles) : cfg.styles;
   const performance = normalizePerformance(input.performance) ?? cfg.performance;
   const guidanceScale = clampNumber(input.guidanceScale, 1, 30) ?? cfg.guidanceScale;
   const sharpness = clampNumber(input.sharpness, 0, 30) ?? cfg.sharpness;
   const requestSeed = input.seed != null ? clampNumber(Math.trunc(input.seed), -1, 2_147_483_647) : undefined;
   const baseModel = input.baseModel ?? cfg.baseModel;
+  const refinerModel = input.refinerModel ?? cfg.refinerModel;
+  const refinerSwitch = clampNumber(input.refinerSwitch, 0.1, 1.0) ?? cfg.refinerSwitch;
 
   // Visible in the server log so an agent/user can see exactly what was synthesized.
   console.log(`[art] ${cfg.backend} ${width}x${height} ${performance} [${styles.join(', ')}] → ${prompt}`);
@@ -159,7 +186,21 @@ export async function generateArt(input: GenerateArtInput, deps: DiffusionDeps =
   const { image, seed } = await generateImageBuffer(
     cfg.backend,
     cfg.url,
-    { prompt, negativePrompt, width, height, steps: cfg.steps, styles, performance, guidanceScale, sharpness, seed: requestSeed, baseModel },
+    {
+      prompt,
+      negativePrompt,
+      width,
+      height,
+      steps: cfg.steps,
+      styles,
+      performance,
+      guidanceScale,
+      sharpness,
+      seed: requestSeed,
+      baseModel,
+      refinerModel,
+      refinerSwitch,
+    },
     { signal: deps.signal ?? AbortSignal.timeout(GENERATION_TIMEOUT_MS), fetch: deps.fetch },
   );
 

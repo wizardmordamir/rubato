@@ -40,6 +40,7 @@ function buildNodes(): Record<string, BreadcrumbNode> {
     { key: "/automations/:id", label: "Automation", parent: "/automations" },
     { key: "/automations/:id/edit", label: "Edit", parent: "/automations" },
     { key: "/excel-automations/:id", label: "Excel Automation", parent: "/excel" },
+    { key: "/art-tuning", label: "Fooocus Tuning", parent: "/chat" },
   ];
   for (const n of detail) nodes[n.key] = n;
   return nodes;

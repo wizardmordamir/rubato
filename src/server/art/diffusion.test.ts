@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { DiffusionOfflineError, DiffusionTimeoutError, type DiffusionRequest, generateImageBuffer } from './diffusion';
+import { DiffusionOfflineError, type DiffusionRequest, DiffusionTimeoutError, generateImageBuffer } from './diffusion';
 
 const req: DiffusionRequest = {
   prompt: 'a wizard',
@@ -39,7 +39,12 @@ describe('a1111 adapter', () => {
 
   test('forwards seed + guidance and parses the seed from info', async () => {
     const { fetch, calls } = jsonFetch({ images: [PNG_B64], info: JSON.stringify({ seed: 4242 }) });
-    const { seed } = await generateImageBuffer('a1111', 'http://x', { ...req, seed: 4242, guidanceScale: 6 }, { fetch });
+    const { seed } = await generateImageBuffer(
+      'a1111',
+      'http://x',
+      { ...req, seed: 4242, guidanceScale: 6 },
+      { fetch },
+    );
     const sent = JSON.parse(calls[0].init?.body as string);
     expect(sent.seed).toBe(4242);
     expect(sent.cfg_scale).toBe(6);
@@ -57,6 +62,29 @@ describe('fooocus adapter', () => {
     expect(sent.aspect_ratios_selection).toBe('1216*832');
     expect(sent.require_base64).toBe(true);
     expect(sent.image_seed).toBe(-1); // random when no seed given
+    // Headless engine: previews + intermediate buffers are disabled to save memory.
+    expect(sent.advanced_params).toMatchObject({ disable_preview: true, disable_intermediate_results: true });
+  });
+
+  test('forwards the refiner override (a memory lever) when provided', async () => {
+    const { fetch, calls } = jsonFetch([{ base64: PNG_B64 }]);
+    await generateImageBuffer(
+      'fooocus',
+      'http://localhost:8888',
+      { ...req, refinerModel: 'None', refinerSwitch: 0.6 },
+      { fetch },
+    );
+    const sent = JSON.parse(calls[0].init?.body as string);
+    expect(sent.refiner_model_name).toBe('None');
+    expect(sent.refiner_switch).toBe(0.6);
+  });
+
+  test('omits refiner fields when not provided (engine keeps its default)', async () => {
+    const { fetch, calls } = jsonFetch([{ base64: PNG_B64 }]);
+    await generateImageBuffer('fooocus', 'http://localhost:8888', req, { fetch });
+    const sent = JSON.parse(calls[0].init?.body as string);
+    expect(sent.refiner_model_name).toBeUndefined();
+    expect(sent.refiner_switch).toBeUndefined();
   });
 
   test('sends the full quality surface (styles, performance, guidance, sharpness, seed)', async () => {
@@ -119,7 +147,9 @@ describe('failure handling', () => {
       e.name = 'TimeoutError';
       throw e;
     }) as unknown as typeof fetch;
-    const err = await generateImageBuffer('fooocus', 'http://localhost:8888', req, { fetch: fetchStub }).catch((e) => e);
+    const err = await generateImageBuffer('fooocus', 'http://localhost:8888', req, { fetch: fetchStub }).catch(
+      (e) => e,
+    );
     expect(err).toBeInstanceOf(DiffusionTimeoutError);
     expect(err).not.toBeInstanceOf(DiffusionOfflineError);
     expect((err as Error).message).toContain('timed out');

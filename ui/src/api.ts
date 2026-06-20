@@ -1397,15 +1397,53 @@ export const deleteOllamaModel = (name: string) =>
 
 // ── Fooocus process control (chat-page panel) ────────────────────────────────
 
-import type { FooocusServerId, FooocusStatus } from "@shared/fooocus";
+import type {
+  ArtTuningState,
+  FooocusOptions,
+  FooocusServerId,
+  FooocusStats,
+  FooocusStatus,
+} from "@shared/fooocus";
 
-export type { FooocusServerId, FooocusServerStatus, FooocusStatus } from "@shared/fooocus";
+export type {
+  ArtTuningState,
+  ArtTuningValues,
+  FooocusMemoryConfig,
+  FooocusOptions,
+  FooocusServerId,
+  FooocusServerStatus,
+  FooocusStats,
+  FooocusStatus,
+  FooocusVramMode,
+  HostMemory,
+} from "@shared/fooocus";
 
 export const fetchFooocusStatus = () => getJson<FooocusStatus>("/api/art/fooocus/status");
 export const startFooocusServer = (which: FooocusServerId) =>
   postJson<FooocusStatus>(`/api/art/fooocus/${which}/start`, {});
 export const stopFooocusServer = (which: FooocusServerId) =>
   postJson<FooocusStatus>(`/api/art/fooocus/${which}/stop`, {});
+export const restartFooocusServer = (which: FooocusServerId) =>
+  postJson<FooocusStatus>(`/api/art/fooocus/${which}/restart`, {});
+
+// ── Fooocus / art tuning (the /art-tuning page) ──────────────────────────────
+
+/** A partial tuning patch: any subset of generation defaults and/or the memory block. */
+export type ArtTuningPatch = {
+  art?: Partial<ArtTuningState["art"]>;
+  memory?: ArtTuningState["memory"];
+};
+
+export const fetchArtTuning = () => getJson<ArtTuningState>("/api/art/fooocus/tuning");
+export const saveArtTuning = (patch: ArtTuningPatch) =>
+  postJson<ArtTuningState>("/api/art/fooocus/tuning", patch);
+/** Live engine discovery: installed checkpoints, LoRAs, and legal styles. */
+export const fetchFooocusOptions = () => getJson<FooocusOptions>("/api/art/fooocus/options");
+/** Host memory gauge + whether a generation is currently running. */
+export const fetchFooocusStats = () => getJson<FooocusStats>("/api/art/fooocus/stats");
+/** Unload all models + free memory now (no restart). */
+export const cleanFooocusVram = () =>
+  postJson<{ ok: boolean; message: string }>("/api/art/fooocus/clean-vram", {});
 
 // ── Vault (encrypted, master-password-gated credential store) ─────────────────
 

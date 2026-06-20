@@ -9,6 +9,7 @@
  */
 
 import type { FooocusPerformance } from '../shared/art';
+import type { FooocusMemoryConfig } from '../shared/fooocus';
 
 /** Databases an app uses (informational; extend as needed). */
 export enum Db {
@@ -454,6 +455,20 @@ export interface ArtConfig {
   sharpness?: number;
   /** Base checkpoint filename (must exist in the Fooocus models dir). Default: the server's own default. */
   baseModel?: string;
+  /**
+   * Refiner checkpoint filename, or "None" to disable the refiner entirely.
+   * Disabling it is a real MEMORY lever — a separate refiner model roughly doubles
+   * resident weights. Default: the server's own default (usually "None").
+   */
+  refinerModel?: string;
+  /** When the refiner kicks in (0.1–1.0; 1.0 ≈ never). Default 0.8 (Fooocus default). */
+  refinerSwitch?: number;
+  /**
+   * Default generation width/height when a request doesn't specify one. Lower =
+   * less memory + faster. Default 1024×1024. Must be a Fooocus-supported size.
+   */
+  width?: number;
+  height?: number;
   /** Extra negative-prompt terms appended to every generation. Default "". */
   negativePrompt?: string;
 }
@@ -487,4 +502,11 @@ export interface FooocusServerOverride {
 export interface FooocusConfig {
   api?: FooocusServerOverride;
   ui?: FooocusServerOverride;
+  /**
+   * Memory / VRAM tuning, translated into Fooocus launch flags (`memoryArgs`) and
+   * appended to BOTH servers' spawn args. The biggest lever on the "running out of
+   * RAM" problem. Changing it needs a Fooocus restart to take effect. See
+   * src/shared/fooocus.ts.
+   */
+  memory?: FooocusMemoryConfig;
 }

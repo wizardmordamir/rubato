@@ -23,32 +23,30 @@
 
 import { existsSync, mkdirSync, openSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { expandPath, loadConfig, RUBATO_HOME } from '../../lib/config';
 import type { FooocusServerOverride } from '../../lib/appApis';
-import type { FooocusServerId, FooocusServerStatus, FooocusStatus } from '../../shared/fooocus';
+import { expandPath, loadConfig, RUBATO_HOME } from '../../lib/config';
+import { type FooocusServerId, type FooocusServerStatus, type FooocusStatus, memoryArgs } from '../../shared/fooocus';
 
 /** Static per-server metadata + discovery defaults. */
-const META: Record<
-  FooocusServerId,
-  { label: string; port: number; entry: string; dirs: string[]; probePath: string }
-> = {
-  api: {
-    label: 'Fooocus API',
-    port: 8888,
-    entry: 'main.py',
-    // Known install locations, most-specific first. A candidate counts only if
-    // its entry script exists, so the empty `~/Fooocus-API` stub is skipped.
-    dirs: ['~/code/generalCode/pythonCode/Fooocus-API', '~/Fooocus-API', '~/Fooocus_API'],
-    probePath: '/ping',
-  },
-  ui: {
-    label: 'Fooocus Web UI',
-    port: 7865,
-    entry: 'launch.py',
-    dirs: ['~/code/generalCode/pythonCode/Fooocus', '~/Fooocus'],
-    probePath: '/',
-  },
-};
+const META: Record<FooocusServerId, { label: string; port: number; entry: string; dirs: string[]; probePath: string }> =
+  {
+    api: {
+      label: 'Fooocus API',
+      port: 8888,
+      entry: 'main.py',
+      // Known install locations, most-specific first. A candidate counts only if
+      // its entry script exists, so the empty `~/Fooocus-API` stub is skipped.
+      dirs: ['~/code/generalCode/pythonCode/Fooocus-API', '~/Fooocus-API', '~/Fooocus_API'],
+      probePath: '/ping',
+    },
+    ui: {
+      label: 'Fooocus Web UI',
+      port: 7865,
+      entry: 'launch.py',
+      dirs: ['~/code/generalCode/pythonCode/Fooocus', '~/Fooocus'],
+      probePath: '/',
+    },
+  };
 
 /** Fully-resolved launch spec for one server. */
 export interface FooocusSpec {
@@ -81,6 +79,8 @@ interface ResolveOpts {
   candidateDirs?: string[];
   /** Existence check (tests). Defaults to fs.existsSync. */
   exists?: (p: string) => boolean;
+  /** Extra launch flags appended last (e.g. memory/VRAM flags from `fooocus.memory`). */
+  extraArgs?: string[];
 }
 
 /**
@@ -100,9 +100,7 @@ export function resolveFooocusSpec(
   // An explicit `dir` override pins the search to that one location (no silent
   // fallback to a different discovered install); otherwise probe known dirs.
   const candidateDirs = override?.dir ? [override.dir] : (opts.candidateDirs ?? meta.dirs);
-  const candidates = candidateDirs
-    .filter((d): d is string => typeof d === 'string' && d.trim() !== '')
-    .map(expandPath);
+  const candidates = candidateDirs.filter((d): d is string => typeof d === 'string' && d.trim() !== '').map(expandPath);
   const dir = candidates.find((d) => exists(resolve(d, entry))) ?? null;
 
   const venvPython = dir ? resolve(dir, '.venv/bin/python3') : null;
@@ -113,8 +111,10 @@ export function resolveFooocusSpec(
       : (opts.fallbackPython ?? 'python3');
 
   // Gradio needs an explicit --port; the API takes its port from its own config.
+  // Memory/VRAM flags (opts.extraArgs) go last so an explicit `args` override can
+  // still precede them; both Fooocus and Fooocus-API share the same arg parser.
   const baseArgs = id === 'ui' ? [entry, '--port', String(port)] : [entry];
-  const args = [...baseArgs, ...(override?.args ?? [])];
+  const args = [...baseArgs, ...(override?.args ?? []), ...(opts.extraArgs ?? [])];
 
   return { id, label: meta.label, port, url: `http://localhost:${port}`, probePath: meta.probePath, dir, python, args };
 }
@@ -122,11 +122,13 @@ export function resolveFooocusSpec(
 /** Resolve both servers. The UI borrows the API's venv python when it lacks one. */
 async function resolveSpecs(): Promise<Record<FooocusServerId, FooocusSpec>> {
   const cfg = (await loadConfig()).fooocus ?? {};
-  const api = resolveFooocusSpec('api', cfg.api);
+  // Memory/VRAM flags apply to whichever Fooocus process runs — append to both.
+  const extraArgs = memoryArgs(cfg.memory);
+  const api = resolveFooocusSpec('api', cfg.api, { extraArgs });
   // The standalone Fooocus dir usually has no venv of its own; the API's venv
   // (torch/gradio installed) is the interpreter that actually works here.
   const apiVenv = api.python.endsWith('/.venv/bin/python3') ? api.python : null;
-  const ui = resolveFooocusSpec('ui', cfg.ui, { fallbackPython: apiVenv });
+  const ui = resolveFooocusSpec('ui', cfg.ui, { fallbackPython: apiVenv, extraArgs });
   return { api, ui };
 }
 
@@ -195,7 +197,8 @@ export async function startFooocus(id: FooocusServerId): Promise<FooocusStatus> 
   if (isManaged(id)) return getFooocusStatus(); // spawned, still booting
 
   if (!spec.dir) {
-    lastError[id] = `${spec.label} isn't installed where rubato can find it. Set fooocus.${id}.dir in ~/.rubato/config.json.`;
+    lastError[id] =
+      `${spec.label} isn't installed where rubato can find it. Set fooocus.${id}.dir in ~/.rubato/config.json.`;
     return getFooocusStatus();
   }
 
@@ -262,4 +265,34 @@ export async function stopFooocus(id: FooocusServerId): Promise<FooocusStatus> {
     lastError[id] = `${spec.label} was started outside rubato — stop it where you launched it.`;
   }
   return getFooocusStatus();
+}
+
+/**
+ * Restart a server so newly-saved memory/VRAM launch flags take effect. Only a
+ * process rubato manages can be cycled: an external instance is refused (same
+ * policy as stop), and a stopped server is simply (re)started with the new args.
+ * Waits for the old process to release its port before respawning, so the start's
+ * own port-probe doesn't see the dying instance and skip the launch.
+ */
+export async function restartFooocus(id: FooocusServerId): Promise<FooocusStatus> {
+  const spec = (await resolveSpecs())[id];
+  const managed = isManaged(id);
+  const up = await probe(spec);
+
+  // Running but not ours → can't cycle it (we never started it).
+  if (up && !managed) {
+    lastError[id] = `${spec.label} was started outside rubato — restart it where you launched it.`;
+    return getFooocusStatus();
+  }
+
+  if (managed) {
+    await stopFooocus(id);
+    // Wait (bounded) for the port to free up. stopFooocus SIGKILLs after 4s, so
+    // ~6s is enough headroom; if it's still up, startFooocus will no-op and the
+    // user can retry rather than us spawning a doomed duplicate.
+    for (let i = 0; i < 12 && (await probe(spec, 500)); i++) {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  return startFooocus(id);
 }

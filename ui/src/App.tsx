@@ -9,6 +9,7 @@ import { AppTemplatesPage } from "./pages/AppTemplatesPage";
 import { AutomationsPage } from "./pages/AutomationsPage";
 import { AutomationEnvironmentsPage } from "./pages/AutomationEnvironmentsPage";
 import { ArtCanvasPage } from "./pages/ArtCanvasPage";
+import { ArtTuningPage } from "./pages/ArtTuningPage";
 import { BoardPage } from "./pages/BoardPage";
 import { BuilderPage } from "./pages/BuilderPage";
 import { ChatPage } from "./pages/ChatPage";
@@ -132,6 +133,8 @@ export function App() {
           <Route key="auto-edit" path="/automations/:id/edit" element={<BuilderPage />} />,
         ]}
         {excelOn && <Route key="xa-detail" path="/excel-automations/:id" element={<AutomationBuilderPage />} />}
+        {/* Fooocus tuning — a sub-page reached from Chat (Ask) and the Art Canvas. */}
+        {(pages.art || pages.ask) && <Route key="art-tuning" path="/art-tuning" element={<ArtTuningPage />} />}
         {adminOn && <Route path="/admin" element={<AdminPage />} />}
         {/* Unknown or disabled page → the first enabled page (or Config) —
             but NOT while the toggles are still loading, or a deep link to a

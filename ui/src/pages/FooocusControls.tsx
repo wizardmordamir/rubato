@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { type FooocusServerId, type FooocusServerStatus, fooocusServerView } from "@shared/fooocus";
 import { fetchFooocusStatus, startFooocusServer, stopFooocusServer } from "../api";
-import { Badge, CARD_CLASS, Switch, Tooltip } from "../components";
+import { Badge, BTN_GHOST_CLASS, CARD_CLASS, Switch, Tooltip } from "../components";
 import { useToast } from "../toast";
 
 /**
@@ -88,6 +89,16 @@ export function FooocusControls() {
           </div>
         );
       })}
+
+      {/* Tune generation quality, speed, and memory/VRAM usage. */}
+      <Tooltip
+        multiline
+        content="Tune art generation: quality vs speed, and memory/VRAM settings to stop Fooocus running you out of RAM."
+      >
+        <Link to="/art-tuning" className={`${BTN_GHOST_CLASS} ml-auto px-2 py-1 text-xs`}>
+          ⚙ Tune
+        </Link>
+      </Tooltip>
     </div>
   );
 }
