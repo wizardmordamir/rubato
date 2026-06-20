@@ -7,6 +7,7 @@ const KIND_COLOR: Record<TraceStep["kind"], string> = {
   planner: "bg-violet-400",
   llm: "bg-amber-400",
   tool: "bg-emerald-400",
+  vision: "bg-fuchsia-400",
   answer: "bg-accent",
 };
 
