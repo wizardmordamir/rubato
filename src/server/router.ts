@@ -84,6 +84,7 @@ import {
 import { createAppTag, getAppTags, isTagAction, runAppTagAction } from './appTags';
 import { DiffusionOfflineError } from './art/diffusion';
 import { appAssetsDir, generateArt, listAssets } from './art/generateImage';
+import { handleFooocusApi } from './art/fooocusRoutes';
 import { startAsk } from './ask';
 import { handleAuthApi } from './authRoutes';
 import { handleAutomationEnvApi } from './automationEnvRoutes';
@@ -487,6 +488,9 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
 
   // Ollama daemon control (status + model management for the Orchestration tab).
   if (pathname.startsWith('/api/ollama/')) return handleOllamaApi(pathname, req);
+
+  // Fooocus process control (start/stop the API + Gradio UI from the chat panel).
+  if (pathname.startsWith('/api/art/fooocus/')) return handleFooocusApi(pathname, req);
 
   // Shell aliases (user-defined name→command pairs, system shell config setup, ca export/import).
   if (pathname === '/api/shell-aliases' || pathname.startsWith('/api/shell-aliases/'))

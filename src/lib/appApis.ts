@@ -439,3 +439,34 @@ export interface ArtConfig {
   /** Sampling steps (FLUX.1-schnell is happy at 4). Default 4. */
   steps?: number;
 }
+
+/**
+ * Optional per-machine overrides for one Fooocus server the chat-page control
+ * panel can start/stop. Everything is optional — sensible defaults are
+ * auto-discovered (the install dir is found by probing known locations; the
+ * Python interpreter defaults to the dir's own `.venv/bin/python3`). Only set a
+ * field when discovery guesses wrong for your machine.
+ */
+export interface FooocusServerOverride {
+  /** Install directory (the one holding the entry script). Tilde-expanded. */
+  dir?: string;
+  /** Python interpreter to launch with (absolute path or a PATH name). */
+  python?: string;
+  /** Port the server listens on (api → 8888, ui → 7865 by default). */
+  port?: number;
+  /** Entry script filename (api → main.py, ui → launch.py by default). */
+  entry?: string;
+  /** Extra launch args appended after the entry script. */
+  args?: string[];
+}
+
+/**
+ * Local Fooocus process control (`~/.rubato/config.json` → `fooocus`). Lets the
+ * chat-page panel start/stop the Fooocus-API (`api`, art-engine backend) and the
+ * standalone Gradio web UI (`ui`). Both blocks are optional overrides over
+ * auto-discovery — see {@link FooocusServerOverride}.
+ */
+export interface FooocusConfig {
+  api?: FooocusServerOverride;
+  ui?: FooocusServerOverride;
+}

@@ -15,6 +15,7 @@ import type { UiConfig, UiConfigPatch } from '../shared/ui';
 import type {
   AiGlobalConfig,
   ArtConfig,
+  FooocusConfig,
   JenkinsGlobalConfig,
   OpenshiftGlobalConfig,
   ServiceGlobalConfig,
@@ -108,6 +109,8 @@ export interface RubatoConfig {
   ai?: AiGlobalConfig;
   /** Local art/image generation settings (diffusion backend, output). */
   art?: ArtConfig;
+  /** Local Fooocus process control (start/stop the API + Gradio UI from chat). */
+  fooocus?: FooocusConfig;
   /** Web-UI page enablement + Admin gate (see src/shared/ui.ts). */
   ui?: UiConfig;
   /** Custom scripts + pipelines settings (the run dir, discovered scripts). */
@@ -255,6 +258,7 @@ export async function loadConfig(): Promise<RubatoConfig> {
       harness: raw.harness,
       ai: raw.ai,
       art: raw.art,
+      fooocus: raw.fooocus,
       ui: raw.ui,
       // Pick only known fields (don't spread) so a removed knob left in an old
       // config.json — e.g. a stale `automations.scriptsDir` — is dropped on load

@@ -20,6 +20,7 @@ import { useConfirm } from "../confirm";
 import { DebugToggle } from "../DebugToggle";
 import { useToast } from "../toast";
 import { Message } from "./chat/Message";
+import { FooocusControls } from "./FooocusControls";
 
 const APP_KEY = "rubato.chat.app";
 const FSROOT_KEY = "rubato.chat.fsRoot";
@@ -344,6 +345,9 @@ export function ChatPage() {
           </>
         )}
       </div>
+
+      {/* Local Fooocus servers — start/stop the art API + Gradio UI from here. */}
+      <FooocusControls />
 
       {/* Conversation history for this mode (app or general) */}
       {app !== null && convos.length > 0 && (

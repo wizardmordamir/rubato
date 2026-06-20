@@ -1362,6 +1362,18 @@ export const startOllamaDaemon = () => postJson<OllamaStatus>("/api/ollama/serve
 export const deleteOllamaModel = (name: string) =>
   sendJson<{ deleted: boolean }>("DELETE", `/api/ollama/models/${encodeURIComponent(name)}`, {});
 
+// ── Fooocus process control (chat-page panel) ────────────────────────────────
+
+import type { FooocusServerId, FooocusStatus } from "@shared/fooocus";
+
+export type { FooocusServerId, FooocusServerStatus, FooocusStatus } from "@shared/fooocus";
+
+export const fetchFooocusStatus = () => getJson<FooocusStatus>("/api/art/fooocus/status");
+export const startFooocusServer = (which: FooocusServerId) =>
+  postJson<FooocusStatus>(`/api/art/fooocus/${which}/start`, {});
+export const stopFooocusServer = (which: FooocusServerId) =>
+  postJson<FooocusStatus>(`/api/art/fooocus/${which}/stop`, {});
+
 // ── Vault (encrypted, master-password-gated credential store) ─────────────────
 
 import type { VaultItem as BVaultItem, VaultItemInput as BVaultItemInput, VaultStatus } from "@shared/vault";
