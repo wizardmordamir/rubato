@@ -30,6 +30,7 @@ import type {
 import type {
   AppDetails,
   ArchiveRecord,
+  ArtGeneration,
   AskAccepted,
   AskAttachment,
   CommandArg,
@@ -1056,14 +1057,32 @@ export const ask = (
   attachments?: AskAttachment[],
   fsRoot?: string,
   images?: string[],
-) => postJson<AskAccepted>("/api/ask", { app: app || undefined, question, conversationId, attachments, fsRoot, images });
+  chatMode?: ChatMode,
+) =>
+  postJson<AskAccepted>("/api/ask", {
+    app: app || undefined,
+    question,
+    conversationId,
+    attachments,
+    fsRoot,
+    images,
+    chatMode,
+  });
+
+/** Chat sub-mode. "art-copilot" runs the collaborative image-generation agent. */
+export type ChatMode = "art-copilot";
 
 // ── Local art generation ─────────────────────────────────────────────────────
 export type ArtPreset = "web_ui" | "game_art_2d" | "abstract_texture" | "app_icon" | "raw_creative";
+export type ArtPerformance = "Quality" | "Speed";
+
+export type { ArtGeneration } from "@shared/types";
 
 export interface GeneratedAsset {
   fileName: string;
   url: string;
+  /** Full generation metadata, when recorded in the ledger. */
+  meta?: ArtGeneration;
 }
 
 export interface GenerateArtResult {
@@ -1073,6 +1092,14 @@ export interface GenerateArtResult {
   fileName: string;
   appId: string;
   enrichedPrompt: string;
+  negativePrompt: string;
+  styles: string[];
+  performance: string;
+  width: number;
+  height: number;
+  preset: ArtPreset;
+  backend: string;
+  seed?: number;
 }
 
 export const generateArt = (input: {
@@ -1081,6 +1108,12 @@ export const generateArt = (input: {
   preset: ArtPreset;
   width?: number;
   height?: number;
+  negativePrompt?: string;
+  styles?: string[];
+  performance?: ArtPerformance;
+  guidanceScale?: number;
+  sharpness?: number;
+  seed?: number;
 }) => postJson<GenerateArtResult>("/api/generate-image", input);
 
 export const listGeneratedAssets = (appId: string) =>

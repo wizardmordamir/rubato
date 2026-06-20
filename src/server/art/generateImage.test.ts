@@ -22,7 +22,7 @@ describe('sanitizeAppId', () => {
 });
 
 describe('generateArt', () => {
-  test('enriches, writes a PNG under the app dir, and lists it', async () => {
+  test('enriches, writes a PNG, applies default quality styles, and records the ledger', async () => {
     // RUBATO_HOME is isolated to a temp dir by the test preload, so this writes there.
     const result = await generateArt(
       { appId: 'demo-app', prompt: 'a gear icon', preset: 'app_icon', width: 1024, height: 1024 },
@@ -34,13 +34,38 @@ describe('generateArt', () => {
     expect(result.url).toBe(`/api/generated-assets/demo-app/${result.fileName}`);
     expect(result.enrichedPrompt).toContain('a gear icon');
     expect(result.enrichedPrompt).toContain('icon'); // preset modifiers applied
+    // Quality defaults flow through to the result.
+    expect(result.styles).toContain('Fooocus V2'); // the prompt-expansion engine is always on
+    expect(result.performance).toBe('Speed');
 
     // The bytes actually landed on disk under the app's asset dir.
     expect(result.path.startsWith(appAssetsDir('demo-app'))).toBe(true);
     expect((await readFile(result.path)).toString()).toBe('img-bytes');
 
+    // listAssets joins the on-disk file with its ledger metadata.
     const listed = await listAssets('demo-app');
-    expect(listed.some((a) => a.fileName === result.fileName)).toBe(true);
+    const item = listed.find((a) => a.fileName === result.fileName);
+    expect(item).toBeDefined();
+    expect(item?.meta?.prompt).toBe('a gear icon');
+    expect(item?.meta?.preset).toBe('app_icon');
+    expect(item?.meta?.styles).toContain('Fooocus V2');
+    expect(item?.meta?.width).toBe(1024);
+  });
+
+  test('an explicit negative prompt + styles override the preset/config defaults', async () => {
+    const result = await generateArt(
+      {
+        appId: 'demo-app',
+        prompt: 'a calm seascape',
+        preset: 'raw_creative',
+        negativePrompt: 'people, boats',
+        styles: ['Fooocus Cinematic'],
+      },
+      { fetch: fooocusFetch },
+    );
+    expect(result.negativePrompt).toContain('people, boats');
+    expect(result.styles).toContain('Fooocus Cinematic');
+    expect(result.styles).toContain('Fooocus V2'); // engine is force-included
   });
 
   test('listAssets returns [] for an app with no generated assets', async () => {

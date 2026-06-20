@@ -91,7 +91,22 @@ export function Message({ message }: { message: ChatMessage }) {
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeHighlight]}
-                components={{ pre: CodeBlock }}
+                components={{
+                  pre: CodeBlock,
+                  // Inline images (e.g. Art Co-Pilot generations) render rounded,
+                  // bounded, and clickable to open full-size in a new tab.
+                  img: ({ src, alt }) =>
+                    src ? (
+                      <a href={src} target="_blank" rel="noreferrer" className="mt-2 inline-block">
+                        <img
+                          src={src}
+                          alt={alt ?? "generated image"}
+                          loading="lazy"
+                          className="max-h-[28rem] max-w-full rounded-xl border border-gray-200 shadow-sm dark:border-gray-700"
+                        />
+                      </a>
+                    ) : null,
+                }}
               >
                 {message.content || "…"}
               </ReactMarkdown>

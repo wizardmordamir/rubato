@@ -18,6 +18,7 @@ import { isAppError } from 'cwip';
 import { parseLoose } from 'cwip/json';
 import { makeCorrelationId } from 'cwip/node';
 import { COMMANDS, commandTags } from '../commands';
+import type { FooocusPerformance } from '../shared/art';
 import { ART_PRESETS } from '../lib/ai/promptEnricher';
 import type { ArtPresetType } from '../lib/appApis';
 import {
@@ -82,7 +83,7 @@ import {
   templateDiff,
 } from './appsTemplate';
 import { createAppTag, getAppTags, isTagAction, runAppTagAction } from './appTags';
-import { DiffusionOfflineError } from './art/diffusion';
+import { DiffusionOfflineError, DiffusionTimeoutError } from './art/diffusion';
 import { appAssetsDir, generateArt, listAssets } from './art/generateImage';
 import { handleFooocusApi } from './art/fooocusRoutes';
 import { startAsk } from './ask';
@@ -1318,6 +1319,7 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
         attachments?: AskAttachment[];
         fsRoot?: string;
         images?: unknown;
+        chatMode?: string;
       };
       try {
         body = (await req.json()) as typeof body;
@@ -1353,6 +1355,7 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
             attachments: capAttachments(body.attachments),
             fsRoot,
             images: capImages(body.images),
+            chatMode: body.chatMode === 'art-copilot' ? 'art-copilot' : undefined,
           }),
           202,
         );
@@ -1362,7 +1365,19 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
     }
     case '/api/generate-image': {
       if (req.method !== 'POST') return jsonError('use POST', 405);
-      let body: { prompt?: string; preset?: string; width?: number; height?: number; appId?: string };
+      let body: {
+        prompt?: string;
+        preset?: string;
+        width?: number;
+        height?: number;
+        appId?: string;
+        negativePrompt?: string;
+        styles?: string[];
+        performance?: FooocusPerformance;
+        guidanceScale?: number;
+        sharpness?: number;
+        seed?: number;
+      };
       try {
         body = (await req.json()) as typeof body;
       } catch {
@@ -1378,11 +1393,19 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
           preset,
           width: body.width,
           height: body.height,
+          negativePrompt: body.negativePrompt,
+          styles: Array.isArray(body.styles) ? body.styles : undefined,
+          performance: body.performance,
+          guidanceScale: body.guidanceScale,
+          sharpness: body.sharpness,
+          seed: body.seed,
         });
         return json(result);
       } catch (err) {
-        // Offline diffusion server → 503 with the friendly, actionable message.
+        // Offline diffusion server → 503; a slow-model timeout → 504 — both with
+        // their own friendly, actionable message (don't conflate the two).
         if (err instanceof DiffusionOfflineError) return jsonError(err.message, 503);
+        if (err instanceof DiffusionTimeoutError) return jsonError(err.message, 504);
         return jsonError(err instanceof Error ? err.message : 'image generation failed', 500);
       }
     }

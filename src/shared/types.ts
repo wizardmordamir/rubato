@@ -417,6 +417,34 @@ export interface Health {
   commands: number;
 }
 
+/**
+ * One recorded art generation (the ledger row), surfaced to the gallery for the
+ * metadata panel + seed-based reproduction. `seed` enables regenerating the same
+ * (or a varied) image; `styles`/`performance`/`guidanceScale`/`sharpness` are the
+ * Fooocus knobs used.
+ */
+export interface ArtGeneration {
+  id: number;
+  appId: string;
+  fileName: string;
+  /** The user/subject prompt before preset/style enrichment. */
+  prompt: string;
+  /** The final positive prompt actually sent to the engine. */
+  enrichedPrompt: string;
+  negativePrompt: string;
+  preset: string;
+  styles: string[];
+  performance: string;
+  backend: string;
+  width: number;
+  height: number;
+  guidanceScale?: number;
+  sharpness?: number;
+  seed?: number;
+  model?: string;
+  generatedAt: number;
+}
+
 /** A README-like doc found at the root of an app's directory. */
 export interface AppReadme {
   /** The file name as found on disk, e.g. "README.md". */

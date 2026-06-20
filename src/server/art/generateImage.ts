@@ -8,22 +8,40 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { clampNumber, DEFAULT_PERFORMANCE, type FooocusPerformance, normalizeArtStyles, normalizePerformance } from '../../shared/art';
 import { enrichPrompt } from '../../lib/ai/promptEnricher';
 import type { ArtBackend, ArtPresetType } from '../../lib/appApis';
 import { GENERATED_ASSETS_DIR, loadConfig } from '../../lib/config';
+import type { ArtGeneration } from '../../shared/types';
+import { insertArtGeneration, listArtGenerations } from '../db';
 import { DEFAULT_BACKEND_URL, type DiffusionDeps, generateImageBuffer } from './diffusion';
 
-/** Per-request generation timeout — diffusion is slow; don't hang forever either. */
-const GENERATION_TIMEOUT_MS = 180_000;
+/**
+ * Per-request generation timeout. SDXL on Apple-Silicon MPS is slow — a single
+ * "Quality" (60-step) Fooocus generation with the V2 prompt expander runs ~3-4
+ * min — so this is generous; don't hang forever either.
+ */
+const GENERATION_TIMEOUT_MS = 300_000;
 
 export interface ResolvedArtConfig {
   enabled: boolean;
   backend: ArtBackend;
   url: string;
   steps: number;
+  styles: string[];
+  performance: FooocusPerformance;
+  guidanceScale: number;
+  sharpness: number;
+  baseModel?: string;
+  negativePrompt: string;
 }
 
-/** Resolve the art config with defaults (backend → fooocus, url → backend default, steps → 4). */
+/**
+ * Resolve the art config with quality-tuned defaults: fooocus backend, the
+ * "Fooocus V2" prompt-expansion style stack, Speed performance (Quality is
+ * available; Lightning needs an extra LoRA), and Fooocus's desktop-app guidance
+ * (4.0) + sharpness (2.0).
+ */
 export async function resolveArtConfig(): Promise<ResolvedArtConfig> {
   const art = (await loadConfig()).art ?? {};
   const backend = art.backend ?? 'fooocus';
@@ -32,6 +50,12 @@ export async function resolveArtConfig(): Promise<ResolvedArtConfig> {
     backend,
     url: art.url ?? DEFAULT_BACKEND_URL[backend],
     steps: art.steps ?? 4,
+    styles: normalizeArtStyles(art.styles),
+    performance: art.performance ?? DEFAULT_PERFORMANCE,
+    guidanceScale: art.guidanceScale ?? 4.0,
+    sharpness: art.sharpness ?? 2.0,
+    baseModel: art.baseModel,
+    negativePrompt: art.negativePrompt ?? '',
   };
 }
 
@@ -60,6 +84,20 @@ export interface GenerateArtInput {
   preset: ArtPresetType;
   width?: number;
   height?: number;
+  /** Override the negative prompt (else the preset's). Co-pilot crafts its own. */
+  negativePrompt?: string;
+  /** Fooocus style stack override (else the configured default). */
+  styles?: string[];
+  /** Performance preset override (Quality/Speed). */
+  performance?: FooocusPerformance;
+  /** Guidance/CFG override. */
+  guidanceScale?: number;
+  /** Sharpness override. */
+  sharpness?: number;
+  /** Seed for reproducible/varied output (else random). */
+  seed?: number;
+  /** Base checkpoint override. */
+  baseModel?: string;
 }
 
 export interface GenerateArtResult {
@@ -72,6 +110,18 @@ export interface GenerateArtResult {
   appId: string;
   /** The final positive prompt sent to the model (for tracking/debug). */
   enrichedPrompt: string;
+  /** The negative prompt sent. */
+  negativePrompt: string;
+  /** Fooocus style stack applied. */
+  styles: string[];
+  /** Performance preset used. */
+  performance: string;
+  width: number;
+  height: number;
+  preset: ArtPresetType;
+  backend: ArtBackend;
+  /** The seed the engine reported using (when available) — for reproduction. */
+  seed?: number;
 }
 
 /**
@@ -86,42 +136,115 @@ export async function generateArt(input: GenerateArtInput, deps: DiffusionDeps =
   const appId = sanitizeAppId(input.appId);
   const width = input.width ?? 1024;
   const height = input.height ?? 1024;
-  const { prompt, negativePrompt } = enrichPrompt(input.prompt, input.preset);
-  // Visible in the server log so an agent/user can see exactly what was synthesized.
-  console.log(`[art] ${cfg.backend} ${width}x${height} (${input.preset}) → ${prompt}`);
 
-  const bytes = await generateImageBuffer(
+  // Positive prompt: preset modifiers enrich the subject. Negative prompt: the
+  // caller's override (the co-pilot crafts its own) else the preset's, with the
+  // configured global negative folded in (deduped).
+  const { prompt, negativePrompt: presetNeg } = enrichPrompt(input.prompt, input.preset);
+  const negParts = [input.negativePrompt ?? presetNeg, cfg.negativePrompt].map((s) => s.trim()).filter(Boolean);
+  const negativePrompt = [...new Set(negParts)].join(', ');
+
+  // Validate/clamp untrusted inputs (the route forwards raw body values) so a bad
+  // value falls back to a sane default rather than reaching the engine as a 400.
+  const styles = normalizeArtStyles(input.styles ?? cfg.styles);
+  const performance = normalizePerformance(input.performance) ?? cfg.performance;
+  const guidanceScale = clampNumber(input.guidanceScale, 1, 30) ?? cfg.guidanceScale;
+  const sharpness = clampNumber(input.sharpness, 0, 30) ?? cfg.sharpness;
+  const requestSeed = input.seed != null ? clampNumber(Math.trunc(input.seed), -1, 2_147_483_647) : undefined;
+  const baseModel = input.baseModel ?? cfg.baseModel;
+
+  // Visible in the server log so an agent/user can see exactly what was synthesized.
+  console.log(`[art] ${cfg.backend} ${width}x${height} ${performance} [${styles.join(', ')}] → ${prompt}`);
+
+  const { image, seed } = await generateImageBuffer(
     cfg.backend,
     cfg.url,
-    { prompt, negativePrompt, width, height, steps: cfg.steps },
+    { prompt, negativePrompt, width, height, steps: cfg.steps, styles, performance, guidanceScale, sharpness, seed: requestSeed, baseModel },
     { signal: deps.signal ?? AbortSignal.timeout(GENERATION_TIMEOUT_MS), fetch: deps.fetch },
   );
 
   const dir = appAssetsDir(appId);
   await mkdir(dir, { recursive: true });
-  const fileName = `art_asset_${Date.now()}_${randomUUID().slice(0, 8)}.png`;
+  // 12 hex chars (48 bits) of UUID after the ms timestamp makes a same-ms filename
+  // collision (and a lost ledger row) negligible.
+  const fileName = `art_asset_${Date.now()}_${randomUUID().slice(0, 12)}.png`;
   const absPath = resolve(dir, fileName);
-  await writeFile(absPath, bytes);
+  await writeFile(absPath, image);
 
-  return { success: true, url: assetUrl(appId, fileName), path: absPath, fileName, appId, enrichedPrompt: prompt };
+  const usedSeed = seed ?? requestSeed;
+  // Record the ledger row (best-effort: a DB hiccup must not lose the image).
+  try {
+    insertArtGeneration({
+      appId,
+      fileName,
+      prompt: input.prompt,
+      enrichedPrompt: prompt,
+      negativePrompt,
+      preset: input.preset,
+      styles,
+      performance,
+      backend: cfg.backend,
+      width,
+      height,
+      guidanceScale,
+      sharpness,
+      seed: usedSeed,
+      model: baseModel,
+      generatedAt: Date.now(),
+    });
+  } catch (err) {
+    console.warn(`[art] failed to record generation ledger row: ${err instanceof Error ? err.message : err}`);
+  }
+
+  return {
+    success: true,
+    url: assetUrl(appId, fileName),
+    path: absPath,
+    fileName,
+    appId,
+    enrichedPrompt: prompt,
+    negativePrompt,
+    styles,
+    performance,
+    width,
+    height,
+    preset: input.preset,
+    backend: cfg.backend,
+    seed: usedSeed,
+  };
 }
 
 export interface AssetListItem {
   fileName: string;
   url: string;
+  /** Full generation metadata, when this image was recorded in the ledger. */
+  meta?: ArtGeneration;
 }
 
-/** List an app's generated assets, newest first (by the timestamp in the filename). */
+/**
+ * List an app's generated assets, newest first (by the timestamp in the
+ * filename), each joined with its ledger metadata when present. Images generated
+ * before the ledger existed simply have no `meta`.
+ */
 export async function listAssets(appId: string): Promise<AssetListItem[]> {
-  const dir = appAssetsDir(appId);
+  // Sanitize once up front: the ledger stores the SANITIZED app id (generateArt
+  // inserts the sanitized value), so the join key below must match it.
+  const safeId = sanitizeAppId(appId);
+  const dir = appAssetsDir(safeId);
   let names: string[];
   try {
     names = await readdir(dir);
   } catch {
     return []; // no dir yet → no assets
   }
+  const metaByFile = new Map<string, ArtGeneration>();
+  try {
+    for (const row of listArtGenerations(safeId)) metaByFile.set(row.fileName, row);
+  } catch {
+    // ledger read is best-effort enrichment; fall back to bare file listing.
+  }
   return names
     .filter((n) => n.toLowerCase().endsWith('.png'))
     .sort((a, b) => b.localeCompare(a)) // art_asset_<ts>_… → lexicographic desc ≈ newest first
-    .map((fileName) => ({ fileName, url: assetUrl(appId, fileName) }));
+    .map((fileName) => ({ fileName, url: assetUrl(safeId, fileName), meta: metaByFile.get(fileName) }));
 }

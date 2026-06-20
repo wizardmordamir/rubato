@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { completeText } from '../api/llm/complete';
 import { llmFromConfig } from '../api/llm/fromConfig';
 import type { LlmMessage, LlmProvider } from '../api/llm/types';
+import { ART_COPILOT_FINAL_INSTRUCTION, buildArtCopilotSystem } from '../lib/ai/artCopilot';
 import { formatIssuesForRepair, runCodeChecks } from '../lib/ai/codeCheck';
 import { buildGeneralPrompt, buildPrompt, isCodeQuestion } from '../lib/ai/prompt';
 import { buildRuntimeRef } from '../lib/ai/runtimeRef';
@@ -29,6 +30,7 @@ import { indexApp } from './aiIndex';
 import { retrieve } from './aiRetrieve';
 import { addMessage, createConversation, getConversation, getMessages, setConversationTitle } from './db';
 import { emit } from './events';
+import { generatePlaceholderArtwork } from './tools/artTool';
 import { Tracer } from './trace';
 
 /** Hard cap on chunks accumulated across self-ask rounds (loop backstop; scales with the larger context window). */
@@ -115,6 +117,8 @@ export interface AskInput {
   fsRoot?: string;
   /** Screenshot(s) as raw base64 (no data-URL header) — triggers the vision→code pipeline. */
   images?: string[];
+  /** Chat sub-mode. "art-copilot" runs the collaborative image-generation agent. */
+  chatMode?: 'art-copilot';
 }
 
 export interface AskResult {
@@ -154,7 +158,7 @@ export function startAsk(input: AskInput): AskResult {
   emit({ type: 'ask:started', conversationId, messageId, app: app?.name, question });
 
   // Fire-and-forget; the answer arrives over the socket.
-  streamAnswer(app, question, conversationId, messageId, attachments, fsRoot, images).catch((err) => {
+  streamAnswer(app, question, conversationId, messageId, attachments, fsRoot, images, input.chatMode).catch((err) => {
     const error = err instanceof Error ? err.message : String(err);
     // Durable, exportable record of the failure — the answer message is ephemeral
     // and lossy; the diagnostic carries the classification, stack, and HTTP context.
@@ -202,6 +206,7 @@ async function streamAnswer(
   attachments?: AskAttachment[],
   fsRoot?: string,
   images?: string[],
+  chatMode?: 'art-copilot',
 ): Promise<void> {
   // Transient progress, so the user sees activity before answer tokens flow.
   const status = (text: string) => emit({ type: 'ask:status', conversationId, messageId, text });
@@ -263,7 +268,32 @@ async function streamAnswer(
   // Tracks which gather strategy ran, for the persisted trace.
   let mode: 'agentic' | 'self-ask' | 'general';
 
-  if (!app && fsRoot) {
+  if (chatMode === 'art-copilot') {
+    // Art Co-Pilot: a collaborative image-generation agent. The model interrogates
+    // when the request is vague, crafts an SDXL-optimal prompt, then drives the
+    // Fooocus engine via the art tool and presents the result inline. Works with
+    // or without an app (the asset lands under the app folder, else __global).
+    mode = 'agentic';
+    const maxToolRounds = Math.max(2, app?.ai?.maxToolRounds ?? cfg.ai?.maxToolRounds ?? 4);
+    const gathered = await runAgenticGather({
+      app,
+      question,
+      provider,
+      model,
+      conversationId,
+      messageId,
+      maxRounds: maxToolRounds,
+      history,
+      visionRef,
+      tracer,
+      systemOverride: buildArtCopilotSystem(),
+      toolsOverride: [generatePlaceholderArtwork],
+      finalInstruction: ART_COPILOT_FINAL_INSTRUCTION,
+    });
+    messages = gathered.messages;
+    answerSources = gathered.sources;
+    toolEvents.push(...gathered.toolEvents);
+  } else if (!app && fsRoot) {
     // General + a chosen folder: let the model explore it with read-only
     // filesystem tools (no index). Picking a folder is itself the opt-in.
     mode = 'agentic';
@@ -416,7 +446,7 @@ async function streamAnswer(
   // automated checks surface issues, do exactly one self-repair turn before
   // persisting. Chat-only (not general no-repo); gated on context headroom because
   // the repair turn re-sends the first answer. codeEnhanceTsc adds the opt-in tsc pass.
-  if (codeEnhance && mode !== 'general' && isCodeQuestion(question)) {
+  if (codeEnhance && mode !== 'general' && chatMode !== 'art-copilot' && isCodeQuestion(question)) {
     if (numCtx >= 8192) {
       const { issues } = await runCodeChecks(answer, { withTsc: codeEnhanceTsc });
       if (issues.length) {

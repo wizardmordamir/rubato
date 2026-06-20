@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { DiffusionOfflineError, type DiffusionRequest, generateImageBuffer } from './diffusion';
+import { DiffusionOfflineError, DiffusionTimeoutError, type DiffusionRequest, generateImageBuffer } from './diffusion';
 
 const req: DiffusionRequest = {
   prompt: 'a wizard',
@@ -24,8 +24,8 @@ function jsonFetch(body: unknown): { fetch: typeof fetch; calls: Array<{ url: st
 describe('a1111 adapter', () => {
   test('posts to /sdapi/v1/txt2img and decodes images[0]', async () => {
     const { fetch, calls } = jsonFetch({ images: [PNG_B64] });
-    const buf = await generateImageBuffer('a1111', 'http://localhost:7860', req, { fetch });
-    expect(buf.toString()).toBe('fake-png-bytes');
+    const { image } = await generateImageBuffer('a1111', 'http://localhost:7860', req, { fetch });
+    expect(image.toString()).toBe('fake-png-bytes');
     expect(calls[0].url).toBe('http://localhost:7860/sdapi/v1/txt2img');
     const sent = JSON.parse(calls[0].init?.body as string);
     expect(sent).toMatchObject({
@@ -36,23 +36,66 @@ describe('a1111 adapter', () => {
       steps: 4,
     });
   });
+
+  test('forwards seed + guidance and parses the seed from info', async () => {
+    const { fetch, calls } = jsonFetch({ images: [PNG_B64], info: JSON.stringify({ seed: 4242 }) });
+    const { seed } = await generateImageBuffer('a1111', 'http://x', { ...req, seed: 4242, guidanceScale: 6 }, { fetch });
+    const sent = JSON.parse(calls[0].init?.body as string);
+    expect(sent.seed).toBe(4242);
+    expect(sent.cfg_scale).toBe(6);
+    expect(seed).toBe(4242);
+  });
 });
 
 describe('fooocus adapter', () => {
-  test('posts to /v2/generation/text-to-image with aspect ratio + base64 flag', async () => {
+  test('posts to /v1/generation/text-to-image with aspect ratio + base64 flag', async () => {
     const { fetch, calls } = jsonFetch([{ base64: PNG_B64 }]);
-    const buf = await generateImageBuffer('fooocus', 'http://localhost:8888/', req, { fetch });
-    expect(buf.toString()).toBe('fake-png-bytes');
-    expect(calls[0].url).toBe('http://localhost:8888/v2/generation/text-to-image');
+    const { image } = await generateImageBuffer('fooocus', 'http://localhost:8888/', req, { fetch });
+    expect(image.toString()).toBe('fake-png-bytes');
+    expect(calls[0].url).toBe('http://localhost:8888/v1/generation/text-to-image');
     const sent = JSON.parse(calls[0].init?.body as string);
     expect(sent.aspect_ratios_selection).toBe('1216*832');
     expect(sent.require_base64).toBe(true);
+    expect(sent.image_seed).toBe(-1); // random when no seed given
+  });
+
+  test('sends the full quality surface (styles, performance, guidance, sharpness, seed)', async () => {
+    const { fetch, calls } = jsonFetch([{ base64: PNG_B64, seed: '777' }]);
+    const { seed } = await generateImageBuffer(
+      'fooocus',
+      'http://localhost:8888',
+      {
+        ...req,
+        styles: ['Fooocus V2', 'Fooocus Cinematic'],
+        performance: 'Quality',
+        guidanceScale: 4.5,
+        sharpness: 3,
+        seed: 777,
+        baseModel: 'juggernautXL_v8Rundiffusion.safetensors',
+      },
+      { fetch },
+    );
+    const sent = JSON.parse(calls[0].init?.body as string);
+    expect(sent.style_selections).toEqual(['Fooocus V2', 'Fooocus Cinematic']);
+    expect(sent.performance_selection).toBe('Quality');
+    expect(sent.guidance_scale).toBe(4.5);
+    expect(sent.sharpness).toBe(3);
+    expect(sent.image_seed).toBe(777);
+    expect(sent.base_model_name).toBe('juggernautXL_v8Rundiffusion.safetensors');
+    expect(seed).toBe(777); // seed parsed back from the response
   });
 
   test('strips a data-URL header from the returned base64', async () => {
     const { fetch } = jsonFetch([{ base64: `data:image/png;base64,${PNG_B64}` }]);
-    const buf = await generateImageBuffer('fooocus', 'http://localhost:8888', req, { fetch });
-    expect(buf.toString()).toBe('fake-png-bytes');
+    const { image } = await generateImageBuffer('fooocus', 'http://localhost:8888', req, { fetch });
+    expect(image.toString()).toBe('fake-png-bytes');
+  });
+
+  test('a non-SUCCESS finish_reason throws', async () => {
+    const { fetch } = jsonFetch([{ base64: null, finish_reason: 'QUEUE_IS_FULL' }]);
+    await expect(generateImageBuffer('fooocus', 'http://localhost:8888', req, { fetch })).rejects.toThrow(
+      'QUEUE_IS_FULL',
+    );
   });
 });
 
@@ -67,6 +110,19 @@ describe('failure handling', () => {
     expect(err).toBeInstanceOf(DiffusionOfflineError);
     expect((err as Error).message).toContain('offline');
     expect((err as Error).message).toContain('8888');
+  });
+
+  test('an aborted/timed-out request is a DiffusionTimeoutError, NOT offline', async () => {
+    const fetchStub = (async () => {
+      // AbortSignal.timeout() rejects with a TimeoutError DOMException.
+      const e = new Error('The operation timed out.');
+      e.name = 'TimeoutError';
+      throw e;
+    }) as unknown as typeof fetch;
+    const err = await generateImageBuffer('fooocus', 'http://localhost:8888', req, { fetch: fetchStub }).catch((e) => e);
+    expect(err).toBeInstanceOf(DiffusionTimeoutError);
+    expect(err).not.toBeInstanceOf(DiffusionOfflineError);
+    expect((err as Error).message).toContain('timed out');
   });
 
   test('a non-OK HTTP response throws with the status', async () => {

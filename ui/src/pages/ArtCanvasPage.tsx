@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ART_PERFORMANCE_OPTIONS, CURATED_ART_STYLES } from "@shared/art";
 import {
+  type ArtPerformance,
   type ArtPreset,
   fetchApps,
   type GeneratedAsset,
@@ -16,9 +18,9 @@ import {
   FIELD_CLASS,
   PageHeading,
   Spinner,
-  Tooltip,
 } from "../components";
 import { useToast } from "../toast";
+import { ArtLightbox } from "./ArtLightbox";
 
 /** Handoff key the ChatPage reads on mount (mirrors its APP_KEY/FSROOT_KEY pattern). */
 const PENDING_IMAGES_KEY = "rubato.chat.pendingImages";
@@ -37,6 +39,12 @@ const DIMENSIONS: { label: string; width: number; height: number }[] = [
   { label: "Landscape 1216×832", width: 1216, height: 832 },
   { label: "Portrait 832×1216", width: 832, height: 1216 },
 ];
+
+type GenInput = Parameters<typeof generateArt>[0];
+
+const PRESET_VALUES = new Set<string>(PRESETS.map((p) => p.value));
+const isPreset = (p: string): p is ArtPreset => PRESET_VALUES.has(p);
+const isPerformance = (p: string): p is ArtPerformance => p === "Quality" || p === "Speed";
 
 /** Fetch an asset and convert it to a base64 data URL for the vision chat handoff. */
 async function urlToDataUrl(url: string): Promise<string> {
@@ -60,21 +68,35 @@ export function ArtCanvasPage() {
   const [prompt, setPrompt] = useState("");
   const [preset, setPreset] = useState<ArtPreset>("web_ui");
   const [dim, setDim] = useState(0);
+  // Advanced controls.
+  const [quality, setQuality] = useState<ArtPerformance>("Speed");
+  const [styles, setStyles] = useState<string[]>([]);
+  const [negative, setNegative] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // The open lightbox image (by fileName), or null.
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   const galleryKey = appId || "__global";
   const gallery = useQuery({
     queryKey: ["generated-assets", galleryKey],
     queryFn: () => listGeneratedAssets(galleryKey),
   });
+  const files = gallery.data?.files ?? [];
 
   const gen = useMutation({
-    mutationFn: () =>
+    // An optional override lets the lightbox regenerate/vary from a past image's
+    // metadata; otherwise the current form inputs drive the request.
+    mutationFn: (override?: Partial<GenInput>) =>
       generateArt({
         appId: appId || undefined,
         prompt,
         preset,
         width: DIMENSIONS[dim].width,
         height: DIMENSIONS[dim].height,
+        performance: quality,
+        styles: styles.length ? styles : undefined,
+        negativePrompt: negative.trim() || undefined,
+        ...override,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["generated-assets", galleryKey] });
@@ -88,6 +110,9 @@ export function ArtCanvasPage() {
     localStorage.setItem(APP_KEY, name);
   };
 
+  const toggleStyle = (value: string) =>
+    setStyles((prev) => (prev.includes(value) ? prev.filter((s) => s !== value) : [...prev, value]));
+
   const sendToChat = async (asset: GeneratedAsset) => {
     try {
       const dataUrl = await urlToDataUrl(asset.url);
@@ -97,6 +122,23 @@ export function ArtCanvasPage() {
     } catch {
       notify("Couldn't load that asset for the chat.", "error");
     }
+  };
+
+  // Reproduce (same seed) or vary (new seed) a past generation from its ledger metadata.
+  const regenerate = (asset: GeneratedAsset, mode: "same" | "vary") => {
+    const m = asset.meta;
+    if (!m) return;
+    gen.mutate({
+      prompt: m.prompt,
+      // Ledger values are strings — validate before narrowing to the literal unions.
+      preset: isPreset(m.preset) ? m.preset : "raw_creative",
+      width: m.width,
+      height: m.height,
+      performance: isPerformance(m.performance) ? m.performance : undefined,
+      styles: m.styles.length ? m.styles : undefined,
+      negativePrompt: m.negativePrompt || undefined,
+      seed: mode === "same" ? m.seed : undefined,
+    });
   };
 
   // The offline diffusion server returns a 503 with an actionable message.
@@ -169,9 +211,71 @@ export function ArtCanvasPage() {
             </div>
           </div>
 
+          {/* Advanced quality controls */}
+          <details
+            open={advancedOpen}
+            onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
+            className={`${CARD_CLASS} text-sm`}
+          >
+            <summary className="cursor-pointer select-none font-medium text-gray-600 dark:text-gray-300">
+              Advanced quality
+            </summary>
+            <div className="mt-3 flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Performance</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {ART_PERFORMANCE_OPTIONS.map((p) => (
+                    <button
+                      type="button"
+                      key={p.value}
+                      onClick={() => setQuality(p.value as ArtPerformance)}
+                      className={`${BTN_GHOST_CLASS} text-xs ${
+                        quality === p.value ? "ring-2 ring-[var(--color-accent)]" : ""
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                  Styles <span className="text-gray-400">(empty = Fooocus V2 default stack; 3–5 recommended)</span>
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {CURATED_ART_STYLES.map((s) => (
+                    <button
+                      type="button"
+                      key={s.value}
+                      onClick={() => toggleStyle(s.value)}
+                      className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
+                        styles.includes(s.value)
+                          ? "border-accent bg-accent-soft text-accent"
+                          : "border-gray-300 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
+                      }`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Negative prompt</span>
+                <input
+                  value={negative}
+                  onChange={(e) => setNegative(e.target.value)}
+                  placeholder="things to avoid (e.g. text, watermark, blurry)"
+                  className={FIELD_CLASS}
+                />
+              </label>
+            </div>
+          </details>
+
           <button
             type="button"
-            onClick={() => gen.mutate()}
+            onClick={() => gen.mutate(undefined)}
             disabled={!prompt.trim() || gen.isPending}
             className={`${BTN_PRIMARY_CLASS} mt-1`}
           >
@@ -179,33 +283,54 @@ export function ArtCanvasPage() {
           </button>
         </div>
 
-        {/* Right: gallery */}
+        {/* Right: gallery (masonry) */}
         <div className="overflow-auto">
           {gallery.isLoading ? (
             <Spinner />
-          ) : !gallery.data?.files.length ? (
+          ) : !files.length ? (
             <div className="grid h-full place-items-center text-gray-400 text-sm">
               No assets yet for {appId || "(global)"} — generate one on the left.
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-              {gallery.data.files.map((asset) => (
-                <div key={asset.fileName} className={`${CARD_CLASS} group relative overflow-hidden p-0`}>
-                  {/* biome-ignore lint/a11y/noStaticElementInteractions: image preview, action is the button below */}
-                  <img src={asset.url} alt={asset.fileName} className="aspect-square w-full object-cover" />
-                  <div className="absolute inset-x-0 bottom-0 flex justify-center bg-black/55 p-1.5 opacity-0 transition-opacity group-hover:opacity-100">
-                    <Tooltip content="Send this asset to the vision chat as an attachment">
-                      <button type="button" onClick={() => sendToChat(asset)} className={`${BTN_GHOST_CLASS} text-xs`}>
-                        Send to Vision Chat
-                      </button>
-                    </Tooltip>
-                  </div>
-                </div>
+            <div className="columns-2 gap-3 sm:columns-3 xl:columns-4">
+              {files.map((asset) => (
+                <button
+                  type="button"
+                  key={asset.fileName}
+                  onClick={() => setLightbox(asset.fileName)}
+                  className={`${CARD_CLASS} group relative mb-3 block w-full break-inside-avoid overflow-hidden p-0 text-left`}
+                >
+                  <img
+                    src={asset.url}
+                    alt={asset.meta?.prompt ?? asset.fileName}
+                    loading="lazy"
+                    className="w-full transition-transform group-hover:scale-[1.02]"
+                  />
+                  {asset.meta?.prompt && (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-black/55 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
+                      {asset.meta.prompt}
+                    </div>
+                  )}
+                </button>
               ))}
             </div>
           )}
         </div>
       </div>
+
+      {lightbox && (
+        <ArtLightbox
+          assets={files}
+          fileName={lightbox}
+          onClose={() => setLightbox(null)}
+          onNavigate={setLightbox}
+          onSendToChat={(a) => {
+            void sendToChat(a);
+          }}
+          onRegenerate={regenerate}
+          regenerating={gen.isPending}
+        />
+      )}
     </div>
   );
 }

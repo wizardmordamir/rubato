@@ -30,6 +30,7 @@ import type { Environment, HttpRequest, SavedRequest } from '../shared/request/m
 import type { SnConnection, SnConnectionInput, SnSavedRequest, SnSavedRequestInput } from '../shared/servicenow';
 import type {
   ArchiveRecord,
+  ArtGeneration,
   AskSource,
   ChatMessage,
   ChatRole,
@@ -200,6 +201,34 @@ export function getDb(): Database {
     )
   `);
   db.run('CREATE INDEX IF NOT EXISTS deploy_verifications_app ON deploy_verifications(app, verified_at DESC)');
+
+  // Art generations ledger: full metadata per generated image (prompt, styles,
+  // performance, seed, model, …) keyed by (app_id, file_name). Powers the gallery
+  // metadata panel and seed-based reproduction; before this, only the bare PNG
+  // file (named by timestamp) survived. `styles` is a JSON string array.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS art_generations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      app_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      enriched_prompt TEXT NOT NULL,
+      negative_prompt TEXT NOT NULL DEFAULT '',
+      preset TEXT NOT NULL DEFAULT 'raw_creative',
+      styles TEXT NOT NULL DEFAULT '[]',
+      performance TEXT NOT NULL DEFAULT '',
+      backend TEXT NOT NULL,
+      width INTEGER NOT NULL,
+      height INTEGER NOT NULL,
+      guidance_scale REAL,
+      sharpness REAL,
+      seed INTEGER,
+      model TEXT,
+      generated_at INTEGER NOT NULL
+    )
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS art_generations_app ON art_generations(app_id, generated_at DESC)');
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS art_generations_file ON art_generations(app_id, file_name)');
 
   // "Ask about your repo" conversation history (the chat tracks itself, so it
   // works without any external chat app).
@@ -1208,6 +1237,112 @@ export function listVerifications(app?: string, limit = 100): DeployVerification
         .query<DeployVerificationRow, [number]>('SELECT * FROM deploy_verifications ORDER BY verified_at DESC LIMIT ?')
         .all(limit);
   return rows.map(toDeployVerification);
+}
+
+// ── art generations ledger ───────────────────────────────────────────────────
+
+interface ArtGenerationRow {
+  id: number;
+  app_id: string;
+  file_name: string;
+  prompt: string;
+  enriched_prompt: string;
+  negative_prompt: string;
+  preset: string;
+  styles: string;
+  performance: string;
+  backend: string;
+  width: number;
+  height: number;
+  guidance_scale: number | null;
+  sharpness: number | null;
+  seed: number | null;
+  model: string | null;
+  generated_at: number;
+}
+
+function toArtGeneration(row: ArtGenerationRow): ArtGeneration {
+  return {
+    id: row.id,
+    appId: row.app_id,
+    fileName: row.file_name,
+    prompt: row.prompt,
+    enrichedPrompt: row.enriched_prompt,
+    negativePrompt: row.negative_prompt,
+    preset: row.preset,
+    styles: safeJsonArray(row.styles),
+    performance: row.performance,
+    backend: row.backend,
+    width: row.width,
+    height: row.height,
+    guidanceScale: row.guidance_scale ?? undefined,
+    sharpness: row.sharpness ?? undefined,
+    seed: row.seed ?? undefined,
+    model: row.model ?? undefined,
+    generatedAt: row.generated_at,
+  };
+}
+
+function safeJsonArray(s: string): string[] {
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) ? (v as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Record one generated image's full metadata. Idempotent per (app_id, file_name). */
+export function insertArtGeneration(rec: Omit<ArtGeneration, 'id'>): number {
+  const res = getDb()
+    .query<
+      { id: number },
+      [string, string, string, string, string, string, string, string, string, number, number, number | null, number | null, number | null, string | null, number]
+    >(
+      `INSERT INTO art_generations
+         (app_id, file_name, prompt, enriched_prompt, negative_prompt, preset, styles, performance,
+          backend, width, height, guidance_scale, sharpness, seed, model, generated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(app_id, file_name) DO NOTHING
+       RETURNING id`,
+    )
+    .get(
+      rec.appId,
+      rec.fileName,
+      rec.prompt,
+      rec.enrichedPrompt,
+      rec.negativePrompt,
+      rec.preset,
+      JSON.stringify(rec.styles),
+      rec.performance,
+      rec.backend,
+      rec.width,
+      rec.height,
+      rec.guidanceScale ?? null,
+      rec.sharpness ?? null,
+      rec.seed ?? null,
+      rec.model ?? null,
+      rec.generatedAt,
+    );
+  return res?.id ?? 0;
+}
+
+/** All ledger rows for an app (newest first), keyed for joining with on-disk files. */
+export function listArtGenerations(appId: string, limit = 1000): ArtGeneration[] {
+  return getDb()
+    .query<ArtGenerationRow, [string, number]>(
+      'SELECT * FROM art_generations WHERE app_id = ? ORDER BY generated_at DESC LIMIT ?',
+    )
+    .all(appId, limit)
+    .map(toArtGeneration);
+}
+
+/** One ledger row by (app, file), or null. */
+export function getArtGeneration(appId: string, fileName: string): ArtGeneration | null {
+  const row = getDb()
+    .query<ArtGenerationRow, [string, string]>('SELECT * FROM art_generations WHERE app_id = ? AND file_name = ?')
+    .get(appId, fileName);
+  return row ? toArtGeneration(row) : null;
 }
 
 // ── conversations + messages (ask about your repo) ───────────────────────────

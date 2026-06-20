@@ -55,6 +55,16 @@ export interface AgenticGatherArgs {
   visionRef?: string;
   /** Optional timing recorder; records seed retrieval, model rounds, tool calls. */
   tracer?: Tracer;
+  /**
+   * Replace the domain system prompt (default code/fs assistant) — used by the
+   * Art Co-Pilot mode. When set, the app/fs seed-retrieval is skipped and the
+   * user turn is the raw question (no "Initial context" framing).
+   */
+  systemOverride?: string;
+  /** Use this exact tool set instead of the app/fs default (e.g. just the art tool). */
+  toolsOverride?: RepoTool[];
+  /** Replace the closing "now answer" instruction (default cites code). */
+  finalInstruction?: string;
 }
 
 export interface AgenticGatherResult {
@@ -109,12 +119,14 @@ export async function runAgenticGather(args: AgenticGatherArgs): Promise<Agentic
     codeMode,
     visionRef,
     tracer,
+    systemOverride,
+    toolsOverride,
   } = args;
   const status = (text: string) => emit({ type: 'ask:status', conversationId, messageId, text });
 
-  // Two tool sets: app-scoped (indexed repo tools) or general filesystem tools
-  // bound to a folder. The rest of the loop is identical for both.
-  const tools = app ? await getToolsForApp(app) : getFsTools(fsRoot ?? '');
+  // Tool set: an explicit override (e.g. just the art tool), else app-scoped
+  // (indexed repo tools) or general filesystem tools bound to a folder.
+  const tools = toolsOverride ?? (app ? await getToolsForApp(app) : getFsTools(fsRoot ?? ''));
   const toolCtx: ToolContext = app ? { app } : {};
   const byName = new Map<string, RepoTool>(tools.map((t) => [t.spec.name, t]));
 
@@ -133,10 +145,11 @@ export async function runAgenticGather(args: AgenticGatherArgs): Promise<Agentic
   };
 
   // App mode seeds with an initial retrieval so a no-tool answer still has context;
-  // filesystem mode has no index, so the model explores via the tools.
+  // filesystem mode has no index, so the model explores via the tools. A
+  // systemOverride (Art Co-Pilot) skips seeding entirely — there's no codebase.
   let seedContext = '(use the tools to explore the folder)';
-  let system = fsSystem(fsRoot ?? '');
-  if (app) {
+  let system = systemOverride ?? fsSystem(fsRoot ?? '');
+  if (app && !systemOverride) {
     status('Searching the codebase…');
     let seedCount = 0;
     const seed = tracer
@@ -176,7 +189,12 @@ export async function runAgenticGather(args: AgenticGatherArgs): Promise<Agentic
       content: `${system}${mapBlock}${runtimeBlock}${visionBlock}\n\n${renderToolInstructions(tools.map((t) => t.spec))}${rulesBlock}`,
     },
     ...(history ?? []),
-    { role: 'user', content: `Question: ${question}\n\nInitial context:\n${seedContext}` },
+    {
+      role: 'user',
+      // Art Co-Pilot (systemOverride) sends the raw request; the code/fs paths
+      // frame it with the seeded "Initial context".
+      content: systemOverride ? question : `Question: ${question}\n\nInitial context:\n${seedContext}`,
+    },
   ];
 
   /** Run one validated/looked-up call, emitting live tool events. */
@@ -256,8 +274,9 @@ export async function runAgenticGather(args: AgenticGatherArgs): Promise<Agentic
   messages.push({
     role: 'user',
     content:
+      args.finalInstruction ??
       'You now have enough information. Answer the question concisely in prose, citing file ' +
-      'paths and line ranges. Do not emit a tool_use block.',
+        'paths and line ranges. Do not emit a tool_use block.',
   });
   return { messages, toolEvents, sources };
 }

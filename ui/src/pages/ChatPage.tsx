@@ -18,6 +18,7 @@ import { chatStore, useChatStream } from "../chatStore";
 import { Badge, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, FIELD_CLASS, PageHeading, Tooltip } from "../components";
 import { useConfirm } from "../confirm";
 import { DebugToggle } from "../DebugToggle";
+import { usePersistentBoolean } from "../persisted";
 import { useToast } from "../toast";
 import { Message } from "./chat/Message";
 import { FooocusControls } from "./FooocusControls";
@@ -63,6 +64,8 @@ export function ChatPage() {
   const [images, setImages] = useState<string[]>([]);
   // General mode only: a folder the AI may explore with read-only filesystem tools.
   const [fsRoot, setFsRoot] = useState(() => localStorage.getItem(FSROOT_KEY) ?? "");
+  // Art Co-Pilot mode: the chat becomes a collaborative image-generation agent.
+  const [artCopilot, setArtCopilot] = usePersistentBoolean("rubato.chat.artCopilot", false);
   const fileRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -139,6 +142,7 @@ export function ChatPage() {
         vars.attachments,
         app === "" ? fsRoot.trim() || undefined : undefined,
         vars.images,
+        artCopilot ? "art-copilot" : undefined,
       ),
     onSuccess: (res) => {
       setConversationId(res.conversationId);
@@ -276,6 +280,28 @@ export function ChatPage() {
         title="Ask"
         actions={
           <>
+            {/* Chat | Art Co-Pilot segmented mode toggle. Art mode turns the chat
+                into a collaborative image-generation agent (refine → generate). */}
+            <div className="inline-flex overflow-hidden rounded-lg border border-gray-300 text-xs dark:border-gray-700">
+              <button
+                type="button"
+                onClick={() => setArtCopilot(false)}
+                className={`px-2.5 py-1 transition-colors ${
+                  artCopilot ? "hover:bg-gray-100 dark:hover:bg-gray-800" : "bg-accent text-white"
+                }`}
+              >
+                💬 Chat
+              </button>
+              <button
+                type="button"
+                onClick={() => setArtCopilot(true)}
+                className={`border-l border-gray-300 px-2.5 py-1 transition-colors dark:border-gray-700 ${
+                  artCopilot ? "bg-accent text-white" : "hover:bg-gray-100 dark:hover:bg-gray-800"
+                }`}
+              >
+                🎨 Art Co-Pilot
+              </button>
+            </div>
             {/* Page-local toggles — they only affect this Ask thread (auto-scroll
                 pins to the latest output; debug reveals each answer's trace). */}
             <AutoScrollToggle />
@@ -348,6 +374,19 @@ export function ChatPage() {
 
       {/* Local Fooocus servers — start/stop the art API + Gradio UI from here. */}
       <FooocusControls />
+
+      {/* Art Co-Pilot hint — only when the mode is on. */}
+      {artCopilot && (
+        <div className="mb-3 rounded-xl border border-accent/30 bg-accent-soft/40 px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+          🎨 <strong>Art Co-Pilot</strong> — describe an image; I'll suggest directions, refine an
+          SDXL prompt, then generate it with Fooocus and show it here. Needs the Fooocus API running
+          (toggle it above). Generated images are saved to your{" "}
+          <a href="/art" className="text-accent hover:underline">
+            Art gallery
+          </a>
+          .
+        </div>
+      )}
 
       {/* Conversation history for this mode (app or general) */}
       {app !== null && convos.length > 0 && (
@@ -510,9 +549,11 @@ export function ChatPage() {
             placeholder={
               app === null
                 ? "Choose a mode above…"
-                : app
-                  ? `Ask about ${app}…  (Enter to send, Shift+Enter for newline)`
-                  : "Ask anything…  (Enter to send, Shift+Enter for newline)"
+                : artCopilot
+                  ? "Describe an image to create…  (e.g. “a cozy reading nook at golden hour”)"
+                  : app
+                    ? `Ask about ${app}…  (Enter to send, Shift+Enter for newline)`
+                    : "Ask anything…  (Enter to send, Shift+Enter for newline)"
             }
             disabled={app === null}
             className={`${FIELD_CLASS} resize-none`}

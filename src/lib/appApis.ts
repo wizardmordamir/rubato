@@ -8,6 +8,8 @@
  * ~/.rubato/config.json and per-app overrides taking precedence.
  */
 
+import type { FooocusPerformance } from '../shared/art';
+
 /** Databases an app uses (informational; extend as needed). */
 export enum Db {
   Mongo = 'mongo',
@@ -436,8 +438,24 @@ export interface ArtConfig {
   backend?: ArtBackend;
   /** Base URL of the local diffusion server. Default depends on backend (fooocus → http://localhost:8888). */
   url?: string;
-  /** Sampling steps (FLUX.1-schnell is happy at 4). Default 4. */
+  /** Sampling steps (a1111 only; Fooocus derives steps from `performance`). Default 4. */
   steps?: number;
+  /**
+   * Fooocus style stack applied to every generation — the single biggest quality
+   * lever. Default ["Fooocus V2","Fooocus Enhance","Fooocus Sharp"] ("Fooocus V2"
+   * is the AI prompt-expansion engine). See src/shared/art.ts.
+   */
+  styles?: string[];
+  /** Fooocus performance preset → step count. Default "Speed" (only Speed/Quality work without extra LoRAs). */
+  performance?: FooocusPerformance;
+  /** CFG / guidance scale. Default 4.0 (Fooocus-tuned; higher = more literal). */
+  guidanceScale?: number;
+  /** Fooocus sharpness, 0–30. Default 2.0. */
+  sharpness?: number;
+  /** Base checkpoint filename (must exist in the Fooocus models dir). Default: the server's own default. */
+  baseModel?: string;
+  /** Extra negative-prompt terms appended to every generation. Default "". */
+  negativePrompt?: string;
 }
 
 /**
