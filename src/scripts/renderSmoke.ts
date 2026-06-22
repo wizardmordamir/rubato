@@ -2,12 +2,12 @@
 /**
  * render-smoke  (installed as `rubato-render-smoke`)
  *
- * The per-task anti-WHITE-SCREEN check for UI-touching work: boot the built UI on an
- * isolated home + a free port, drive a HEADLESS browser at it, and assert the React root
- * actually MOUNTED with no fatal console / page errors. Run it AFTER `bun run build` (it
- * render-checks the real bundle `rubato-serve` serves) and BEFORE marking a UI task done —
- * `bun run tsc` + a green build pass even when the app white-screens at runtime, which is
- * exactly the gap this closes.
+ * The per-task anti-WHITE-SCREEN check for UI-touching work: build the SPA (`web:build`,
+ * cached), boot it on an isolated home + a free port, drive a HEADLESS browser at it, and
+ * assert the React root actually MOUNTED with no fatal console / page errors. Run it BEFORE
+ * marking a UI task done — `bun run tsc` + a green `bun run build` (which builds only the lib
+ * dist, not the SPA) pass even when the app white-screens at runtime, which is exactly the
+ * gap this closes. It builds the UI itself, so you don't need a prior `web:build`.
  *
  *   rubato-render-smoke [--port <n>] [--timeout <ms>] [--nav-timeout <ms>]
  *                       [--url <path>] [--root <selector>] [--cwd <dir>] [--strict]
@@ -60,7 +60,9 @@ export async function run(
   if (urlPath) spec.urlPath = urlPath;
   if (rootSelector) spec.rootSelector = rootSelector;
 
-  io.err(`render-smoke: booting ${spec.cmd.join(' ')} in ${cwd} on port ${port}, then loading ${spec.urlPath} …`);
+  io.err(
+    `render-smoke: ${spec.buildCmd ? `building (${spec.buildCmd.join(' ')}), ` : ''}booting ${spec.cmd.join(' ')} in ${cwd} on port ${port}, then loading ${spec.urlPath} …`,
+  );
   const result = await smoke(spec);
 
   if (!result.ran) {

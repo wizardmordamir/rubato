@@ -55,9 +55,10 @@ describe('renderSmokeEnv', () => {
 });
 
 describe('presets', () => {
-  it('rubatoRenderSmokeSpec boots rubato-serve with RUBATO_HOME/PORT', () => {
+  it('rubatoRenderSmokeSpec boots rubato-serve with RUBATO_HOME/PORT and builds the SPA first', () => {
     const s = rubatoRenderSmokeSpec({ cwd: '/ru-int', port: 4801, homeDir: '/tmp/ru' });
     expect(s.repo).toBe('ru');
+    expect(s.buildCmd).toEqual(['bun', 'run', 'web:build']); // gate's `bun run build` doesn't build the UI
     expect(s.cmd).toEqual(['bun', 'run', 'src/scripts/serve.ts']);
     expect(s.homeEnvVar).toBe('RUBATO_HOME');
     expect(s.portEnvVar).toBe('RUBATO_PORT');
@@ -203,6 +204,43 @@ describe('runRenderSmoke (injected deps — no real browser/server)', () => {
     expect(stopped).toBe(true);
     expect(removed).toBe(true);
     expect(r.ran).toBe(false); // a probe throw is inconclusive, not a proven white screen
+  });
+
+  // ── the pre-boot UI build (the gate's `bun run build` doesn't build the SPA) ──
+  const buildSpec = () => baseSpec({ buildCmd: ['bun', 'run', 'web:build'] });
+
+  it('builds the SPA before booting when buildCmd is set, then renders', async () => {
+    let builtIn: string | undefined;
+    const r = await runRenderSmoke(
+      buildSpec(),
+      deps({ runBuild: async (_cmd, cwd) => { builtIn = cwd; return { code: 0, output: 'built' }; }, runProbe: async () => probe() }),
+    );
+    expect(builtIn).toBe('/wt'); // built in the integration worktree dir
+    expect(r).toMatchObject({ ran: true, ok: true });
+  });
+
+  it('a FAILING UI build is RED (ran:true) — a bundle that wont compile cant render', async () => {
+    let probed = false;
+    const r = await runRenderSmoke(
+      buildSpec(),
+      deps({
+        runBuild: async () => ({ code: 1, output: 'TS2304: Cannot find name X' }),
+        runProbe: async () => { probed = true; return probe(); },
+      }),
+    );
+    expect(r).toMatchObject({ ran: true, ok: false });
+    expect(r.detail).toContain('UI build failed');
+    expect(r.logTail).toContain('TS2304');
+    expect(probed).toBe(false); // never boots/probes a UI that didn't build
+  });
+
+  it('a build that cannot be SPAWNED is INCONCLUSIVE (ran:false), never a false white screen', async () => {
+    const r = await runRenderSmoke(
+      buildSpec(),
+      deps({ runBuild: async () => { throw new Error('ENOENT bun'); }, runProbe: async () => probe() }),
+    );
+    expect(r).toMatchObject({ ran: false, ok: false });
+    expect(r.detail).toContain('could not run UI build');
   });
 });
 

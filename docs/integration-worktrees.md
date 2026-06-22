@@ -166,14 +166,18 @@ failure the previous one can't:
 2. **Runtime boot smoke** (`src/server/taskq/bootSmoke.ts`) — boot the server on an
    isolated home + free port, wait for `/api/health`. Catches a build that compiles but
    crashes on boot (a missing export, a bad import at startup).
-3. **Headless render smoke** (`src/server/taskq/renderSmoke.ts`) — boot the **built UI**
-   and drive a HEADLESS browser at it (Playwright in a `node` subprocess —
-   `render-smoke-host.mjs`), asserting the **React root actually mounted** (non-empty)
-   with **no fatal console errors / uncaught page exceptions**. This is the only signal
-   that catches a **WHITE SCREEN**: two React copies from a `resolve.dedupe` gap (→ a null
-   hook dispatcher), a runtime mount throw, or a missing context provider — all of which a
-   green build + a healthy `/api/health` sail right past. (This hardens against the
-   incident where ru white-screened with `tsc` passing.)
+3. **Headless render smoke** (`src/server/taskq/renderSmoke.ts`) — **build the SPA**
+   (`web:build`, cached — the gate's `bun run build` only builds the LIB dist, NOT the
+   `ui/dist` SPA, so without this the server would serve a non-SPA fallback that reads as a
+   false white screen), boot it, and drive a HEADLESS browser at it (Playwright in a `node`
+   subprocess — `render-smoke-host.mjs`), asserting the **React root actually mounted**
+   (non-empty) with **no fatal console errors / uncaught page exceptions**. This is the only
+   signal that catches a **WHITE SCREEN**: two React copies from a `resolve.dedupe` gap (→ a
+   null hook dispatcher), a runtime mount throw, or a missing context provider — all of which
+   a green build + a healthy `/api/health` sail right past. Because it builds the SPA, it ALSO
+   catches a UI that won't bundle (a `web:build` failure = RED), which the gate's lib-only
+   `bun run build` never exercises. (This hardens against the incident where ru white-screened
+   with `tsc` passing.)
 
 Each smoke is folded into the repo's green signal at the wiring layer (`integrationGreen
 && smokeGreen !== false && renderGreen !== false`): a check that **can't run** (no helper /

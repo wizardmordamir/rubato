@@ -38,9 +38,18 @@ import { type StartTestServerOptions, startTestServer } from 'cwip/testing';
 export interface RenderSmokeSpec {
   /** taskq repo alias (`ru`, `ca`, …) — labels the result. */
   repo: string;
+  /**
+   * Command + args to BUILD the UI bundle before booting (e.g. `['bun','run','web:build']`).
+   * REQUIRED in practice: the gate's `bun run build` only builds the LIB dist, not the SPA
+   * `ui/dist` — and `rubato-serve` with no `ui/dist` falls back to a non-SPA page (no React
+   * root), which would falsely read as a white screen. Building here also closes the gap that
+   * the gate never builds the UI at all (a UI that won't bundle is a render failure). `undefined`
+   * ⇒ assume the caller already built `ui/dist` (e.g. a worker that just ran `web:build`).
+   */
+  buildCmd?: string[];
   /** Command + args to boot the server that serves the built UI (e.g. `['bun','run','src/scripts/serve.ts']`). */
   cmd: string[];
-  /** Working dir for the spawned server — the integration worktree to render-check. */
+  /** Working dir for the spawned build + server — the integration worktree to render-check. */
   cwd: string;
   /** Port the server binds; also builds the page + health URLs. */
   port: number;
@@ -76,6 +85,7 @@ export interface RenderSmokeSpec {
 /** Caller-supplied inputs; everything else is defaulted by {@link planRenderSmoke}. */
 export interface RenderSmokeSpecInput {
   repo: string;
+  buildCmd?: string[];
   cmd: string[];
   cwd: string;
   /** Bind port — REQUIRED (kept pure/deterministic); see {@link pickFreePort}. */
@@ -103,6 +113,7 @@ export const DEFAULT_IGNORE_CONSOLE = ['favicon', 'failed to load resource: the 
 export function planRenderSmoke(input: RenderSmokeSpecInput): RenderSmokeSpec {
   return {
     repo: input.repo,
+    buildCmd: input.buildCmd,
     cmd: input.cmd,
     cwd: input.cwd,
     port: input.port,
@@ -144,6 +155,9 @@ export function rubatoRenderSmokeSpec(opts: {
 }): RenderSmokeSpec {
   return planRenderSmoke({
     repo: 'ru',
+    // Build the SPA first (cached via buildCache when unchanged) — `bun run build` only
+    // builds the lib dist, so without this `rubato-serve` would serve the no-SPA fallback.
+    buildCmd: ['bun', 'run', 'web:build'],
     // No `--hot`: a smoke wants a clean one-shot boot serving the built bundle.
     cmd: ['bun', 'run', 'src/scripts/serve.ts'],
     cwd: opts.cwd,
@@ -168,6 +182,7 @@ export function caRenderSmokeSpec(opts: {
   cwd: string;
   port: number;
   homeDir: string;
+  buildCmd?: string[];
   cmd?: string[];
   homeEnvVar?: string;
   portEnvVar?: string;
@@ -178,6 +193,7 @@ export function caRenderSmokeSpec(opts: {
 }): RenderSmokeSpec {
   return planRenderSmoke({
     repo: 'ca',
+    buildCmd: opts.buildCmd ?? ['bun', 'run', 'web:build'],
     cmd: opts.cmd ?? ['bun', 'run', 'src/scripts/serve.ts'],
     cwd: opts.cwd,
     homeEnvVar: opts.homeEnvVar ?? 'CA_DATA_DIR',
@@ -294,6 +310,8 @@ export interface RenderSmokeDeps {
   startServer?: (opts: StartTestServerOptions) => Promise<{ logs(): string[]; stop(): Promise<void> }>;
   /** Drive a headless browser at `url` and report a {@link RenderProbe}. Defaults to the Node host. */
   runProbe?: (url: string, spec: RenderSmokeSpec) => Promise<RenderProbe>;
+  /** Run `spec.buildCmd` in `cwd` before booting (build the SPA). Defaults to a real spawn. */
+  runBuild?: (cmd: string[], cwd: string) => Promise<{ code: number; output: string }>;
   ensureDir?: (dir: string) => Promise<void>;
   removeDir?: (dir: string) => Promise<void>;
   now?: () => number;
@@ -308,6 +326,7 @@ export interface RenderSmokeDeps {
 export async function runRenderSmoke(spec: RenderSmokeSpec, deps: RenderSmokeDeps = {}): Promise<RenderSmokeResult> {
   const startServer = deps.startServer ?? startTestServer;
   const runProbe = deps.runProbe ?? defaultRunProbe;
+  const runBuild = deps.runBuild ?? defaultRunBuild;
   const ensureDir = deps.ensureDir ?? ((dir: string) => mkdir(dir, { recursive: true }).then(() => undefined));
   const removeDir = deps.removeDir ?? ((dir: string) => rm(dir, { recursive: true, force: true }));
   const now = deps.now ?? (() => Date.now());
@@ -320,6 +339,30 @@ export async function runRenderSmoke(spec: RenderSmokeSpec, deps: RenderSmokeDep
   } catch (e) {
     // Can't prep the isolation dir → inconclusive (don't block the gate on an fs hiccup).
     return { repo: spec.repo, ran: false, ok: false, detail: `failed to create isolated home: ${errMsg(e)}`, durationMs: elapsed() };
+  }
+
+  // Build the SPA first (the gate's `bun run build` only builds the lib dist, so without
+  // this the server serves the no-SPA fallback). A build FAILURE is a definitive render
+  // failure (ran:true → RED), not inconclusive — a UI that won't bundle can't render.
+  if (spec.buildCmd && spec.buildCmd.length > 0) {
+    try {
+      const b = await runBuild(spec.buildCmd, spec.cwd);
+      if (b.code !== 0) {
+        await removeDir(spec.homeDir).catch(() => {});
+        return {
+          repo: spec.repo,
+          ran: true,
+          ok: false,
+          detail: `UI build failed (${spec.buildCmd.join(' ')}) — the bundle does not compile`,
+          logTail: tailLines(b.output.split('\n')),
+          durationMs: elapsed(),
+        };
+      }
+    } catch (e) {
+      // Couldn't even spawn the build → inconclusive (tooling, not a proven UI failure).
+      await removeDir(spec.homeDir).catch(() => {});
+      return { repo: spec.repo, ran: false, ok: false, detail: `could not run UI build: ${errMsg(e)}`, durationMs: elapsed() };
+    }
   }
 
   let server: { logs(): string[]; stop(): Promise<void> } | undefined;
@@ -446,6 +489,14 @@ async function defaultRunProbe(url: string, spec: RenderSmokeSpec): Promise<Rend
   } catch (e) {
     return { launched: false, navigated: false, rootFound: false, rootHtmlLength: 0, consoleErrors: [], pageErrors: [], error: errMsg(e) };
   }
+}
+
+/** Default build runner: spawn `cmd` in `cwd`, capturing combined output + the exit code. */
+async function defaultRunBuild(cmd: string[], cwd: string): Promise<{ code: number; output: string }> {
+  const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env } });
+  const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+  const code = await proc.exited;
+  return { code, output: `${out}${err}` };
 }
 
 /** A throwaway, per-run isolated home dir for a repo's render smoke (under the OS tmpdir). */
