@@ -1297,7 +1297,24 @@ export function insertArtGeneration(rec: Omit<ArtGeneration, 'id'>): number {
   const res = getDb()
     .query<
       { id: number },
-      [string, string, string, string, string, string, string, string, string, number, number, number | null, number | null, number | null, string | null, number]
+      [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        number,
+        number,
+        number | null,
+        number | null,
+        number | null,
+        string | null,
+        number,
+      ]
     >(
       `INSERT INTO art_generations
          (app_id, file_name, prompt, enriched_prompt, negative_prompt, preset, styles, performance,

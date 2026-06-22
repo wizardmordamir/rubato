@@ -7,9 +7,9 @@
  * and returns the asset URL so the model can embed it inline.
  */
 
-import { type FooocusPerformance, resolveAspect } from '../../shared/art';
 import { ART_PRESETS } from '../../lib/ai/promptEnricher';
 import type { ArtPresetType } from '../../lib/appApis';
+import { type FooocusPerformance, resolveAspect } from '../../shared/art';
 import { DiffusionOfflineError, DiffusionTimeoutError } from '../art/diffusion';
 import { generateArt } from '../art/generateImage';
 import type { RepoTool, ToolResult } from './types';
@@ -34,7 +34,12 @@ export const generatePlaceholderArtwork: RepoTool = {
       'and `seed` (reuse to reproduce or vary an image). `preset` is an optional shortcut for ' +
       'common asset types: web_ui, game_art_2d, abstract_texture, app_icon, raw_creative (default).',
     params: [
-      { name: 'prompt', type: 'string', description: 'the full descriptive art prompt (subject + style details)', required: true },
+      {
+        name: 'prompt',
+        type: 'string',
+        description: 'the full descriptive art prompt (subject + style details)',
+        required: true,
+      },
       { name: 'negative_prompt', type: 'string', description: 'things to avoid in the image', required: false },
       {
         name: 'aspect_ratio',
@@ -42,7 +47,12 @@ export const generatePlaceholderArtwork: RepoTool = {
         description: 'square | portrait | tall | landscape | wide | ultrawide (default square)',
         required: false,
       },
-      { name: 'quality', type: 'string', description: 'speed (faster) | quality (slower, best) — default speed', required: false },
+      {
+        name: 'quality',
+        type: 'string',
+        description: 'speed (faster) | quality (slower, best) — default speed',
+        required: false,
+      },
       {
         name: 'styles',
         type: 'string',
@@ -51,8 +61,18 @@ export const generatePlaceholderArtwork: RepoTool = {
           'unknown names are silently ignored, so use exact names from the curated set',
         required: false,
       },
-      { name: 'seed', type: 'number', description: 'reuse a previous image’s seed to reproduce/vary it', required: false },
-      { name: 'preset', type: 'string', description: 'web_ui | game_art_2d | abstract_texture | app_icon | raw_creative', required: false },
+      {
+        name: 'seed',
+        type: 'number',
+        description: 'reuse a previous image’s seed to reproduce/vary it',
+        required: false,
+      },
+      {
+        name: 'preset',
+        type: 'string',
+        description: 'web_ui | game_art_2d | abstract_texture | app_icon | raw_creative',
+        required: false,
+      },
     ],
   },
   async run({ app }, params): Promise<ToolResult> {
@@ -61,7 +81,10 @@ export const generatePlaceholderArtwork: RepoTool = {
     const aspect = params.aspect_ratio != null ? resolveAspect(String(params.aspect_ratio)) : undefined;
     const styles =
       typeof params.styles === 'string' && params.styles.trim()
-        ? params.styles.split(',').map((s) => s.trim()).filter(Boolean)
+        ? params.styles
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
         : undefined;
     try {
       const result = await generateArt({

@@ -18,7 +18,6 @@ import { isAppError } from 'cwip';
 import { parseLoose } from 'cwip/json';
 import { makeCorrelationId } from 'cwip/node';
 import { COMMANDS, commandTags } from '../commands';
-import type { FooocusPerformance } from '../shared/art';
 import { ART_PRESETS } from '../lib/ai/promptEnricher';
 import type { ArtPresetType } from '../lib/appApis';
 import {
@@ -40,6 +39,7 @@ import { openInEditor } from '../lib/editor';
 import { findPackageRoot } from '../lib/pkgPaths';
 import { runScan } from '../lib/scanApps';
 import type { PluginRouteHandler } from '../plugin/types';
+import type { FooocusPerformance } from '../shared/art';
 import type { AskAttachment } from '../shared/types';
 import { resolvePages, type UiConfig, type UiConfigPatch, type UiPage, type UiState } from '../shared/ui';
 import { handleAdminApi } from './adminRoutes';
@@ -84,8 +84,8 @@ import {
 } from './appsTemplate';
 import { createAppTag, getAppTags, isTagAction, runAppTagAction } from './appTags';
 import { DiffusionOfflineError, DiffusionTimeoutError, listComfyuiModels } from './art/diffusion';
-import { appAssetsDir, generateArt, listAssets, resolveArtConfig } from './art/generateImage';
 import { handleFooocusApi } from './art/fooocusRoutes';
+import { appAssetsDir, generateArt, listAssets, resolveArtConfig } from './art/generateImage';
 import { startAsk } from './ask';
 import { handleAuthApi } from './authRoutes';
 import { handleAutomationEnvApi } from './automationEnvRoutes';

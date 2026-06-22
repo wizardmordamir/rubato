@@ -62,7 +62,11 @@ function comfyuiFlowFetch(
     const method = init?.method ?? 'GET';
     let body: unknown;
     if (init?.body && typeof init.body === 'string') {
-      try { body = JSON.parse(init.body); } catch { body = init.body; }
+      try {
+        body = JSON.parse(init.body);
+      } catch {
+        body = init.body;
+      }
     }
     calls.push({ url, method, body });
 
@@ -146,7 +150,9 @@ describe('comfyui adapter', () => {
 
     await comfyui(BASE_URL, { ...BASE_REQ, prompt: 'a dragon breathing fire' }, { fetch, pollIntervalMs: 0 });
 
-    const promptBody = calls[0].body as { prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }> };
+    const promptBody = calls[0].body as {
+      prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    };
     const textNode = Object.values(promptBody.prompt).find((n) => n.class_type === 'CLIPTextEncode');
     expect(textNode?.inputs.text).toBe('a dragon breathing fire');
   });
@@ -156,7 +162,9 @@ describe('comfyui adapter', () => {
 
     await comfyui(BASE_URL, { ...BASE_REQ, seed: 9999 }, { fetch, pollIntervalMs: 0 });
 
-    const promptBody = calls[0].body as { prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }> };
+    const promptBody = calls[0].body as {
+      prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    };
     const noiseNode = Object.values(promptBody.prompt).find((n) => n.class_type === 'RandomNoise');
     expect(noiseNode?.inputs.noise_seed).toBe(9999);
   });
@@ -166,7 +174,9 @@ describe('comfyui adapter', () => {
 
     await comfyui(BASE_URL, { ...BASE_REQ, width: 768, height: 512 }, { fetch, pollIntervalMs: 0 });
 
-    const promptBody = calls[0].body as { prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }> };
+    const promptBody = calls[0].body as {
+      prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    };
     const latentNode = Object.values(promptBody.prompt).find((n) => n.class_type === 'EmptySD3LatentImage');
     expect(latentNode?.inputs.width).toBe(768);
     expect(latentNode?.inputs.height).toBe(512);
@@ -181,7 +191,9 @@ describe('comfyui adapter', () => {
 
     await comfyui(BASE_URL, { ...BASE_REQ, guidanceScale: 5.0 }, { fetch, pollIntervalMs: 0 });
 
-    const promptBody = calls[0].body as { prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }> };
+    const promptBody = calls[0].body as {
+      prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    };
     const guidanceNode = Object.values(promptBody.prompt).find((n) => n.class_type === 'FluxGuidance');
     expect(guidanceNode?.inputs.guidance).toBe(5.0);
   });
@@ -191,7 +203,9 @@ describe('comfyui adapter', () => {
 
     await comfyui(BASE_URL, { ...BASE_REQ, baseModel: 'flux1-dev-Q8_0.gguf' }, { fetch, pollIntervalMs: 0 });
 
-    const promptBody = calls[0].body as { prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }> };
+    const promptBody = calls[0].body as {
+      prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    };
     const loaderNode = Object.values(promptBody.prompt).find((n) => n.class_type === 'UnetLoaderGGUF');
     expect(loaderNode?.inputs.unet_name).toBe('flux1-dev-Q8_0.gguf');
   });
@@ -201,7 +215,9 @@ describe('comfyui adapter', () => {
 
     await comfyui(BASE_URL, { ...BASE_REQ, steps: 28 }, { fetch, pollIntervalMs: 0 });
 
-    const promptBody = calls[0].body as { prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }> };
+    const promptBody = calls[0].body as {
+      prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    };
     const schedulerNode = Object.values(promptBody.prompt).find((n) => n.class_type === 'BasicScheduler');
     expect(schedulerNode?.inputs.steps).toBe(28);
   });

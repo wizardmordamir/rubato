@@ -22,7 +22,13 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { RUBATO_HOME } from '../../lib/config';
-import { DiffusionOfflineError, DiffusionTimeoutError, type DiffusionDeps, type DiffusionRequest, type DiffusionResult } from './diffusion';
+import {
+  type DiffusionDeps,
+  DiffusionOfflineError,
+  type DiffusionRequest,
+  type DiffusionResult,
+  DiffusionTimeoutError,
+} from './diffusion';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -96,11 +102,7 @@ async function loadWorkflow(customFetch?: typeof fetch): Promise<WorkflowGraph> 
  * the model filename in. Ordered from most-specific to least: a GGUF UNET loader
  * takes priority over a generic checkpoint loader.
  */
-const LOADER_NODE_TYPES = [
-  'UnetLoaderGGUF',
-  'CheckpointLoaderSimple',
-  'CheckpointLoader',
-] as const;
+const LOADER_NODE_TYPES = ['UnetLoaderGGUF', 'CheckpointLoaderSimple', 'CheckpointLoader'] as const;
 
 type LoaderNodeType = (typeof LOADER_NODE_TYPES)[number];
 
@@ -139,12 +141,9 @@ interface ObjectInfoResponse {
  * Returns an empty array when the server is unreachable or has no models
  * for the requested node type (never throws — model listing is best-effort).
  */
-export async function listComfyuiModels(
-  baseUrl: string,
-  deps: DiffusionDeps = {},
-): Promise<string[]> {
+export async function listComfyuiModels(baseUrl: string, deps: DiffusionDeps = {}): Promise<string[]> {
   const doFetch = deps.fetch ?? fetch;
-  const graph = await loadWorkflow().catch(() => ({} as WorkflowGraph));
+  const graph = await loadWorkflow().catch(() => ({}) as WorkflowGraph);
   const loader = findLoaderNode(graph);
   if (!loader) return [];
 
@@ -188,9 +187,7 @@ function patchWorkflow(graph: WorkflowGraph, req: DiffusionRequest): void {
 
       // Seed — ComfyUI's RandomNoise node.
       case 'RandomNoise': {
-        const seed = req.seed != null && req.seed >= 0
-          ? req.seed
-          : Math.floor(Math.random() * 2_147_483_647);
+        const seed = req.seed != null && req.seed >= 0 ? req.seed : Math.floor(Math.random() * 2_147_483_647);
         node.inputs.noise_seed = seed;
         // Set control_after_generate to "fixed" so the seed sticks.
         if ('control_after_generate' in node.inputs) {
@@ -251,12 +248,7 @@ function isAbortError(err: unknown): boolean {
   return err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
 }
 
-async function safeFetch(
-  doFetch: typeof fetch,
-  url: string,
-  init: RequestInit,
-  baseUrl: string,
-): Promise<Response> {
+async function safeFetch(doFetch: typeof fetch, url: string, init: RequestInit, baseUrl: string): Promise<Response> {
   let res: Response;
   try {
     res = await doFetch(url, init);
@@ -280,11 +272,7 @@ async function safeFetch(
  * @param req - Generation parameters.
  * @param deps - Injectable fetch + abort signal.
  */
-export async function comfyui(
-  baseUrl: string,
-  req: DiffusionRequest,
-  deps: DiffusionDeps,
-): Promise<DiffusionResult> {
+export async function comfyui(baseUrl: string, req: DiffusionRequest, deps: DiffusionDeps): Promise<DiffusionResult> {
   const doFetch = deps.fetch ?? fetch;
   const base = trimUrl(baseUrl);
 
@@ -357,8 +345,7 @@ export async function comfyui(
   // ComfyUI does not echo back the seed it used in the history output (the seed
   // was injected into the RandomNoise node during patching — it's not round-tripped).
   // Return the seed we wrote so callers can reproduce the result.
-  const usedSeed =
-    req.seed != null && req.seed >= 0 ? req.seed : undefined;
+  const usedSeed = req.seed != null && req.seed >= 0 ? req.seed : undefined;
 
   return { image, seed: usedSeed };
 }
