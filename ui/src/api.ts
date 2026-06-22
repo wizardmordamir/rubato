@@ -2164,6 +2164,15 @@ export const fetchEntryTimings = (start: string, end: string, repo?: string): Pr
 export type { OrchCategoryStat, TimingRow as OrchTimingRow, TimingSource as OrchTimingSource };
 export type { TimingSummary as OrchTimingSummary, TimingTrendPoint as OrchTimingTrendPoint };
 
+// ─── False-done alerts ────────────────────────────────────────────────────────
+
+import type { FalseDoneAlertsResult } from "@shared/orchestration";
+export type { FalseDoneAlert, FalseDoneAlertsResult, FalseDoneReason } from "@shared/orchestration";
+
+/** Fetch the deduped false-done alert store from `~/.taskq/false-done.json`. */
+export const fetchFalseDoneAlerts = () =>
+  getJson<FalseDoneAlertsResult>("/api/orchestration/false-done");
+
 // ─── SSH servers (localhost-only Admin panel) ─────────────────────────────────
 
 export interface SshServerSummary {

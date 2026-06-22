@@ -18,6 +18,8 @@ import {
   type ActiveRun,
   deleteFleetPreset,
   type DrainConfigPatch,
+  type FalseDoneAlert,
+  fetchFalseDoneAlerts,
   fetchFleetPresets,
   fetchLogTail,
   fetchWatchdog,
@@ -109,6 +111,7 @@ export function WatchdogView() {
       <KnobsCard snap={data} onChange={invalidate} />
       <InstancesSection snap={data} nowMs={nowMs} onChange={invalidate} />
       {data.problems.length > 0 && <ProblemsSection snap={data} onChange={invalidate} />}
+      <FalseDoneSection />
       <ReadyQueue snap={data} />
       <LogsSection snap={data} />
       <FilesSection snap={data} />
@@ -1510,6 +1513,89 @@ const CATEGORY_TONE: Record<string, "error" | "warn" | "neutral" | "accent" | "s
  * (or an "auto-fixing" note when the system self-heals), and a "Details" toggle
  * that reveals the full explanation only when asked.
  */
+// ── False-done alert panel ────────────────────────────────────────────────────
+
+/**
+ * Shows a badge count + expandable per-task rows for any auto-reverted false-done
+ * tasks recorded in `~/.taskq/false-done.json`. Polls on the same 4s cadence as
+ * the watchdog snapshot so the panel updates as new detections arrive.
+ */
+function FalseDoneSection() {
+  const { data, isError } = useQuery({
+    queryKey: ["false-done-alerts"],
+    queryFn: fetchFalseDoneAlerts,
+    refetchInterval: 4000,
+  });
+
+  const alerts = data?.alerts ?? [];
+  if (!isError && alerts.length === 0) return null;
+
+  return (
+    <section>
+      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+        Auto-reverted false-dones
+        {alerts.length > 0 && (
+          <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+            {alerts.length}
+          </span>
+        )}
+      </h3>
+      {isError && <p className="text-xs text-red-500">Failed to load false-done alerts.</p>}
+      <div className="space-y-1.5">
+        {alerts.map((a) => (
+          <FalseDoneRow key={a.taskId} alert={a} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FalseDoneRow({ alert: a }: { alert: FalseDoneAlert }) {
+  const [open, setOpen] = useState(false);
+  const reasonLabel = a.reason === "empty-done" ? "Empty done" : "Regression";
+  const statusLabel = a.status === "needs_input" ? "needs_input" : "on_hold";
+  const detectedAt = new Date(a.detectedAt).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return (
+    <div className="rounded-lg border border-amber-200 px-3 py-2 dark:border-amber-900/60">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Badge tone="warn">{reasonLabel}</Badge>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{a.title}</span>
+        {a.repo && <span className="whitespace-nowrap text-xs text-gray-400">{a.repo}</span>}
+        <span className="whitespace-nowrap text-xs text-gray-400">→ {statusLabel}</span>
+        {a.count > 1 && (
+          <span className="whitespace-nowrap text-xs text-gray-400">{a.count}×</span>
+        )}
+        <span className="whitespace-nowrap text-xs text-gray-400">{detectedAt}</span>
+        <button
+          type="button"
+          className="whitespace-nowrap text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+          onClick={() => setOpen((o) => !o)}
+        >
+          {open ? "Less" : "Details"}
+        </button>
+      </div>
+      {open && (
+        <div className="mt-2 border-t border-gray-100 pt-2 dark:border-gray-800">
+          <p className="whitespace-pre-wrap text-xs text-gray-500">{a.note}</p>
+          {a.slug && (
+            <p className="mt-1 text-xs text-gray-400">
+              slug: <span className="font-mono">{a.slug}</span>
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Problems panel ────────────────────────────────────────────────────────────
+
 function ProblemsSection({ snap, onChange }: { snap: WatchdogSnapshot; onChange: () => void }) {
   return (
     <section>
