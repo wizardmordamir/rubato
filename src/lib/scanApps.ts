@@ -53,7 +53,9 @@ export async function findRepos(root: string, ignore: Set<string>, maxDepth = 6)
     for (const e of entries) {
       if (!e.isDirectory()) continue;
       if (e.name.startsWith('.') || SCAN_PRUNE.has(e.name) || ignore.has(e.name)) continue;
-      if (e.name.endsWith('-worktrees')) continue;
+      // Skip transient feature-worktree containers and integration worktrees placed as
+      // repo siblings (e.g. rubato-worktrees/, rubato-integration/).
+      if (e.name.endsWith('-worktrees') || e.name.endsWith('-integration')) continue;
       await walk(resolve(dir, e.name), depth + 1);
     }
   }
