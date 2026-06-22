@@ -55,6 +55,15 @@ export interface TaskqConfig {
   retryBackoff: BackoffOpts;
   /** repo alias → absolute checkout root. */
   repos: Record<string, string>;
+  /**
+   * Run the integration `bun run build` regression check in the false-done gate
+   * (the landed-code check is always on). On a successful, code-landing task the
+   * orchestrator builds the repo's integration worktree and reverts the "done" if
+   * a known-green integration went red. Default on; flip to false to skip the
+   * per-landing build (the periodic promotion-gate watchdog still catches red
+   * integrations) if it slows drains too much.
+   */
+  falseDoneBuildCheck: boolean;
   /** Opt-in auto-triage / epic decomposition (off by default — conservative). */
   triage?: { enabled: boolean };
   /** Background `/usage` telemetry poll interval, minutes (0 = off, manual only). */
@@ -95,6 +104,7 @@ function defaults(): TaskqConfig {
     retryBackoff: { ...DEFAULT_BACKOFF },
     usagePollMinutes: 5,
     usageCostPollMinutes: 30,
+    falseDoneBuildCheck: true,
     repos: {
       ca: join(gh, 'cursedalchemy'),
       ru: join(gh, 'rubato'),

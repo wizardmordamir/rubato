@@ -91,8 +91,9 @@ merges **back to `refactor/integration`** — never `main`. Cross-repo or whole-
 breakage on integration is tolerated; a heal task fixes it later. `main` is never
 touched by a worker.
 
-`main` only ever advances through the **promotion gate** — the evolved
-`~/.taskq/main-health-watchdog.ts` (launchd, every ~10m). Each idle cycle it:
+`main` only ever advances through the **promotion gate** — the version-controlled
+`src/scripts/integrationGate.ts` (launchd job `com.taskq.mainhealth`, every ~10m;
+evolved from the old untracked `~/.taskq/main-health-watchdog.ts`). Each idle cycle it:
 
 1. Classifies each repo's `main` ↔ `refactor/integration` ancestry.
 2. **Builds** the integration worktrees that are ahead (providers `cwip`/`cursedbelt`
@@ -115,19 +116,43 @@ touched by a worker.
 5. After promoting, rebuilds the providers' main `dist` and re-relinks the consumer
    main checkouts so localhost (which runs off `main`) stays current.
 
-The promote/ancestry decision core is the pure, unit-tested
-`src/server/taskq/promote.ts` (`decideSystem`/`decideRepo`/`ancestryFrom`, plus
-`repoGreen`/`healReason` for the smoke gate); the impure boot smoke is
-`src/server/taskq/bootSmoke.ts` (`rubatoSmokeSpec`/`planSmoke`/`runBootSmoke`, reusing
-cwip/testing's hardened spawn+health-poll). Both are imported by the watchdog — the
-smoke helper **lazily + guarded** so a not-yet-promoted main checkout degrades to the
-build-only gate instead of crashing (the watchdog is what promotes that very code, so a
-hard dependency would deadlock). Run the watchdog with `--dry` to see the decisions
-without mutating anything; its repo set, `TASKQ_HOME`, and the smoke-helper path
-(`MAINHEALTH_BOOTSMOKE_PATH`) are env-overridable for an isolated end-to-end test (see
-`~/.taskq/verify-intgate.ts`, scenarios F/G).
+The gate is layered for review + test:
+
+- **`src/server/taskq/promote.ts`** — the PURE promote/ancestry decision core
+  (`decideSystem`/`decideRepo`/`ancestryFrom`, plus `repoGreen`/`healReason` for the
+  runtime-smoke gate), unit-tested in `promote.test.ts`. A repo is promotable-green iff
+  its build passed AND its boot smoke didn't fail (`RepoState.smokeGreen`; `undefined` =
+  no smoke ran → never blocks).
+- **`src/server/taskq/bootSmoke.ts`** — the impure runtime boot smoke
+  (`rubatoSmokeSpec`/`planSmoke`/`runBootSmoke`), reusing cwip/testing's hardened
+  spawn+health-poll. Pure plan + an impure runner that boots a consumer against an
+  isolated home/port, waits for health, tears it down, and NEVER throws (a boot failure
+  is `{ ok:false }` + the log tail). Unit-tested in `bootSmoke.test.ts`; a functional
+  test boots the REAL `rubato-serve` through it.
+- **`src/server/taskq/gate.ts`** — the IMPURE git/build/heal wiring (`runGate`). It
+  imports only `node:*` + the zero-import pure core, so the gate still loads/runs when
+  the rest of rubato (or cwip) is mid-broken — and shells out to the taskq CLI rather
+  than importing `cwip/taskq` for the same resilience. The taskq board, launchd kick,
+  logging, **and the boot smoke** are all INJECTED seams (`GateOptions.runSmoke`), so
+  gate.ts never hard-imports bootSmoke (→ cwip/testing) — preserving its resilience —
+  and `src/test/integration/integrationGate.int.test.ts` exercises the real
+  git/build/smoke/ff/heal wiring in-process against throwaway temp repos (ported from
+  the old `~/.taskq/verify-intgate.ts`).
+- **`src/scripts/integrationGate.ts`** — the thin launchd entrypoint (mirrors
+  `taskqDrain.ts`). It wires the real `runSmoke` via a **guarded lazy import** of
+  bootSmoke (so a mid-broken cwip/testing degrades to the build-only gate instead of
+  crashing the entrypoint). `--dry` decides + logs without mutating; `--print-launchd`
+  emits the `com.taskq.mainhealth` plist (pointing at this repo file); the repo set +
+  `TASKQ_HOME` are env-overridable (`MAINHEALTH_REPOS_JSON`/`MAINHEALTH_NO_KICK`) for an
+  isolated run.
 
 > **ca's runtime smoke is a follow-up** (`fu-intgate-smoke-ca`): its multi-workspace boot
 > needs an isolated `CA_DATA_DIR` + `PORT` (and a `caSmokeSpec` mirroring `rubatoSmokeSpec`)
-> verified in the ca repo first. Until then ca stays build-only so an unverified smoke
-> can't freeze the system-gated promotion.
+> verified in the ca repo first. Until then ca stays build-only (its `runSmoke` returns
+> `null`) so an unverified smoke can't freeze the system-gated promotion.
+
+**Cutover from the old untracked watchdog** (once this file is on each repo's `main`):
+regenerate the plist from the repo and reload it —
+`bun run src/scripts/integrationGate.ts --print-launchd > ~/Library/LaunchAgents/com.taskq.mainhealth.plist`,
+then `launchctl unload … && launchctl load -w …`. The label is unchanged, so it
+replaces the old job in place.
