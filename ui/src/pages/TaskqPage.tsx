@@ -1,6 +1,6 @@
 import { type BarDatum, CategoryBars, ChartThemeProvider, chartThemeFor, TimeSeriesChart } from 'cursedbelt/react/charts';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DisclosureButton, DragHandle, DropIndicator, ModalShell, StatTile, useDragReorder } from "cursedbelt/react";
+import { DisclosureButton, DragHandle, ModalShell, StatTile, useDragReorder } from "cursedbelt/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
@@ -709,9 +709,19 @@ function BoardSection({
   selectedIds?: Set<number>;
   onToggleSelect?: (id: number) => void;
 }) {
-  const ids = tasks.map((t) => String(t.id));
-  const dr = useDragReorder({ ids, axis: "y", onReorder: (next) => onReorder(next.map(Number)) });
   const canDrag = reorderable && tasks.length > 1 && !collapsed && !selectMode;
+  const {
+    items: ordered,
+    DragContext,
+    Sortable,
+  } = useDragReorder({
+    items: tasks,
+    getKey: (t) => String(t.id),
+    onReorder: (next) => onReorder(next.map((t) => t.id)),
+    axis: "y",
+    handle: true,
+    disabled: !canDrag,
+  });
   return (
     <section>
       <button
@@ -724,49 +734,38 @@ function BoardSection({
         {!collapsed && canDrag && <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder priority</span>}
       </button>
       {!collapsed && (
-        <div {...(canDrag ? dr.containerProps : {})} className="space-y-2">
-          {tasks.map((t) => {
-            if (!canDrag) {
-              return (
-                <TaskCard
-                  key={t.id}
-                  task={t}
-                  onEdit={() => onEdit(t)}
-                  onDelete={() => onDelete(t)}
-                  onHold={() => onHold(t)}
-                  onRequeue={() => onRequeue(t)}
-                  onEnqueue={() => onEnqueue(t)}
-                  selectMode={selectMode}
-                  isSelected={selectedIds?.has(t.id)}
-                  onToggleSelect={() => onToggleSelect?.(t.id)}
-                />
-              );
-            }
-            const idStr = String(t.id);
-            const ip = dr.getItemProps(idStr);
-            return (
-              <div
-                key={t.id}
-                data-drag-id={ip["data-drag-id"]}
-                style={ip.style}
-                onClickCapture={ip.onClickCapture}
-                className={`relative ${ip.isDragging ? "opacity-70" : ""}`}
-              >
-                {ip.insertBefore && <DropIndicator orientation="horizontal" side="start" />}
-                {ip.insertAfter && <DropIndicator orientation="horizontal" side="end" />}
-                <TaskCard
-                  task={t}
-                  onEdit={() => onEdit(t)}
-                  onDelete={() => onDelete(t)}
-                  onHold={() => onHold(t)}
-                  onRequeue={() => onRequeue(t)}
-                  onEnqueue={() => onEnqueue(t)}
-                  dragHandle={<DragHandle handleProps={dr.getHandleProps(idStr)} label={`Reorder ${t.title}`} />}
-                />
-              </div>
-            );
-          })}
-        </div>
+        <DragContext>
+          <div className="space-y-2">
+            {ordered.map((t) => (
+              <Sortable key={t.id} itemKey={String(t.id)}>
+                {({ setNodeRef, setActivatorNodeRef, style, handleProps, isDragging }) => (
+                  <div ref={setNodeRef} style={style} className={`relative ${isDragging ? "opacity-70" : ""}`}>
+                    <TaskCard
+                      task={t}
+                      onEdit={() => onEdit(t)}
+                      onDelete={() => onDelete(t)}
+                      onHold={() => onHold(t)}
+                      onRequeue={() => onRequeue(t)}
+                      onEnqueue={() => onEnqueue(t)}
+                      selectMode={selectMode}
+                      isSelected={selectedIds?.has(t.id)}
+                      onToggleSelect={() => onToggleSelect?.(t.id)}
+                      dragHandle={
+                        canDrag ? (
+                          <DragHandle
+                            handleProps={handleProps}
+                            activatorRef={setActivatorNodeRef}
+                            label={`Reorder ${t.title}`}
+                          />
+                        ) : undefined
+                      }
+                    />
+                  </div>
+                )}
+              </Sortable>
+            ))}
+          </div>
+        </DragContext>
       )}
     </section>
   );

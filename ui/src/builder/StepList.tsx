@@ -1,6 +1,6 @@
 import type { ActionType, Condition, Step, StepParams } from "@shared/automation";
-import { DropIndicator, useDragReorder } from "cursedbelt/react";
-import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useState } from "react";
+import { useDragReorder } from "cursedbelt/react";
+import { type ReactNode, type Ref, useState } from "react";
 import type { StepResult } from "../api";
 import { Dropdown, OpenPathButton, Tooltip } from "../components";
 import { IconCopy, IconEye, IconEyeOff, IconGrip, IconPlus } from "../icons";
@@ -35,43 +35,43 @@ export function StepList({ steps, onChange, results, prefix = "" }: ListProps) {
   const insertAt = (at: number, step: Step) => onChange([...steps.slice(0, at), step, ...steps.slice(at)]);
   const clone = (i: number) => onChange([...steps.slice(0, i + 1), cloneStep(steps[i]), ...steps.slice(i + 1)]);
 
-  // Pointer drag-reorder via the shared engine (gap preview + no dead zones). Each
-  // StepList instance — including nested if-branches — has its own engine, so a
-  // drag still only reorders within the list it started in.
-  const { containerProps, getItemProps, getHandleProps } = useDragReorder({
-    ids: steps.map((s) => s.id),
-    onReorder: (nextIds) => {
-      const byId = new Map(steps.map((s) => [s.id, s]));
-      onChange(nextIds.map((id) => byId.get(id)).filter((s): s is Step => Boolean(s)));
-    },
-  });
+  // Drag-reorder via the shared @dnd-kit hook (keyboard + touch). Each StepList
+  // instance — including nested if-branches — has its own context, so a drag still
+  // only reorders within the list it started in.
+  const {
+    items: orderedSteps,
+    DragContext,
+    Sortable,
+  } = useDragReorder({ items: steps, getKey: (s) => s.id, onReorder: onChange, handle: true });
 
   return (
-    <div {...containerProps}>
-      {steps.map((step, i) => {
-        const { isDragging, insertBefore, insertAfter, style, ...itemRest } = getItemProps(step.id);
-        return (
-          <div key={step.id} {...itemRest} style={style} className="relative">
-            <InsertBoundary onInsert={() => insertAt(i, newStep("click"))} />
-            {insertBefore && <DropIndicator orientation="horizontal" side="start" />}
-            <StepRow
-              step={step}
-              index={prefix ? `${prefix}.${i}` : String(i)}
-              results={results}
-              handleProps={getHandleProps(step.id)}
-              onChange={(s) => update(i, s)}
-              onRemove={() => remove(i)}
-              onClone={() => clone(i)}
-              onUp={() => move(i, -1)}
-              onDown={() => move(i, 1)}
-            />
-            {insertAfter && <DropIndicator orientation="horizontal" side="end" />}
-          </div>
-        );
-      })}
-      <InsertBoundary onInsert={() => insertAt(steps.length, newStep("click"))} />
-      <AddStep onAdd={(a) => onChange([...steps, newStep(a)])} />
-    </div>
+    <DragContext>
+      <div>
+        {orderedSteps.map((step, i) => (
+          <Sortable key={step.id} itemKey={step.id}>
+            {({ setNodeRef, setActivatorNodeRef, style, handleProps }) => (
+              <div ref={setNodeRef} style={style} className="relative">
+                <InsertBoundary onInsert={() => insertAt(i, newStep("click"))} />
+                <StepRow
+                  step={step}
+                  index={prefix ? `${prefix}.${i}` : String(i)}
+                  results={results}
+                  handleProps={handleProps}
+                  activatorRef={setActivatorNodeRef}
+                  onChange={(s) => update(i, s)}
+                  onRemove={() => remove(i)}
+                  onClone={() => clone(i)}
+                  onUp={() => move(i, -1)}
+                  onDown={() => move(i, 1)}
+                />
+              </div>
+            )}
+          </Sortable>
+        ))}
+        <InsertBoundary onInsert={() => insertAt(steps.length, newStep("click"))} />
+        <AddStep onAdd={(a) => onChange([...steps, newStep(a)])} />
+      </div>
+    </DragContext>
   );
 }
 
@@ -109,6 +109,7 @@ function StepRow({
   index,
   results,
   handleProps,
+  activatorRef,
   onChange,
   onRemove,
   onClone,
@@ -118,7 +119,8 @@ function StepRow({
   step: Step;
   index: string;
   results: ResultMap;
-  handleProps: { style: CSSProperties; onPointerDown: (e: ReactPointerEvent) => void };
+  handleProps: Record<string, unknown>;
+  activatorRef?: Ref<HTMLSpanElement>;
   onChange: (s: Step) => void;
   onRemove: () => void;
   onClone: () => void;
@@ -134,7 +136,11 @@ function StepRow({
       <div className="flex items-center gap-2">
         {/* Only the grip starts a drag, so the row's inputs stay usable. */}
         <Tooltip content="Drag to reorder" className="shrink-0">
-          <span {...handleProps} className="text-gray-300 hover:text-gray-500 dark:text-gray-600">
+          <span
+            ref={activatorRef}
+            {...handleProps}
+            className="text-gray-300 hover:text-gray-500 dark:text-gray-600"
+          >
             <IconGrip size={16} />
           </span>
         </Tooltip>

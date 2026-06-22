@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type CrossContainerMove, DropIndicator, positionAtIndex, useCrossContainerDrag } from "cursedbelt/react";
+import { positionAtIndex, useCrossContainerDrag } from "cursedbelt/react";
 import { useMemo, useState } from "react";
 import {
   BOARD_STATUS_LABELS,
@@ -55,22 +55,31 @@ export function BoardPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["board"] }),
   });
 
-  // Pointer drag (shared engine): reorder within a column AND move cards across
+  // Drag (the shared @dnd-kit hook): reorder within a column AND move cards across
   // columns to a precise slot, recomputing the fractional position for the target.
   const containers = useMemo(
-    () => Object.fromEntries(BOARD_STATUSES.map((s) => [s, byStatus[s].map((t) => t.id)])),
+    () => BOARD_STATUSES.map((s) => ({ id: s, items: byStatus[s] })),
     [byStatus],
   );
-  const moveCard = ({ id, to, index }: CrossContainerMove) => {
-    const task = tasks.find((t) => t.id === id);
+  const moveCard = (from: string, to: string, fromIndex: number, toIndex: number) => {
+    const task = (byStatus[from as BoardStatus] ?? [])[fromIndex];
     if (!task) return;
     const status = to as BoardStatus;
-    const column = byStatus[status].filter((t) => t.id !== id);
-    save.mutate({ ...task, status, position: positionAtIndex(column.map((t) => t.position), index) });
+    const column = byStatus[status].filter((t) => t.id !== task.id);
+    save.mutate({ ...task, status, position: positionAtIndex(column.map((t) => t.position), toIndex) });
   };
-  const { getContainerProps, getItemProps, getHandleProps, draggingId, activeContainerId } = useCrossContainerDrag({
+  const { ContainerContext, Container, Item } = useCrossContainerDrag<BoardTask>({
     containers,
+    getKey: (t) => t.id,
     onMove: moveCard,
+    renderOverlay: (task) => (
+      <div className={`${CARD_CLASS} flex items-stretch gap-1 p-2 text-sm shadow-2xl`}>
+        <span className="px-1 text-gray-300">
+          <IconGrip size={12} />
+        </span>
+        <span className="py-1 font-medium">{task.title}</span>
+      </div>
+    ),
   });
 
   const CHIP_BASE = "rounded-full px-3 py-1 text-xs font-semibold transition-all";
@@ -102,90 +111,88 @@ export function BoardPage() {
         ))}
       </div>
 
-      <div className="flex flex-1 flex-wrap gap-4 lg:flex-nowrap">
-        {BOARD_STATUSES.map((status) => {
-          const isDropTarget = Boolean(draggingId) && activeContainerId === status;
-          const isDimmed = filter !== null && filter !== status;
-          const isSelected = filter === status;
-          return (
-            <section
-              key={status}
-              aria-label={BOARD_STATUS_LABELS[status]}
-              className={`${COLUMN_CLASS} transition ${isDropTarget ? "ring-2 ring-accent ring-inset" : ""} ${isDimmed ? "opacity-40" : ""}`}
-              {...getContainerProps(status)}
-            >
-              <div className="flex items-center justify-between">
-                <h2
-                  className={`text-xs uppercase tracking-wide transition-colors ${
-                    isSelected ? "font-bold text-accent" : "font-semibold text-gray-500"
-                  }`}
-                >
-                  {BOARD_STATUS_LABELS[status]}
-                  <span className={`ml-1.5 font-normal ${isSelected ? "text-accent/70" : "text-gray-400"}`}>
-                    {byStatus[status].length}
-                  </span>
-                </h2>
-                <Tooltip multiline content={`Creates a new task card in the "${BOARD_STATUS_LABELS[status]}" column — a work item with a title, description, links, images, and notes that you can drag between columns as it progresses.`}>
-                  <button
-                    type="button"
-                    className="rounded px-1.5 text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-                    aria-label={`Add to ${BOARD_STATUS_LABELS[status]}`}
-                    onClick={() => {
-                      setNewStatus(status);
-                      setEditing("new");
-                    }}
+      <ContainerContext>
+        <div className="flex flex-1 flex-wrap gap-4 lg:flex-nowrap">
+          {BOARD_STATUSES.map((status) => {
+            const isDimmed = filter !== null && filter !== status;
+            const isSelected = filter === status;
+            return (
+              <Container key={status} containerId={status}>
+                {({ setNodeRef, isOver, items }) => (
+                  <section
+                    ref={setNodeRef}
+                    aria-label={BOARD_STATUS_LABELS[status]}
+                    className={`${COLUMN_CLASS} transition ${isOver ? "ring-2 ring-accent ring-inset" : ""} ${isDimmed ? "opacity-40" : ""}`}
                   >
-                    +
-                  </button>
-                </Tooltip>
-              </div>
-              {byStatus[status].map((task) => {
-                const { isDragging, insertBefore, insertAfter, style, ...itemRest } = getItemProps(status, task.id);
-                const handle = getHandleProps(status, task.id);
-                return (
-                  <div
-                    key={task.id}
-                    {...itemRest}
-                    style={style}
-                    className="relative"
-                  >
-                    {insertBefore && <DropIndicator orientation="horizontal" side="start" />}
-                    <div className={`${CARD_CLASS} flex items-stretch gap-1 p-2 text-sm transition hover:border-accent/60`}>
-                      {/* Drag grip — only this has touchAction:none so columns scroll freely on mobile */}
-                      <button
-                        type="button"
-                        {...handle}
-                        aria-label={`Drag ${task.title}`}
-                        title="Drag to move"
-                        className="flex shrink-0 items-center justify-center rounded px-1 text-gray-300 hover:text-gray-500 pointer-coarse:min-h-[44px] pointer-coarse:px-2 dark:text-gray-600 dark:hover:text-gray-400"
+                    <div className="flex items-center justify-between">
+                      <h2
+                        className={`text-xs uppercase tracking-wide transition-colors ${
+                          isSelected ? "font-bold text-accent" : "font-semibold text-gray-500"
+                        }`}
                       >
-                        <IconGrip size={12} />
-                      </button>
-                      {/* Card content — tap to open editor */}
-                      <button
-                        type="button"
-                        onClick={() => setEditing(task)}
-                        className="min-w-0 flex-1 py-1 text-left"
-                      >
-                        <span className="font-medium">{task.title}</span>
-                        {task.description && <p className="mt-1 line-clamp-2 text-xs text-gray-500">{task.description}</p>}
-                        {(task.links.length > 0 || task.images.length > 0) && (
-                          <p className="mt-1 text-xs text-gray-400">
-                            {task.links.length > 0 && `${task.links.length} link(s)`}
-                            {task.links.length > 0 && task.images.length > 0 && " · "}
-                            {task.images.length > 0 && `${task.images.length} image(s)`}
-                          </p>
-                        )}
-                      </button>
+                        {BOARD_STATUS_LABELS[status]}
+                        <span className={`ml-1.5 font-normal ${isSelected ? "text-accent/70" : "text-gray-400"}`}>
+                          {items.length}
+                        </span>
+                      </h2>
+                      <Tooltip multiline content={`Creates a new task card in the "${BOARD_STATUS_LABELS[status]}" column — a work item with a title, description, links, images, and notes that you can drag between columns as it progresses.`}>
+                        <button
+                          type="button"
+                          className="rounded px-1.5 text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                          aria-label={`Add to ${BOARD_STATUS_LABELS[status]}`}
+                          onClick={() => {
+                            setNewStatus(status);
+                            setEditing("new");
+                          }}
+                        >
+                          +
+                        </button>
+                      </Tooltip>
                     </div>
-                    {insertAfter && <DropIndicator orientation="horizontal" side="end" />}
-                  </div>
-                );
-              })}
-            </section>
-          );
-        })}
-      </div>
+                    {items.map((task) => (
+                      <Item key={task.id} containerId={status} itemKey={task.id}>
+                        {({ setNodeRef: cardRef, setActivatorNodeRef, style, handleProps }) => (
+                          <div ref={cardRef} style={style} className="relative">
+                            <div className={`${CARD_CLASS} flex items-stretch gap-1 p-2 text-sm transition hover:border-accent/60`}>
+                              {/* Drag grip — only this drags so columns scroll freely on mobile */}
+                              <button
+                                type="button"
+                                ref={setActivatorNodeRef}
+                                {...handleProps}
+                                aria-label={`Drag ${task.title}`}
+                                title="Drag to move"
+                                className="flex shrink-0 items-center justify-center rounded px-1 text-gray-300 hover:text-gray-500 pointer-coarse:min-h-[44px] pointer-coarse:px-2 dark:text-gray-600 dark:hover:text-gray-400"
+                              >
+                                <IconGrip size={12} />
+                              </button>
+                              {/* Card content — tap to open editor */}
+                              <button
+                                type="button"
+                                onClick={() => setEditing(task)}
+                                className="min-w-0 flex-1 py-1 text-left"
+                              >
+                                <span className="font-medium">{task.title}</span>
+                                {task.description && <p className="mt-1 line-clamp-2 text-xs text-gray-500">{task.description}</p>}
+                                {(task.links.length > 0 || task.images.length > 0) && (
+                                  <p className="mt-1 text-xs text-gray-400">
+                                    {task.links.length > 0 && `${task.links.length} link(s)`}
+                                    {task.links.length > 0 && task.images.length > 0 && " · "}
+                                    {task.images.length > 0 && `${task.images.length} image(s)`}
+                                  </p>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </Item>
+                    ))}
+                  </section>
+                )}
+              </Container>
+            );
+          })}
+        </div>
+      </ContainerContext>
 
       {editing && (
         <TaskEditor
