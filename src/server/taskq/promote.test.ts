@@ -148,11 +148,42 @@ describe('healReason', () => {
     expect(healReason({ integrationGreen: false })).toBe('build');
     expect(healReason({ integrationGreen: false, smokeGreen: false })).toBe('build');
   });
-  test('build green but smoke failed → "smoke"', () => {
+  test('build green but smoke failed → "smoke" (takes precedence over render)', () => {
     expect(healReason({ integrationGreen: true, smokeGreen: false })).toBe('smoke');
+    expect(healReason({ integrationGreen: true, smokeGreen: false, renderGreen: false })).toBe('smoke');
+  });
+  test('build + boot green but render failed (white screen) → "render"', () => {
+    expect(healReason({ integrationGreen: true, smokeGreen: true, renderGreen: false })).toBe('render');
+    expect(healReason({ integrationGreen: true, renderGreen: false })).toBe('render');
   });
   test('fully green → null', () => {
     expect(healReason({ integrationGreen: true })).toBeNull();
     expect(healReason({ integrationGreen: true, smokeGreen: true })).toBeNull();
+    expect(healReason({ integrationGreen: true, smokeGreen: true, renderGreen: true })).toBeNull();
+  });
+});
+
+describe('render smoke gate (anti white-screen)', () => {
+  test('repoGreen: build + boot green but render FAILED → NOT green (the white screen build+boot missed)', () => {
+    expect(repoGreen({ integrationGreen: true, smokeGreen: true, renderGreen: false })).toBe(false);
+  });
+  test('repoGreen: render undefined (inconclusive / no render ran) never blocks', () => {
+    expect(repoGreen({ integrationGreen: true, smokeGreen: true })).toBe(true);
+  });
+  test('decideRepo: main-behind + build+boot green but render RED → hold-red', () => {
+    expect(
+      decideRepo({ repo: 'ru', ancestry: 'main-behind', integrationGreen: true, smokeGreen: true, renderGreen: false }, true),
+    ).toBe('hold-red');
+  });
+  test('decideSystem: a repo that BUILDS+BOOTS green but WHITE-SCREENS holds back ALL promotions', () => {
+    const actions = decideSystem([
+      { repo: 'ca', ancestry: 'main-behind', integrationGreen: true, smokeGreen: true, renderGreen: false },
+      { repo: 'ru', ancestry: 'main-behind', integrationGreen: true, smokeGreen: true, renderGreen: true },
+    ]);
+    expect(actions.get('ca')).toBe('hold-red');
+    expect(actions.get('ru')).toBe('hold-red'); // held because the system isn't all-green
+  });
+  test('integrationNeedsHeal: white-screened render → heal', () => {
+    expect(integrationNeedsHeal({ integrationGreen: true, smokeGreen: true, renderGreen: false })).toBe(true);
   });
 });

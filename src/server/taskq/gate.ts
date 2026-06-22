@@ -89,6 +89,22 @@ export interface GateSmokeResult {
   logTail?: string;
 }
 
+/** Outcome of a consumer's HEADLESS RENDER smoke (the shape `GateOptions.runRender` returns). */
+export interface GateRenderResult {
+  /**
+   * Did the render check RUN to a conclusion (browser launched + page navigated)? A
+   * check that couldn't run (no browser / server didn't boot) is `ran:false` → INCONCLUSIVE,
+   * and must NOT block promotion (it's not a proven white screen).
+   */
+  ran: boolean;
+  /** Did the UI render cleanly (React root mounted, no fatal errors)? Meaningless when `!ran`. */
+  ok: boolean;
+  /** Human-readable summary (success line, or the white-screen / error reason). */
+  detail: string;
+  /** Detail + recent server output — the gold when a render fails. */
+  logTail?: string;
+}
+
 export interface GateOptions {
   /** Repos to manage, in any order (build order is derived from `role`). */
   repos: GateRepo[];
@@ -110,6 +126,15 @@ export interface GateOptions {
    * via a guarded lazy import. Omitted entirely ⇒ build-only gate (today's behaviour).
    */
   runSmoke?: (repo: GateRepo) => Promise<GateSmokeResult | null>;
+  /**
+   * INJECTED headless render smoke (anti-white-screen): after a green build + boot, load
+   * the built UI in a real browser and assert the React root mounts cleanly (see
+   * `renderSmoke.ts`). Called for each built+green+booted repo; return `null` for a repo
+   * with no render smoke (providers / not-yet-enabled consumers) so it stays build+boot
+   * only. A SEAM for the same reason as `runSmoke` (no hard `renderSmoke`/`cwip/testing`/
+   * Playwright import here). Omitted ⇒ build+boot gate, no render gating.
+   */
+  runRender?: (repo: GateRepo) => Promise<GateRenderResult | null>;
   /** Run the real-cwip dist freshness self-heal (production only; off when repos are overridden). */
   selfHealCwip: boolean;
   /** cwip main checkout + its `-integration` sibling, for the dist self-heal. */
@@ -133,6 +158,10 @@ export interface GateRepoResult {
   smoked: boolean;
   /** The boot-smoke result (undefined = not run; true/false = passed/failed). */
   smokeGreen?: boolean;
+  /** Whether the headless render smoke ran to a conclusion this cycle. */
+  rendered: boolean;
+  /** The render-smoke result (undefined = not run/inconclusive; true/false = clean/white-screen). */
+  renderGreen?: boolean;
 }
 
 export type GateOutcome = 'ran' | 'skipped-worker-active' | 'skipped-locked';
@@ -229,6 +258,10 @@ interface RepoFacts extends RepoState {
   smoked: boolean;
   /** Last lines of the smoked server's output (the gold when a boot fails). */
   smokeTail?: string;
+  /** Whether the headless render smoke ran to a conclusion this cycle. */
+  rendered: boolean;
+  /** Render-smoke detail + recent output (the gold when a render fails). */
+  renderTail?: string;
 }
 
 /**
@@ -350,6 +383,7 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
         intSha: c.intSha,
         built: false,
         smoked: false,
+        rendered: false,
       };
     });
     const factOf = (name: string) => facts.find((f) => f.repo === name)!;
@@ -415,31 +449,63 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
       }
     }
 
+    // ── 2c. HEADLESS RENDER smoke — the cross-repo "the UI actually renders" check.
+    // After a green build + boot, load the built UI in a real browser and assert the React
+    // root MOUNTS with no fatal errors, catching a WHITE SCREEN that compiles AND boots but
+    // never renders (a React-dedupe gap → null hook dispatcher, a mount throw). Same injected-
+    // seam shape as the boot smoke; returns null for a repo with no render smoke. A check that
+    // can't run (no browser) is INCONCLUSIVE (renderGreen stays undefined) and never blocks.
+    if (opts.runRender) {
+      for (const r of repos) {
+        const f = factOf(r.name);
+        // Only render a freshly-built, green integration whose boot smoke didn't fail.
+        if (!f.built || !f.integrationGreen || f.smokeGreen === false) continue;
+        if (dry) {
+          log(`${r.name}: [dry] would headless render-smoke (if render-configured)`);
+          f.rendered = true;
+          continue;
+        }
+        const result = await opts.runRender(r);
+        if (!result) continue; // no render smoke configured for this repo → stays build+boot only
+        f.rendered = result.ran;
+        // Only a check that RAN sets renderGreen; an inconclusive run leaves it undefined.
+        f.renderGreen = result.ran ? result.ok : undefined;
+        f.renderTail = result.logTail;
+        log(
+          `${r.name}: headless render smoke ${result.ran ? (result.ok ? 'GREEN' : 'RED') : 'INCONCLUSIVE'} — ${result.detail}`,
+        );
+      }
+    }
+
     // ── 3. decide + (4) promote / catch-up / heal ───────────────────────────
-    // Fold the smoke INTO the green signal the decision core consumes: a repo that
-    // BUILDS but fails its boot smoke is not promotable-green (`repoGreen`), so it holds
-    // promotion + earns a heal task, exactly like a build failure.
+    // Fold the smokes INTO the green signal the decision core consumes: a repo that BUILDS
+    // but fails its boot smoke OR white-screens its render smoke is not promotable-green
+    // (`repoGreen`), so it holds promotion + earns a heal task, exactly like a build failure.
     const actions = decideSystem(
       facts.map((f) => ({
         repo: f.repo,
         ancestry: f.ancestry,
         integrationGreen: f.integrationGreen,
         smokeGreen: f.smokeGreen,
+        renderGreen: f.renderGreen,
       })),
     );
     const systemGreen = facts.every(repoGreen);
     const promoted: string[] = [];
     let kicked = false;
 
-    const ensureHealTask = (r: GateRepo, kind: 'build' | 'smoke' | 'diverged', tail: string): boolean => {
+    const ensureHealTask = (r: GateRepo, kind: 'build' | 'smoke' | 'render' | 'diverged', tail: string): boolean => {
       const slug = `heal-${r.name}-integration`;
       const intro =
         kind === 'build'
           ? `P0 — refactor/integration is RED on ${r.name}: \`bun run build\` fails, so the promotion gate cannot advance main. Fix it ON refactor/integration.`
           : kind === 'smoke'
             ? `P0 — refactor/integration BUILDS but won't BOOT on ${r.name}: \`bun run build\` passes yet the runtime boot smoke (boot the server on an isolated home/port, hit /api/health) FAILS — a missing-export crash or a bad import at startup. The gate cannot advance main. Fix it ON refactor/integration; confirm the server actually boots + answers /api/health.`
-            : `P0 — ${r.name} main and refactor/integration have DIVERGED (neither fast-forwards). Reconcile them on refactor/integration (merge main into refactor/integration, resolve, verify) so the gate can promote again.`;
-      const tailLabel = kind === 'smoke' ? 'Recent server boot output' : 'Recent build output';
+            : kind === 'render'
+              ? `P0 — refactor/integration WHITE-SCREENS on ${r.name}: \`bun run build\` + the boot smoke pass, yet the headless render smoke (load the built UI in a real browser) finds the React root never mounts cleanly — a React-dedupe gap (a second React copy → null hook dispatcher), a runtime mount throw, or a missing context provider. The gate cannot advance main. Fix it ON refactor/integration; confirm \`bun run build\` then \`bun run src/scripts/renderSmoke.ts\` is GREEN.`
+              : `P0 — ${r.name} main and refactor/integration have DIVERGED (neither fast-forwards). Reconcile them on refactor/integration (merge main into refactor/integration, resolve, verify) so the gate can promote again.`;
+      const tailLabel =
+        kind === 'smoke' ? 'Recent server boot output' : kind === 'render' ? 'Render smoke detail + server output' : 'Recent build output';
       const body =
         `${intro}\n` +
         `WORKFLOW: branch a worktree FROM refactor/integration (name it <slug>-integration), fix, verify THIS repo builds (\`bun run build\`), then merge back to refactor/integration — NEVER main. main is promotion-only; the gate fast-forwards it once the whole system is green.\n` +
@@ -501,18 +567,21 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
           break;
         }
         case 'hold-red': {
-          const reason = healReason(f); // 'build' | 'smoke' | null
+          const reason = healReason(f); // 'build' | 'smoke' | 'render' | null
           const why =
             reason === 'build'
               ? 'this repo build RED'
               : reason === 'smoke'
                 ? 'this repo boot-smoke RED'
-                : 'system not all-green';
+                : reason === 'render'
+                  ? 'this repo render-smoke RED (white screen)'
+                  : 'system not all-green';
           log(`${r.name}: integration ahead but held (${why}) — main stays put`);
-          // Only the repo that's actually broken (build or smoke) gets a heal task; a repo
+          // Only the repo that's actually broken (build/smoke/render) gets a heal task; a repo
           // held merely because a SIBLING is red (reason === null) just waits.
           if (reason === 'build') kicked = ensureHealTask(r, 'build', f.buildTail ?? '') || kicked;
           else if (reason === 'smoke') kicked = ensureHealTask(r, 'smoke', f.smokeTail ?? '') || kicked;
+          else if (reason === 'render') kicked = ensureHealTask(r, 'render', f.renderTail ?? '') || kicked;
           break;
         }
         case 'diverged':
@@ -556,7 +625,9 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
                 : f.integrationGreen
                   ? f.smokeGreen === false
                     ? 'integration-boot-red'
-                    : 'promotable'
+                    : f.renderGreen === false
+                      ? 'integration-render-red'
+                      : 'promotable'
                   : 'integration-red';
     }
 
@@ -581,6 +652,8 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
             integrationGreen: f.integrationGreen,
             smoked: f.smoked,
             smokeGreen: f.smokeGreen,
+            rendered: f.rendered,
+            renderGreen: f.renderGreen,
           },
         ]),
       ),

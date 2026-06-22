@@ -65,20 +65,32 @@ export interface RepoState {
    * it never blocks. Only an explicit `false` (smoke ran and FAILED) holds promotion.
    */
   smokeGreen?: boolean;
+  /**
+   * Did the HEADLESS RENDER smoke pass — booting the built UI and asserting the React
+   * root actually MOUNTS in a real browser with no fatal console/page errors? This is
+   * the THIRD, independent gate on top of build + boot: it catches a WHITE SCREEN that
+   * compiles AND boots but never renders (a React-dedupe gap → null hook dispatcher, a
+   * runtime mount throw, a missing context provider).
+   *
+   * Same convention as `smokeGreen`: `undefined` (no render smoke applies / inconclusive —
+   * no browser available) never blocks; only an explicit `false` (rendered and FAILED)
+   * holds promotion.
+   */
+  renderGreen?: boolean;
 }
 
 /** What the gate should do for one repo this cycle. */
 export type PromoteAction = 'promote' | 'catch-up' | 'hold-red' | 'diverged' | 'none';
 
 /**
- * Is this repo's integration "promotable-green"? It must clear BOTH gates: the
- * build passed AND the runtime boot smoke didn't explicitly fail. An `undefined`
- * `smokeGreen` (no smoke applies/was run) does NOT block — only a `false` does. So a
- * build that compiles but crashes on boot (`integrationGreen` true, `smokeGreen`
- * false) is correctly NOT green.
+ * Is this repo's integration "promotable-green"? It must clear ALL THREE gates: the
+ * build passed AND the runtime boot smoke didn't explicitly fail AND the headless render
+ * smoke didn't explicitly fail. An `undefined` smoke/render (none applies/was run, or an
+ * inconclusive render) does NOT block — only a `false` does. So a build that compiles but
+ * crashes on boot, OR boots but white-screens, is correctly NOT green.
  */
-export function repoGreen(s: Pick<RepoState, 'integrationGreen' | 'smokeGreen'>): boolean {
-  return s.integrationGreen && s.smokeGreen !== false;
+export function repoGreen(s: Pick<RepoState, 'integrationGreen' | 'smokeGreen' | 'renderGreen'>): boolean {
+  return s.integrationGreen && s.smokeGreen !== false && s.renderGreen !== false;
 }
 
 /**
@@ -119,19 +131,22 @@ export function decideSystem(repos: RepoState[]): Map<string, PromoteAction> {
  * True when a repo's integration isn't promotable-green — its build failed OR its
  * runtime boot smoke failed — and so warrants a heal task.
  */
-export function integrationNeedsHeal(s: Pick<RepoState, 'integrationGreen' | 'smokeGreen'>): boolean {
+export function integrationNeedsHeal(s: Pick<RepoState, 'integrationGreen' | 'smokeGreen' | 'renderGreen'>): boolean {
   return !repoGreen(s);
 }
 
 /**
- * Why a repo isn't promotable-green, for routing/labelling a heal task. `'build'`
- * (failed `bun run build`) takes precedence over `'smoke'` (built fine but the
- * runtime boot smoke failed); `null` when the repo IS green. Ancestry-driven
+ * Why a repo isn't promotable-green, for routing/labelling a heal task, in precedence
+ * order: `'build'` (failed `bun run build`) → `'smoke'` (built but won't boot) →
+ * `'render'` (boots but white-screens); `null` when the repo IS green. Ancestry-driven
  * `'diverged'` is handled separately by the caller (it's not a redness).
  */
-export function healReason(s: Pick<RepoState, 'integrationGreen' | 'smokeGreen'>): 'build' | 'smoke' | null {
+export function healReason(
+  s: Pick<RepoState, 'integrationGreen' | 'smokeGreen' | 'renderGreen'>,
+): 'build' | 'smoke' | 'render' | null {
   if (!s.integrationGreen) return 'build';
   if (s.smokeGreen === false) return 'smoke';
+  if (s.renderGreen === false) return 'render';
   return null;
 }
 
