@@ -91,8 +91,9 @@ merges **back to `refactor/integration`** — never `main`. Cross-repo or whole-
 breakage on integration is tolerated; a heal task fixes it later. `main` is never
 touched by a worker.
 
-`main` only ever advances through the **promotion gate** — the evolved
-`~/.taskq/main-health-watchdog.ts` (launchd, every ~10m). Each idle cycle it:
+`main` only ever advances through the **promotion gate** — the version-controlled
+`src/scripts/integrationGate.ts` (launchd job `com.taskq.mainhealth`, every ~10m;
+evolved from the old untracked `~/.taskq/main-health-watchdog.ts`). Each idle cycle it:
 
 1. Classifies each repo's `main` ↔ `refactor/integration` ancestry.
 2. **Builds** the integration worktrees that are ahead (providers `cwip`/`cursedbelt`
@@ -107,7 +108,24 @@ touched by a worker.
 5. After promoting, rebuilds the providers' main `dist` and re-relinks the consumer
    main checkouts so localhost (which runs off `main`) stays current.
 
-The promote/ancestry decision core is the pure, unit-tested
-`src/server/taskq/promote.ts` (`decideSystem`/`decideRepo`/`ancestryFrom`), imported by
-the watchdog. Run the watchdog with `--dry` to see the decisions without mutating
-anything; its repo set + `TASKQ_HOME` are env-overridable for an isolated end-to-end test.
+The gate is layered for review + test:
+
+- **`src/server/taskq/promote.ts`** — the PURE promote/ancestry decision core
+  (`decideSystem`/`decideRepo`/`ancestryFrom`), unit-tested in `promote.test.ts`.
+- **`src/server/taskq/gate.ts`** — the IMPURE git/build/heal wiring (`runGate`). It
+  imports only `node:*` + the zero-import pure core, so the gate still loads/runs when
+  the rest of rubato (or cwip) is mid-broken — and shells out to the taskq CLI rather
+  than importing `cwip/taskq` for the same resilience. The taskq board, launchd kick,
+  and logging are injected, so `src/test/integration/integrationGate.int.test.ts`
+  exercises the real git/build/ff/heal wiring in-process against throwaway temp repos
+  (ported from the old `~/.taskq/verify-intgate.ts`).
+- **`src/scripts/integrationGate.ts`** — the thin launchd entrypoint (mirrors
+  `taskqDrain.ts`). `--dry` decides + logs without mutating; `--print-launchd` emits the
+  `com.taskq.mainhealth` plist (pointing at this repo file); the repo set + `TASKQ_HOME`
+  are env-overridable (`MAINHEALTH_REPOS_JSON`/`MAINHEALTH_NO_KICK`) for an isolated run.
+
+**Cutover from the old untracked watchdog** (once this file is on each repo's `main`):
+regenerate the plist from the repo and reload it —
+`bun run src/scripts/integrationGate.ts --print-launchd > ~/Library/LaunchAgents/com.taskq.mainhealth.plist`,
+then `launchctl unload … && launchctl load -w …`. The label is unchanged, so it
+replaces the old job in place.

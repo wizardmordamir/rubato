@@ -1,0 +1,164 @@
+/**
+ * Integration: the promotion gate's IMPURE git/build/heal wiring (`runGate` from
+ * `src/server/taskq/gate.ts`), driven IN-PROCESS against throwaway temp git repos
+ * with an in-memory taskq board. Ports the old `~/.taskq/verify-intgate.ts` fixture
+ * into the testkit so the gate is reviewable + regression-tested.
+ *
+ * Real `git` + real `bun run build` run against the temp repos (build = green unless
+ * a committed `BROKEN` file is present); only the taskq board, the launchd kick, and
+ * logging are injected. Covers:
+ *  A. PROMOTE        — green system, a consumer integration ahead → main fast-forwarded.
+ *  B. SYSTEM-GATING  — one repo's integration RED → NO promotion anywhere.
+ *  C. HEAL + DEDUP   — the red integration spawns one deduped heal-<repo>-integration task.
+ *  D. RECOVERY       — repair the red integration → the whole system promotes.
+ *  E. CATCH-UP       — main ahead of integration → integration fast-forwarded up to main.
+ */
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { type GateBoard, type GateRepo, type GateTask, runGate } from '../../server/taskq/gate';
+
+let ROOT: string;
+let TASKQ_HOME: string;
+
+const git = (args: string[], cwd: string) => execFileSync('git', args, { cwd, encoding: 'utf8' });
+const rev = (ref: string, cwd: string) => git(['rev-parse', '--short', ref], cwd).trim();
+
+/** A green-by-default repo: build fails only when a committed `BROKEN` file exists. */
+function makeRepo(name: string): { main: string; integ: string } {
+  const main = join(ROOT, name);
+  const integ = join(ROOT, `${name}-integration`);
+  mkdirSync(main, { recursive: true });
+  git(['init', '-q', '-b', 'main'], main);
+  git(['config', 'user.email', 't@t'], main);
+  git(['config', 'user.name', 'test'], main);
+  git(['config', 'commit.gpgsign', 'false'], main);
+  writeFileSync(`${main}/package.json`, JSON.stringify({ name, scripts: { build: 'test ! -f BROKEN' } }, null, 2));
+  writeFileSync(`${main}/file.txt`, 'v1\n');
+  git(['add', '-A'], main);
+  git(['commit', '-qm', 'init'], main);
+  git(['branch', 'refactor/integration'], main);
+  git(['worktree', 'add', '-q', integ, 'refactor/integration'], main);
+  return { main, integ };
+}
+
+/** Commit on a worktree's checked-out branch (advances that branch). */
+function commitOn(dir: string, file: string, content: string, msg: string) {
+  writeFileSync(`${dir}/${file}`, content);
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', msg], dir);
+}
+
+/** An in-memory taskq board recording the heal tasks the gate creates/re-arms. */
+function makeBoard(): { board: GateBoard; tasks: GateTask[] } {
+  const tasks: GateTask[] = [];
+  let nextId = 1;
+  const board: GateBoard = {
+    list: () => tasks.map((t) => ({ ...t })),
+    add: ({ slug }) => {
+      tasks.push({ id: nextId++, slug, status: 'ready' });
+    },
+    update: () => {
+      /* body/note are not asserted here */
+    },
+    setStatus: (id, status) => {
+      const t = tasks.find((x) => x.id === id);
+      if (t) t.status = status;
+    },
+  };
+  return { board, tasks };
+}
+
+let fp: { main: string; integ: string };
+let app: { main: string; integ: string };
+let repos: GateRepo[];
+let store: ReturnType<typeof makeBoard>;
+
+const drive = () =>
+  runGate({
+    repos,
+    taskqHome: TASKQ_HOME,
+    dry: false,
+    board: store.board,
+    kick: () => {},
+    selfHealCwip: false,
+    bun: process.execPath,
+    path: process.env.PATH ?? '',
+  });
+
+const healOf = (slug: string) => store.tasks.filter((t) => t.slug === slug);
+
+beforeAll(() => {
+  ROOT = mkdtempSync(join(tmpdir(), 'intgate-'));
+  TASKQ_HOME = join(ROOT, '.taskq');
+  mkdirSync(TASKQ_HOME, { recursive: true });
+  fp = makeRepo('fp'); // provider
+  app = makeRepo('app'); // consumer
+  repos = [
+    { name: 'fp', main: fp.main, integ: fp.integ, role: 'provider' },
+    { name: 'app', main: app.main, integ: app.integ, role: 'consumer' },
+  ];
+  store = makeBoard();
+});
+
+afterAll(() => {
+  rmSync(ROOT, { recursive: true, force: true });
+});
+
+// The scenarios share evolving git state, so they run as ordered steps (verify-intgate's flow).
+describe('promotion gate — runGate against temp repos', () => {
+  test('A. PROMOTE: a green consumer integration ahead → main fast-forwarded; no heal', () => {
+    commitOn(app.integ, 'file.txt', 'v2\n', 'feat: green change on integration');
+    const appInt = rev('refactor/integration', app.main);
+    const summary = drive();
+    expect(rev('main', app.main)).toBe(appInt); // app main promoted to its green integration
+    expect(summary.promoted).toContain('app');
+    expect(summary.systemGreen).toBe(true);
+    expect(store.tasks.length).toBe(0); // nothing red → no heal task
+  });
+
+  test('B+C. a RED integration blocks promotion system-wide and spawns ONE deduped heal task', () => {
+    commitOn(app.integ, 'BROKEN', 'boom\n', 'break the integration build'); // app integration RED + ahead
+    commitOn(fp.integ, 'file.txt', 'v2\n', 'feat: green provider change'); // fp integration GREEN + ahead
+    const appMainBefore = rev('main', app.main);
+    const fpMainBefore = rev('main', fp.main);
+
+    const summary = drive();
+    expect(rev('main', app.main)).toBe(appMainBefore); // RED integration → app main held
+    expect(rev('main', fp.main)).toBe(fpMainBefore); // system not all-green → fp held too
+    expect(summary.systemGreen).toBe(false);
+    expect(summary.promoted).toEqual([]);
+
+    const heal = healOf('heal-app-integration');
+    expect(heal.length).toBe(1);
+    expect(['ready', 'claimed']).toContain(heal[0].status);
+
+    drive(); // a second cycle must NOT duplicate the heal task
+    expect(healOf('heal-app-integration').length).toBe(1);
+  });
+
+  test('D. RECOVERY: repairing the red integration promotes the whole system', () => {
+    git(['rm', '-q', 'BROKEN'], app.integ);
+    git(['commit', '-qm', 'fix: repair integration build'], app.integ);
+    const appInt = rev('refactor/integration', app.main);
+    const fpInt = rev('refactor/integration', fp.main);
+
+    const summary = drive();
+    expect(rev('main', app.main)).toBe(appInt); // app promoted once green again
+    expect(rev('main', fp.main)).toBe(fpInt); // fp promoted now the system is green
+    expect(summary.systemGreen).toBe(true);
+    expect(summary.promoted.sort()).toEqual(['app', 'fp']);
+  });
+
+  test('E. CATCH-UP: a commit straight on main → integration fast-forwarded up to main', () => {
+    commitOn(fp.main, 'file.txt', 'v3-main\n', 'chore: a commit on fp main ahead of integration');
+    const fpMain = rev('main', fp.main);
+
+    const summary = drive();
+    expect(rev('refactor/integration', fp.main)).toBe(fpMain); // integration caught up to main
+    expect(summary.repos.fp.action).toBe('catch-up');
+    expect(summary.repos.fp.ancestry).toBe('main-ahead');
+  });
+});
