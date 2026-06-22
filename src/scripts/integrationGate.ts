@@ -21,7 +21,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   defaultGateRepos,
@@ -41,8 +41,9 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
  * LAZILY + guarded, memoized across repos: a mid-broken cwip/testing degrades to the
  * build-only gate (returns `null`) instead of crashing the entrypoint — the same
  * resilience the rest of this file keeps by shelling out rather than importing cwip.
- * Only `ru` boots today; `ca`'s smoke is a follow-up (`fu-intgate-smoke-ca`) and
- * providers have no server, so they return `null` (build-only).
+ * `ru` boots from the worktree root; `ca` boots from its `server/` workspace
+ * (`bun src/index.ts`), verified green in-repo by `fu-intgate-smoke-ca`. Providers have
+ * no server, so they return `null` (build-only).
  */
 function makeRunSmoke(onLog: (line: string) => void) {
   let mod: typeof import('../server/taskq/bootSmoke') | null | undefined;
@@ -57,12 +58,18 @@ function makeRunSmoke(onLog: (line: string) => void) {
     return mod;
   };
   return async (repo: GateRepo): Promise<GateSmokeResult | null> => {
-    if (repo.name !== 'ru') return null;
+    if (repo.name !== 'ru' && repo.name !== 'ca') return null;
     const m = await load();
     if (!m) return null;
     const port = await m.pickFreePort();
     const homeDir = m.smokeHomeDir(repo.name, `${process.pid}-${port}`);
-    const res = await m.runBootSmoke(m.rubatoSmokeSpec({ cwd: repo.integ, port, homeDir, timeoutMs: 45_000 }));
+    // Per-repo boot recipe: ca boots `bun src/index.ts` from its `server/` workspace and
+    // needs a longer bound (a cold multi-workspace boot); ru boots from the worktree root.
+    const spec =
+      repo.name === 'ca'
+        ? m.caSmokeSpec({ cwd: join(repo.integ, 'server'), port, homeDir, timeoutMs: 60_000 })
+        : m.rubatoSmokeSpec({ cwd: repo.integ, port, homeDir, timeoutMs: 45_000 });
+    const res = await m.runBootSmoke(spec);
     return { ok: res.ok, detail: res.detail, logTail: res.logTail };
   };
 }
