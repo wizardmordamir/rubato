@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCopyToClipboard } from "cwip/react";
+import { useCopyToClipboard } from "cursedbelt/react";
 import { type ReactNode, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { CaptureSummary } from "@shared/capture";

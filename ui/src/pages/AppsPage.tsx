@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { EnvEditor } from "cwip/react";
+import { EnvEditor } from "cursedbelt/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";

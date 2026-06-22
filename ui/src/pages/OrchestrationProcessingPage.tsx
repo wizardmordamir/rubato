@@ -1,17 +1,7 @@
+import { type BarDatum, CategoryBars, CategoryDonut, ChartThemeProvider, chartThemeFor, type DonutSlice, formatMs, TimeSeriesChart } from 'cursedbelt/react/charts';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CATEGORY_GROUP_LABELS, colorForCategory } from "cwip/orchestration";
-import {
-  type BarDatum,
-  CategoryBars,
-  CategoryDonut,
-  ChartThemeProvider,
-  chartThemeFor,
-  DisclosureButton,
-  type DonutSlice,
-  formatMs,
-  StatTile,
-  TimeSeriesChart,
-} from "cwip/react";
+import { DisclosureButton, StatTile } from "cursedbelt/react";
 import { useMemo, useState } from "react";
 import {
   clearTimings,

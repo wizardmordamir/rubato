@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type CrossContainerMove, DropIndicator, positionAtIndex, useCrossContainerDrag } from "cwip/react";
+import { type CrossContainerMove, DropIndicator, positionAtIndex, useCrossContainerDrag } from "cursedbelt/react";
 import { useMemo, useState } from "react";
 import {
   BOARD_STATUS_LABELS,

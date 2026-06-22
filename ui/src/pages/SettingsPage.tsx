@@ -4,7 +4,7 @@
 // Dark mode and sidebar-collapsed toggle live in the sidebar footer, not here.
 
 import { useQuery } from "@tanstack/react-query";
-import { UiScaleControl } from "cwip/react";
+import { UiScaleControl } from "cursedbelt/react";
 import { type ReactNode } from "react";
 import { fetchUi } from "../api";
 import { toggleAutoScroll, useAutoScroll } from "../autoscroll";

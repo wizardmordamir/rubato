@@ -1,6 +1,6 @@
 import { normalizeHomedir, parseTemplateEntries } from "@shared/appsTemplate";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AddItemsMenu, DismissButton, JsonEditor, useDismissibleItems } from "cwip/react";
+import { AddItemsMenu, DismissButton, JsonEditor, useDismissibleItems } from "cursedbelt/react";
 import { useMemo, useState } from "react";
 import {
   addAppsToTemplate,

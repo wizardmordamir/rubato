@@ -9,7 +9,7 @@
  * through the same row — one source of truth for "view/open a run's file".
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCopyToClipboard } from "cwip/react";
+import { useCopyToClipboard } from "cursedbelt/react";
 import { useState } from "react";
 import { fetchFileContent, fileDownloadUrl } from "./api";
 import { OpenPathButton, Tooltip } from "./components";

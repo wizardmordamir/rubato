@@ -1,5 +1,5 @@
 import type { AutomationStep, StepResult, StepType } from "cwip/excel-engine/types";
-import { InfoHint } from "cwip/react";
+import { InfoHint } from "cursedbelt/react";
 import { Dropdown, FIELD_CLASS, Tooltip } from "../../../components";
 import { newStep, STEP_TYPE_LABEL, STEP_TYPES } from "./model";
 import { STEP_EDITORS } from "./StepEditors";

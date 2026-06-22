@@ -1,5 +1,6 @@
+import { DivergingBars } from 'cursedbelt/react/charts';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DivergingBars, StatTile } from "cwip/react";
+import { StatTile } from "cursedbelt/react";
 import { type ReactNode, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {

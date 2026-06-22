@@ -1,5 +1,5 @@
 import { getErrorMessage } from "cwip";
-import { createApiHooks } from "cwip/react";
+import { createApiHooks } from "cursedbelt/react";
 import { useToast } from "./toast";
 
 // Rubato's TanStack-Query hooks, bound to cwip's createApiHooks. Rubato's transport

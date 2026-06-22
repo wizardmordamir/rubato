@@ -10,6 +10,7 @@
    track. cwip's classes lean on our own tokens (accent, the gray scale, the
    `dark:` variant), so they adopt rubato's theme. */
 @import "cwip/styles.css";
+@import "cursedbelt/styles.css";
 
 /* ---- Class-based dark mode --------------------------------------------------
    Tailwind v4 defaults the `dark:` variant to the OS `prefers-color-scheme`
@@ -26,16 +27,61 @@
   --accent: #7c3aed; /* violet-600 */
   --accent-hover: #6d28d9; /* violet-700 */
   --accent-soft: #f5f3ff; /* violet-50  — faint fill for soft chips/surfaces */
+
+  /* cursedbelt neutral design tokens (light) — mirror cursedbelt/theme.css so its
+     primitives render here. We add them directly (not @import "cursedbelt/theme.css")
+     to keep rubato's own accent/accent-soft mapping. */
+  --accent-solid: #7c3aed; /* saturated brand fill, both modes */
+  --accent-solid-hover: #8b5cf6;
+  --background: #ffffff;
+  --foreground: #111827;
+  --surface: #ffffff;
+  --muted: #f3f4f6;
+  --muted-foreground: #6b7280;
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+  --destructive: #dc2626;
+  --success: #16a34a;
+  --warning: #d97706;
+  --ring: var(--accent);
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.06);
+  --shadow-overlay: 0 10px 30px -5px rgb(0 0 0 / 0.18);
+  --shadow-popover: 0 16px 40px -8px rgb(0 0 0 / 0.25);
 }
 .dark {
   --accent: #a78bfa; /* violet-400 */
   --accent-hover: #c4b5fd; /* violet-300 */
   --accent-soft: #2e1065; /* violet-950 */
+
+  /* cursedbelt neutral design tokens (dark). */
+  --background: #030712;
+  --foreground: #f9fafb;
+  --surface: #0b1220;
+  --muted: #1f2937;
+  --muted-foreground: #9ca3af;
+  --border: #1f2937;
+  --border-strong: #374151;
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-overlay: 0 10px 30px -5px rgb(0 0 0 / 0.6);
+  --shadow-popover: 0 16px 40px -8px rgb(0 0 0 / 0.7);
 }
 @theme inline {
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-solid: var(--accent-solid);
+  --color-accent-solid-hover: var(--accent-solid-hover);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-ring: var(--ring);
 }
 
 /* ---- Global base defaults ---------------------------------------------------

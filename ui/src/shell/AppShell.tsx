@@ -7,7 +7,7 @@
 // scope the nav. See the plugin-system plan (Stage 4).
 
 import type { UiPage } from "@shared/ui";
-import { PageBottom, ScrollToTopButton, useKeyboardInset } from "cwip/react";
+import { PageBottom, ScrollToTopButton, useKeyboardInset } from "cursedbelt/react";
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { appBrand, appShowSearch } from "../brand";

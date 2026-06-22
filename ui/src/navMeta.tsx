@@ -4,7 +4,7 @@
 // so the mapping lives here.
 
 import { NAV_HUBS, type NavGroup, type NavHub, pageByKey, pagesInGroup, SIDEBAR, type SidebarEntry } from "@shared/ui";
-import type { NavSearchItem } from "cwip/react";
+import type { NavSearchItem } from "cursedbelt/react";
 import type { ReactNode } from "react";
 import {
   IconApps,

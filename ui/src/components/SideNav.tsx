@@ -9,7 +9,7 @@
 
 import { type NavGroup, pagesInGroup, SIDEBAR, type UiPage } from "@shared/ui";
 import { useQuery } from "@tanstack/react-query";
-import { type NavEntry, type NavPrefsActions, SideNav as CwipSideNav } from "cwip/react";
+import { type NavEntry, type NavPrefsActions, SideNav as CwipSideNav } from "cursedbelt/react";
 import { Link, useLocation } from "react-router-dom";
 import { fetchUi } from "../api";
 import { appBrand } from "../brand";

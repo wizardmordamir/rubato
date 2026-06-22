@@ -1,5 +1,5 @@
 import { type NavGroup, NAV_HUBS, UI_PAGES } from "@shared/ui";
-import { type BreadcrumbNode, Breadcrumbs, buildBreadcrumbTrail } from "cwip/react";
+import { type BreadcrumbNode, Breadcrumbs, buildBreadcrumbTrail } from "cursedbelt/react";
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 

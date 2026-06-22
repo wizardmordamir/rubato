@@ -1,5 +1,5 @@
 import { UI_PAGES } from "@shared/ui";
-import { DropIndicator, useDragReorder, useDragToMove } from "cwip/react";
+import { DropIndicator, useDragReorder, useDragToMove } from "cursedbelt/react";
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { Shortcut } from "../../hooks/useShortcuts";

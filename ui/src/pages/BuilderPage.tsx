@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCopyToClipboard } from "cwip/react";
+import { useCopyToClipboard } from "cursedbelt/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useRegisterBreadcrumbLabel } from "../breadcrumbs";

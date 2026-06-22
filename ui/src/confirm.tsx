@@ -1,4 +1,4 @@
-import { ConfirmDialog, createConfirmContext } from "cwip/react";
+import { ConfirmDialog, createConfirmContext } from "cursedbelt/react";
 
 // App-wide confirmation dialog, fully shared with the sibling apps: cwip owns the
 // imperative promise plumbing (createConfirmContext) and ships the styled dialog

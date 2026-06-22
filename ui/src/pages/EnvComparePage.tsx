@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { EnvCompare } from "cwip/react";
+import { EnvCompare } from "cursedbelt/react";
 import { useMemo, useState } from "react";
 import type { EnvDiscoveryMode, EnvDiscoveryResult } from "@shared/envDiscovery";
 import { fetchAppEnvFile, fetchAppEnvFiles, fetchApps, fetchEnvDiscovery } from "../api";

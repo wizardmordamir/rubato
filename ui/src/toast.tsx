@@ -1,5 +1,5 @@
 import { createContext, type ReactNode, useContext } from "react";
-import { createToastStore, ToastList, type ToastVariant, useToasts } from "cwip/react";
+import { createToastStore, ToastList, type ToastVariant, useToasts } from "cursedbelt/react";
 
 // Toasts are backed by cwip's store-agnostic toast queue + view (createToastStore
 // / useToasts / ToastList). The app keeps its tiny `useToast().notify(...)` API so

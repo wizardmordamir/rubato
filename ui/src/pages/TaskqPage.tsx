@@ -1,17 +1,6 @@
+import { type BarDatum, CategoryBars, ChartThemeProvider, chartThemeFor, TimeSeriesChart } from 'cursedbelt/react/charts';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  type BarDatum,
-  CategoryBars,
-  ChartThemeProvider,
-  chartThemeFor,
-  DisclosureButton,
-  DragHandle,
-  DropIndicator,
-  ModalShell,
-  StatTile,
-  TimeSeriesChart,
-  useDragReorder,
-} from "cwip/react";
+import { DisclosureButton, DragHandle, DropIndicator, ModalShell, StatTile, useDragReorder } from "cursedbelt/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";

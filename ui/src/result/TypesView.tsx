@@ -1,5 +1,5 @@
 import { dataToTypeScript } from "@shared/resultTypes";
-import { CopyButton } from "cwip/react";
+import { CopyButton } from "cursedbelt/react";
 import { useMemo } from "react";
 import { Tooltip } from "../components";
 import { downloadText } from "./download";

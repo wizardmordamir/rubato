@@ -1,4 +1,4 @@
-import { TestReportViewer } from "cwip/react";
+import { TestReportViewer } from "cursedbelt/react";
 import { fetchTestReport, fetchTestReportSummaries, testReportArtifactUrl } from "../api";
 import { PageHeading } from "../components";
 

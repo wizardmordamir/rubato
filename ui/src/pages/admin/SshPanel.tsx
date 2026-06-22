@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CopyButton } from "cwip/react";
+import { CopyButton } from "cursedbelt/react";
 import { fetchSshServers, openSshInTerminal, type SshServerSummary } from "../../api";
 import {
   BTN_GHOST_CLASS,

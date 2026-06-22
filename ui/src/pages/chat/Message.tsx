@@ -1,4 +1,4 @@
-import { CopyButton } from "cwip/react";
+import { CopyButton } from "cursedbelt/react";
 import { type ComponentPropsWithoutRef, useRef } from "react";
 import rehypeHighlight from "rehype-highlight";
 import ReactMarkdown from "react-markdown";

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { JsonEditor } from "cwip/react";
+import { JsonEditor } from "cursedbelt/react";
 import { useEffect, useState } from "react";
 import { browseDir, type BrowseDirResult, fetchConfig, runAppsScan, saveConfig, setCodeDirs, type ScanResult } from "../api";
 import { BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, FIELD_CLASS, OpenPathButton, PageHeading, Tooltip } from "../components";

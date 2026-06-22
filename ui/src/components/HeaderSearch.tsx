@@ -5,7 +5,7 @@ import {
   type SearchResultGroup,
   SearchResults,
   useDebouncedValue,
-} from "cwip/react";
+} from "cursedbelt/react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchSearch, fetchUi } from "../api";

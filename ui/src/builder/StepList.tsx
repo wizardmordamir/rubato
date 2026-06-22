@@ -1,5 +1,5 @@
 import type { ActionType, Condition, Step, StepParams } from "@shared/automation";
-import { DropIndicator, useDragReorder } from "cwip/react";
+import { DropIndicator, useDragReorder } from "cursedbelt/react";
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useState } from "react";
 import type { StepResult } from "../api";
 import { Dropdown, OpenPathButton, Tooltip } from "../components";

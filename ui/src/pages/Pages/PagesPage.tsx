@@ -7,7 +7,7 @@ import {
   makeSectionNode,
   NodeInspector,
   useLayoutEditor,
-} from "cwip/react";
+} from "cursedbelt/react";
 import { useState } from "react";
 import { type CustomPage, deleteCustomPage, fetchCustomPages, saveCustomPage } from "../../api";
 import { useConfirm } from "../../confirm";

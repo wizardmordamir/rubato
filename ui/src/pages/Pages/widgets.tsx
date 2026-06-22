@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { LayoutField } from "cwip/layout";
-import type { WidgetRegistry } from "cwip/react";
+import type { WidgetRegistry } from "cursedbelt/react";
 import {
   BOARD_STATUS_LABELS,
   BOARD_STATUSES,

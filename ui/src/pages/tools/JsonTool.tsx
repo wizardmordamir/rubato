@@ -1,5 +1,5 @@
 import { csvToJson, jsonToCsv } from "@shared/tools/json";
-import { JsonEditor } from "cwip/react";
+import { JsonEditor } from "cursedbelt/react";
 import { useMemo, useState } from "react";
 import { FIELD_CLASS } from "../../components";
 import { ErrorNote, Field, OutputBox, TOOL_TEXTAREA_CLASS } from "./toolkit";

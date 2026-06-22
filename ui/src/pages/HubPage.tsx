@@ -6,7 +6,7 @@
 
 import { type NavGroup, NAV_HUBS, pagesInGroup } from "@shared/ui";
 import { useQuery } from "@tanstack/react-query";
-import { type HubTile, HubTileGrid } from "cwip/react";
+import { type HubTile, HubTileGrid } from "cursedbelt/react";
 import { Link } from "react-router-dom";
 import { fetchUi } from "../api";
 import { PageHeading } from "../components";

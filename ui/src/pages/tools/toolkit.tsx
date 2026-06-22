@@ -1,4 +1,4 @@
-import { useCopyToClipboard } from "cwip/react";
+import { useCopyToClipboard } from "cursedbelt/react";
 import type { ReactNode } from "react";
 import { Badge, BTN_GHOST_CLASS, CARD_CLASS, Tooltip } from "../../components";
 import { useConfirm } from "../../confirm";

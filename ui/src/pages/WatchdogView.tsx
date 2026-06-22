@@ -50,7 +50,7 @@ import {
   Switch,
   Tooltip,
 } from "../components";
-import { CopyButton } from "cwip/react";
+import { CopyButton } from "cursedbelt/react";
 import { IconPlay, IconSquare, IconTrash, IconZap } from "../icons";
 import { useToast } from "../toast";
 

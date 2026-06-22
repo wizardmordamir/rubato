@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ModalShell } from "cwip/react";
+import { ModalShell } from "cursedbelt/react";
 import { useMemo, useState } from "react";
 import {
   createOrchestrationTask,

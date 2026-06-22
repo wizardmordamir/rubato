@@ -119,7 +119,7 @@ const BADGE_TONES: Record<BadgeTone, string> = {
 // `Alert` is the themeable inline status banner / callout (info/success/warning/
 // error) — reach for it over a hand-rolled `rounded border bg-…-50 text-…` block so
 // status messages stay on-brand and announce themselves to assistive tech.
-export { Alert, type AlertTone, Dropdown, type DropdownOption, InfoHint, Tooltip } from "cwip/react";
+export { Alert, type AlertTone, Dropdown, type DropdownOption, InfoHint, Tooltip } from "cursedbelt/react";
 
 // "Open in editor" affordances for any filesystem path shown in the UI
 // (re-exported here so pages get them from the same module as the other shared

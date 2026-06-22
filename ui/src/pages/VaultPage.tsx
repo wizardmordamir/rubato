@@ -1,5 +1,5 @@
 import { ApiError } from "cwip";
-import { CopyButton as CwipCopyButton } from "cwip/react";
+import { CopyButton as CwipCopyButton } from "cursedbelt/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import {

@@ -108,6 +108,7 @@
   ],
   "license": "ISC",
   "dependencies": {
+    "cursedbelt": "github:wizardmordamir/cursedbelt#d83a305",
     "cwip": "^2.0.1",
     "exceljs": "^4.4.0",
     "hyperformula": "^3.3.0",

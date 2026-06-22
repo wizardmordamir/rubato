@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CopyButton } from "cwip/react";
+import { CopyButton } from "cursedbelt/react";
 import {
   buildMongoFind,
   COMPARISON_OPS,
