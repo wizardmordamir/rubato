@@ -80,3 +80,34 @@ bun run tsc      # root typecheck — proves cwip resolves
 resolves `../../cwip-integration`. The ui typecheck (`cd ui && bun run tsc`) may carry
 unrelated in-flight cursedbelt-migration errors — those are *missing-member* errors
 (the module resolved), not *module-not-found*, so they don't indicate a wiring break.
+
+## The worker flow & the promotion gate
+
+The orchestrator (`taskqDrain` → `claudeExecutor`) spawns each task agent in the repo's
+main checkout, and `buildWorkerPrompt` directs the **integration flow**: a worker
+branches its task worktree **from `refactor/integration`** (named `<slug>-integration`
+so the symlink guard resolves the integration builds), verifies its **own** repo, and
+merges **back to `refactor/integration`** — never `main`. Cross-repo or whole-system
+breakage on integration is tolerated; a heal task fixes it later. `main` is never
+touched by a worker.
+
+`main` only ever advances through the **promotion gate** — the evolved
+`~/.taskq/main-health-watchdog.ts` (launchd, every ~10m). Each idle cycle it:
+
+1. Classifies each repo's `main` ↔ `refactor/integration` ancestry.
+2. **Builds** the integration worktrees that are ahead (providers `cwip`/`cursedbelt`
+   first, so consumers `ca`/`ru` resolve their fresh integration dist — the cross-repo
+   "apps run together" check).
+3. **Promotes** (`git merge --ff-only` `main` → integration) only when the **whole
+   system** is green, so `main` never advances to a broken state. It **catches up** the
+   reverse (ff integration → `main`) when `main` is ahead, and **holds** (no promote)
+   when any repo's integration is red.
+4. Spawns ONE deduped **`heal-<repo>-integration`** task per red/diverged repo, on the
+   integration flow, then kicks the drainer.
+5. After promoting, rebuilds the providers' main `dist` and re-relinks the consumer
+   main checkouts so localhost (which runs off `main`) stays current.
+
+The promote/ancestry decision core is the pure, unit-tested
+`src/server/taskq/promote.ts` (`decideSystem`/`decideRepo`/`ancestryFrom`), imported by
+the watchdog. Run the watchdog with `--dry` to see the decisions without mutating
+anything; its repo set + `TASKQ_HOME` are env-overridable for an isolated end-to-end test.
