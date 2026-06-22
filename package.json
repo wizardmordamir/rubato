@@ -91,6 +91,8 @@
     "e2e": "bun x playwright test -c e2e/playwright.config.ts",
     "e2e:grep": "bun x playwright test -c e2e/playwright.config.ts -g",
     "setup": "bun run scripts/setup.ts",
+    "relink": "bun run scripts/relinkFirstParty.ts",
+    "postinstall": "bun run scripts/relinkFirstParty.ts",
     "update": "bun update --latest",
     "serve": "bun --hot run src/scripts/serve.ts",
     "dev": "bun run scripts/dev.ts",

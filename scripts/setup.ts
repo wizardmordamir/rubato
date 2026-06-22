@@ -41,6 +41,15 @@ async function main(): Promise<void> {
   await run("install root dependencies", ["bun", "install"]);
   await run("install ui dependencies", ["bun", "install"], resolve(ROOT, "ui"));
 
+  // 1b. Restore the first-party symlinks (cwip, cursedbelt). The two installs above
+  //     resolve cwip as a stale registry copy (it's pinned ^2.0.1 for publishability)
+  //     and cursedbelt via a one-checkout global link, so we re-point them at the
+  //     local sibling checkouts. The root install already ran this via `postinstall`,
+  //     but `ui/`'s separate install does not, so run it again to link
+  //     `ui/node_modules/cwip`. Variant-aware (main vs refactor/integration) — see
+  //     scripts/relinkFirstParty.ts + docs/integration-worktrees.md.
+  await run("relink first-party deps (cwip, cursedbelt)", ["bun", "run", "scripts/relinkFirstParty.ts"]);
+
   // 2. Browsers — only needed where system Chrome is absent (the e2e suite and the
   //    automation builder default to channel:"chrome"). Opt-in because it's heavy.
   if (want("--browsers")) {
