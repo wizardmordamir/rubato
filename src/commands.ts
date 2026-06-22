@@ -575,6 +575,22 @@ export const COMMANDS: CommandDef[] = [
     ],
   },
   {
+    name: 'rubato-render-smoke',
+    script: 'src/scripts/renderSmoke.ts',
+    description: 'Anti-white-screen check: boot the built UI headless, assert the React root mounts with no fatal errors.',
+    kind: 'plain',
+    flags: [
+      { flag: '--port', description: 'port to boot the server on (default: a free port)', takesValue: true, example: '4799' },
+      { flag: '--timeout', description: 'ms to wait for the server to boot (default 45000)', takesValue: true, example: '45000' },
+      { flag: '--nav-timeout', description: 'ms to wait for the page + React root to mount (default 20000)', takesValue: true },
+      { flag: '--url', description: 'page path to load (default /)', takesValue: true, example: '/' },
+      { flag: '--root', description: 'React root selector (default #root)', takesValue: true, example: '#root' },
+      { flag: '--cwd', description: 'repo dir to boot (default cwd)', takesValue: true },
+      { flag: '--strict', description: 'exit non-zero when the check is INCONCLUSIVE (no browser available)' },
+    ],
+    examples: [{ args: '', note: 'render-check this checkout (run after `bun run build`)' }, { args: '--strict' }],
+  },
+  {
     name: 'rubato-ai-setup',
     script: 'src/scripts/ai-setup.ts',
     description: "Stage the local embedding model so semantic/hybrid 'Ask' retrieval works offline.",

@@ -95,6 +95,13 @@ describe('buildWorkerPrompt', () => {
     expect(p.toLowerCase()).toContain('symlinked');
   });
 
+  test('requires the render smoke for UI-touching tasks (tsc + build alone miss white-screens)', () => {
+    const p = buildWorkerPrompt(task({ id: 11, title: 'tweak a page', repo: 'ru' }));
+    expect(p).toContain('UI-TOUCHING');
+    expect(p).toContain('WHITE-SCREEN');
+    expect(p).toContain('renderSmoke.ts');
+  });
+
   test('documents the permanent-failure marker so the worker can opt out of retries', () => {
     const p = buildWorkerPrompt(task());
     expect(p).toContain(PERMANENT_FAILURE_MARKER);

@@ -129,3 +129,62 @@ regenerate the plist from the repo and reload it —
 `bun run src/scripts/integrationGate.ts --print-launchd > ~/Library/LaunchAgents/com.taskq.mainhealth.plist`,
 then `launchctl unload … && launchctl load -w …`. The label is unchanged, so it
 replaces the old job in place.
+
+### Three green signals: build → boot → render (anti white-screen)
+
+A repo's integration is only promotable-green when ALL of these hold — each catches a
+failure the previous one can't:
+
+1. **`bun run build`** — the bundle TYPE-checks + BUNDLES.
+2. **Runtime boot smoke** (`src/server/taskq/bootSmoke.ts`) — boot the server on an
+   isolated home + free port, wait for `/api/health`. Catches a build that compiles but
+   crashes on boot (a missing export, a bad import at startup).
+3. **Headless render smoke** (`src/server/taskq/renderSmoke.ts`) — boot the **built UI**
+   and drive a HEADLESS browser at it (Playwright in a `node` subprocess —
+   `render-smoke-host.mjs`), asserting the **React root actually mounted** (non-empty)
+   with **no fatal console errors / uncaught page exceptions**. This is the only signal
+   that catches a **WHITE SCREEN**: two React copies from a `resolve.dedupe` gap (→ a null
+   hook dispatcher), a runtime mount throw, or a missing context provider — all of which a
+   green build + a healthy `/api/health` sail right past. (This hardens against the
+   incident where ru white-screened with `tsc` passing.)
+
+Each smoke is folded into the repo's green signal at the wiring layer (`integrationGreen
+&& smokeGreen !== false && renderGreen !== false`): a check that **can't run** (no helper /
+no browser / server didn't boot) is INCONCLUSIVE and **never blocks** (it degrades to the
+signals it does have); only a check that **ran and failed** holds promotion and arms a
+`heal-<repo>-integration` task (build / smoke / **render** flavoured). Both smokes are
+imported **lazily + guarded** so the gate keeps running even if a helper is absent.
+
+The per-repo `renderSmoke` (and `smoke`) configs are OPT-IN: **ru** is on; **ca** stays
+build+boot-only until its render smoke is verified in-repo (`fu-intgate-smoke-ca`), so an
+unverified spec can't freeze the gate. `renderSmoke.ts` ships ru/ca presets
+(`rubatoRenderSmokeSpec` / `caRenderSmokeSpec`) and is fully unit-tested with injected
+server + browser seams (`renderSmoke.test.ts`) — no real browser in the suite.
+
+> **Live vs. version-controlled gate.** The runtime boot + headless render smokes currently
+> live in the LIVE launchd job (`~/.taskq/main-health-watchdog.ts`); `gate.ts` (the cutover
+> target) does **not** carry them yet (its `runGate` is synchronous; the smokes are async).
+> **Both smokes must be ported into `gate.ts`/`integrationGate.ts` before the cutover above**,
+> or the cutover would silently drop boot + render gating. `renderSmoke.ts`/`bootSmoke.ts`
+> expose the injectable cores ready for that port. (Tracked as a follow-up task.)
+
+### Per-task UI verification + the dedupe guardrail (prevention)
+
+The promotion gate is the backstop; two earlier layers stop a white-screen from getting
+that far:
+
+- **Worker prompt** (`claudeExecutor.buildWorkerPrompt`) — a **UI-touching** task (anything
+  under `ui/`, a page/component, the vite config, or a first-party dep its bundle pulls in)
+  is told that `tsc` + a green build are NOT enough and must run `rubato-render-smoke`
+  (`bun run src/scripts/renderSmoke.ts`) and confirm it's GREEN before marking done. The
+  same `runRenderSmoke` core backs both the worker check and the gate, so they agree on
+  what "renders" means. (A render auto-revert is deliberately NOT wired into the false-done
+  gate — a browser flake must never revert real work; the promotion gate is the enforcer.)
+- **Dedupe-completeness guardrail** (`src/lib/viteDedupe.ts` + `viteDedupe.test.ts`) — a
+  pure check that an app's vite `resolve.dedupe` covers EVERY required React subpath
+  (`react`, `react-dom`, `react-dom/client`, `react/jsx-runtime`, `react/jsx-dev-runtime`)
+  plus recommended context libs. A missing subpath — `react/jsx-dev-runtime` especially —
+  white-screens ONLY in dev (dev compiles JSX via `jsx-dev-runtime`, prod via `jsx-runtime`),
+  which a prod-bundle render smoke can't see. The guardrail runs against ru's own
+  `ui/vite.config.ts` as a test, so a regression fails the gate; the pure checker is
+  reusable by the cross-repo anti-drift guardrails (`fu-guardrails-enforce`).
