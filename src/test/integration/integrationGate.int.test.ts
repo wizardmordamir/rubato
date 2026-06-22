@@ -26,7 +26,14 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type GateBoard, type GateRepo, type GateSmokeResult, type GateTask, runGate } from '../../server/taskq/gate';
+import {
+  type GateBoard,
+  type GateRenderResult,
+  type GateRepo,
+  type GateSmokeResult,
+  type GateTask,
+  runGate,
+} from '../../server/taskq/gate';
 
 let ROOT: string;
 let TASKQ_HOME: string;
@@ -84,7 +91,10 @@ let app: { main: string; integ: string };
 let repos: GateRepo[];
 let store: ReturnType<typeof makeBoard>;
 
-const drive = (runSmoke?: (repo: GateRepo) => Promise<GateSmokeResult | null>) =>
+const drive = (
+  runSmoke?: (repo: GateRepo) => Promise<GateSmokeResult | null>,
+  runRender?: (repo: GateRepo) => Promise<GateRenderResult | null>,
+) =>
   runGate({
     repos,
     taskqHome: TASKQ_HOME,
@@ -95,6 +105,7 @@ const drive = (runSmoke?: (repo: GateRepo) => Promise<GateSmokeResult | null>) =
     bun: process.execPath,
     path: process.env.PATH ?? '',
     runSmoke,
+    runRender,
   });
 
 const healOf = (slug: string) => store.tasks.filter((t) => t.slug === slug);
@@ -105,6 +116,14 @@ const bootSmokeFake = async (repo: GateRepo): Promise<GateSmokeResult | null> =>
   if (repo.role !== 'consumer') return null;
   const ok = !existsSync(join(repo.integ, 'BOOT_BROKEN'));
   return { ok, detail: ok ? 'booted + healthy at /api/health' : 'server exited on boot (missing export)' };
+};
+
+// A fast render-smoke fake: a consumer's UI "renders" unless a committed `RENDER_BROKEN`
+// marker is present (a white screen); providers have no UI (→ null, stays build+boot only).
+const renderSmokeFake = async (repo: GateRepo): Promise<GateRenderResult | null> => {
+  if (repo.role !== 'consumer') return null;
+  const ok = !existsSync(join(repo.integ, 'RENDER_BROKEN'));
+  return { ran: true, ok, detail: ok ? 'React root mounted; no fatal errors' : 'WHITE SCREEN — React root never mounted' };
 };
 
 beforeAll(() => {
@@ -209,6 +228,52 @@ describe('promotion gate — runGate against temp repos', () => {
     const summary = await drive(bootSmokeFake);
     expect(rev('main', app.main)).toBe(appInt); // promoted once it boots + smoke is green
     expect(summary.repos.app.smokeGreen).toBe(true);
+    expect(summary.promoted).toContain('app');
+  });
+
+  test('H. RENDER-GATING: build + boot green but the UI white-screens → held + render heal, NOT promoted', async () => {
+    // Retire the prior heal so H proves a FRESH, render-flavoured re-arm.
+    const prior = healOf('heal-app-integration')[0];
+    if (prior) store.board.setStatus(prior.id, 'done');
+    commitOn(app.integ, 'file.txt', 'v5-green-build-boot\n', 'feat: a green build that boots');
+    commitOn(app.integ, 'RENDER_BROKEN', 'boom\n', 'break the RENDER (React root never mounts → white screen)');
+    const appMainBefore = rev('main', app.main);
+
+    const summary = await drive(bootSmokeFake, renderSmokeFake);
+    expect(rev('main', app.main)).toBe(appMainBefore); // builds + boots, but white-screens → NOT promoted
+    expect(summary.repos.app.built).toBe(true);
+    expect(summary.repos.app.integrationGreen).toBe(true); // BUILD green
+    expect(summary.repos.app.smokeGreen).toBe(true); // BOOT green
+    expect(summary.repos.app.rendered).toBe(true);
+    expect(summary.repos.app.renderGreen).toBe(false); // ...but the RENDER was RED (white screen)
+    expect(summary.systemGreen).toBe(false);
+    expect(summary.promoted).toEqual([]);
+
+    const heal = healOf('heal-app-integration');
+    expect(heal.length).toBe(1);
+    expect(heal[0].status).toBe('ready'); // re-armed for the white screen
+  });
+
+  test('I. RENDER-RECOVERY: fixing the white screen → render green → app promoted', async () => {
+    git(['rm', '-q', 'RENDER_BROKEN'], app.integ);
+    git(['commit', '-qm', 'fix: React root mounts again'], app.integ);
+    const appInt = rev('refactor/integration', app.main);
+
+    const summary = await drive(bootSmokeFake, renderSmokeFake);
+    expect(rev('main', app.main)).toBe(appInt); // promoted once build + boot + render are all green
+    expect(summary.repos.app.renderGreen).toBe(true);
+    expect(summary.promoted).toContain('app');
+  });
+
+  test('J. RENDER-INCONCLUSIVE: a render check that cannot run (ran:false) never blocks promotion', async () => {
+    commitOn(app.integ, 'file.txt', 'v6-inconclusive\n', 'feat: another green change');
+    const appInt = rev('refactor/integration', app.main);
+    const inconclusiveRender = async (repo: GateRepo): Promise<GateRenderResult | null> =>
+      repo.role === 'consumer' ? { ran: false, ok: false, detail: 'no browser available' } : null;
+
+    const summary = await drive(bootSmokeFake, inconclusiveRender);
+    expect(rev('main', app.main)).toBe(appInt); // inconclusive render → does NOT hold promotion
+    expect(summary.repos.app.renderGreen).toBeUndefined();
     expect(summary.promoted).toContain('app');
   });
 });

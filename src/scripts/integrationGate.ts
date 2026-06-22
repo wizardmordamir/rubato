@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 import {
   defaultGateRepos,
   enrichedPath,
+  type GateRenderResult,
   type GateRepo,
   type GateSmokeResult,
   type GateSummary,
@@ -71,6 +72,36 @@ function makeRunSmoke(onLog: (line: string) => void) {
         : m.rubatoSmokeSpec({ cwd: repo.integ, port, homeDir, timeoutMs: 45_000 });
     const res = await m.runBootSmoke(spec);
     return { ok: res.ok, detail: res.detail, logTail: res.logTail };
+  };
+}
+
+/**
+ * Build the per-repo HEADLESS RENDER smoke (anti-white-screen). `renderSmoke` (→
+ * cwip/testing + a Node Playwright host) is imported LAZILY + guarded + memoized, exactly
+ * like `makeRunSmoke`: a mid-broken helper / absent browser degrades to the build+boot gate
+ * (returns an INCONCLUSIVE `ran:false`) rather than crashing or wrongly blocking. Only `ru`
+ * renders today; `ca` is a follow-up (`fu-intgate-render-ca`); providers have no UI (null).
+ */
+function makeRunRender(onLog: (line: string) => void) {
+  let mod: typeof import('../server/taskq/renderSmoke') | null | undefined;
+  const load = async () => {
+    if (mod !== undefined) return mod;
+    try {
+      mod = await import('../server/taskq/renderSmoke');
+    } catch (e) {
+      onLog(`[${new Date().toISOString()}] render: renderSmoke helper unavailable (${e}) — build+boot gate`);
+      mod = null;
+    }
+    return mod;
+  };
+  return async (repo: GateRepo): Promise<GateRenderResult | null> => {
+    if (repo.name !== 'ru') return null;
+    const m = await load();
+    if (!m) return null;
+    const port = await m.pickFreePort();
+    const homeDir = m.renderSmokeHomeDir(repo.name, `${process.pid}-${port}`);
+    const res = await m.runRenderSmoke(m.rubatoRenderSmokeSpec({ cwd: repo.integ, port, homeDir, timeoutMs: 45_000 }));
+    return { ran: res.ran, ok: res.ok, detail: res.detail, logTail: res.logTail };
   };
 }
 
@@ -126,6 +157,7 @@ async function main(): Promise<void> {
       spawnSync('bash', ['-c', 'launchctl kickstart -k gui/$(id -u)/com.taskq.drain'], { env });
     },
     runSmoke: makeRunSmoke(onLog),
+    runRender: makeRunRender(onLog),
     onLog,
   });
 
