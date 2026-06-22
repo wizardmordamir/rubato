@@ -15,6 +15,7 @@
 
 import type { ArtBackend } from '../../lib/appApis';
 import type { FooocusPerformance } from '../../shared/art';
+import { comfyui as comfyuiAdapter, listComfyuiModels as listComfyuiModelsImpl } from './comfyui';
 
 export interface DiffusionRequest {
   prompt: string;
@@ -52,6 +53,11 @@ export interface DiffusionDeps {
   fetch?: typeof fetch;
   /** Abort/timeout signal (generation is slow; callers set a long timeout). */
   signal?: AbortSignal;
+  /**
+   * Override the ComfyUI history-poll interval in ms (default 2000). Injectable
+   * for tests so they don't have to wait real wall-clock time between polls.
+   */
+  pollIntervalMs?: number;
 }
 
 /** Default base URL per backend. */
@@ -237,12 +243,13 @@ async function a1111(baseUrl: string, req: DiffusionRequest, deps: DiffusionDeps
   return { image: base64ToBuffer(first), seed };
 }
 
-/** ComfyUI: requires a baked workflow-graph template; intentionally not wired yet. */
-async function comfyui(): Promise<DiffusionResult> {
-  throw new Error(
-    'ComfyUI backend is not wired yet — it needs a workflow-graph template (POST /prompt → poll /history → /view). ' +
-      'Set art.backend to "fooocus" or "a1111" for now.',
-  );
+/**
+ * Discover available model filenames from a running ComfyUI server.
+ * Calls GET /object_info/<LoaderNodeType> and extracts the first input enum.
+ * Returns [] when the server is offline or the template has no recognized loader.
+ */
+export async function listComfyuiModels(baseUrl: string, deps: DiffusionDeps = {}): Promise<string[]> {
+  return listComfyuiModelsImpl(baseUrl, deps);
 }
 
 /** Generate one image (PNG bytes + the seed used) via the configured backend. */
@@ -258,7 +265,7 @@ export async function generateImageBuffer(
     case 'a1111':
       return a1111(url, req, deps);
     case 'comfyui':
-      return comfyui();
+      return comfyuiAdapter(url, req, deps);
     default:
       throw new Error(`Unknown art backend "${backend}"`);
   }

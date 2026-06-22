@@ -160,7 +160,14 @@ describe('failure handling', () => {
     await expect(generateImageBuffer('a1111', 'http://x', req, { fetch: fetchStub })).rejects.toThrow('500');
   });
 
-  test('comfyui is not wired and throws an actionable error', async () => {
-    await expect(generateImageBuffer('comfyui', 'http://localhost:8188', req)).rejects.toThrow('not wired');
+  test('comfyui with a refused connection becomes a DiffusionOfflineError', async () => {
+    const fetchStub = (async () => {
+      throw new TypeError('fetch failed: ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    const err = await generateImageBuffer('comfyui', 'http://localhost:8188', req, { fetch: fetchStub }).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(DiffusionOfflineError);
+    expect((err as Error).message).toContain('offline');
   });
 });

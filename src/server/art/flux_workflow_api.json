@@ -1,0 +1,106 @@
+{
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["45", 0],
+      "text": "a beautiful landscape"
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["13", 0],
+      "vae": ["44", 0]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": ["8", 0]
+    }
+  },
+  "13": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "guider": ["22", 0],
+      "latent_image": ["27", 0],
+      "noise": ["25", 0],
+      "sampler": ["16", 0],
+      "sigmas": ["17", 0]
+    }
+  },
+  "16": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "17": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "denoise": 1,
+      "model": ["30", 0],
+      "scheduler": "simple",
+      "steps": 20
+    }
+  },
+  "22": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "conditioning": ["26", 0],
+      "model": ["30", 0]
+    }
+  },
+  "25": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 12345
+    }
+  },
+  "26": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": ["6", 0],
+      "guidance": 3.5
+    }
+  },
+  "27": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "batch_size": 1,
+      "height": 1024,
+      "width": 1024
+    }
+  },
+  "30": {
+    "class_type": "ModelSamplingFlux",
+    "inputs": {
+      "height": 1024,
+      "max_shift": 1.15,
+      "base_shift": 0.5,
+      "model": ["43", 0],
+      "width": 1024
+    }
+  },
+  "43": {
+    "class_type": "UnetLoaderGGUF",
+    "inputs": {
+      "unet_name": "flux1-schnell-Q8_0.gguf"
+    }
+  },
+  "44": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "45": {
+    "class_type": "DualCLIPLoaderGGUF",
+    "inputs": {
+      "clip_name1": "clip_l.safetensors",
+      "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+      "type": "flux"
+    }
+  }
+}

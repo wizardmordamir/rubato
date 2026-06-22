@@ -83,8 +83,8 @@ import {
   templateDiff,
 } from './appsTemplate';
 import { createAppTag, getAppTags, isTagAction, runAppTagAction } from './appTags';
-import { DiffusionOfflineError, DiffusionTimeoutError } from './art/diffusion';
-import { appAssetsDir, generateArt, listAssets } from './art/generateImage';
+import { DiffusionOfflineError, DiffusionTimeoutError, listComfyuiModels } from './art/diffusion';
+import { appAssetsDir, generateArt, listAssets, resolveArtConfig } from './art/generateImage';
 import { handleFooocusApi } from './art/fooocusRoutes';
 import { startAsk } from './ask';
 import { handleAuthApi } from './authRoutes';
@@ -492,6 +492,13 @@ async function handleApi(pathname: string, req: Request, opts: RouteOptions = {}
 
   // Fooocus process control (start/stop the API + Gradio UI from the chat panel).
   if (pathname.startsWith('/api/art/fooocus/')) return handleFooocusApi(pathname, req);
+
+  // ComfyUI model discovery: GET /api/art/comfyui/models → string[].
+  if (pathname === '/api/art/comfyui/models' && req.method === 'GET') {
+    const cfg = await resolveArtConfig();
+    const models = await listComfyuiModels(cfg.backend === 'comfyui' ? cfg.url : 'http://localhost:8188');
+    return json({ models });
+  }
 
   // Shell aliases (user-defined name→command pairs, system shell config setup, ca export/import).
   if (pathname === '/api/shell-aliases' || pathname.startsWith('/api/shell-aliases/'))
