@@ -21,10 +21,10 @@ import {
   reapExpired,
   recordRun,
   releaseLease,
+  revertCompletion,
   setStatus,
   type TaskqDb,
   type TaskRow,
-  withTx,
 } from 'cwip/taskq';
 import type { DoneGuard, DoneSnapshot, DoneVerdict } from './falseDone';
 
@@ -181,21 +181,6 @@ const DEFAULT_HEARTBEAT_MS = 60_000;
 const DEFAULT_TICK_MS = 5_000;
 
 /**
- * Auto-revert a false-done: drop the worker's lease and park the task in a hold
- * status (on_hold/needs_input) with the explanatory note, atomically — the
- * completion-path counterpart to {@link completeTask}/{@link failTask}. Dropping
- * the lease is essential: otherwise the reaper would later route the still-leased
- * task back through the retry machinery and undo the hold. (TODO: graduate this
- * into cwip's taskq engine alongside completeTask/failTask once we touch cwip.)
- */
-function revertFalseDone(db: TaskqDb, taskId: number, status: 'on_hold' | 'needs_input', note: string): void {
-  withTx(db, () => {
-    db.run(`DELETE FROM leases WHERE task_id = ?`, taskId);
-    setStatus(db, taskId, status, note);
-  });
-}
-
-/**
  * Drain the queue: reap stranded leases, then run a worker pool until no
  * eligible task remains (or stop is requested). Resolves with a run summary.
  *
@@ -340,7 +325,7 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
           if (!verdict.accept) {
             // False-done: revert to a hold (NEVER done) so downstream `needs:` deps
             // stay blocked + the cascade can't start; record the alert + clear note.
-            revertFalseDone(db, task.id, verdict.status, verdict.note);
+            revertCompletion(db, task.id, verdict.status, verdict.note, now());
             // Tokens were really spent — keep the usage ledger honest.
             if (res.outputTokens) recordRun(db, { at: now(), model: task.model, outputTokens: res.outputTokens });
             summary.falseDone++;
