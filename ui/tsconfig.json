@@ -9,6 +9,11 @@
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    // Resolve cursedbelt to its TS SOURCE via its `source` export condition (matches
+    // ui/vite.config.ts's resolve.conditions) instead of a non-existent ./dist. Covers
+    // every cursedbelt subpath through its exports map — no per-subpath paths to drift.
+    // tsconfig.lib.json extends this, so it inherits customConditions too.
+    "customConditions": ["source"],
     // Dedupe React's types so cursedbelt's source files (consumed via the `source`
     // condition) resolve react/react-dom from ru-ui's single @types/react copy.
     "baseUrl": ".",

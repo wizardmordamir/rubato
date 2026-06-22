@@ -120,7 +120,21 @@ export default defineConfig(({ mode }) => {
       // means cwip's useApiMutation can't see the app's QueryClientProvider.
       // recharts lives in ru-ui's node_modules; dedupe so cursedbelt's chart source
       // (resolved from the repo-root cursedbelt) bundles the single ui-local copy.
-      dedupe: ["react", "react-dom", "react/jsx-runtime", "@tanstack/react-query", "recharts", "@glideapps/glide-data-grid"],
+      // zustand/lucide-react: cursedbelt ships its own — force one copy each.
+      dedupe: [
+        "react",
+        "react-dom",
+        "react/jsx-runtime",
+        "@tanstack/react-query",
+        "recharts",
+        "@glideapps/glide-data-grid",
+        "zustand",
+        "lucide-react",
+      ],
+      // Consume cursedbelt as SOURCE in dev/build (its `source` export condition
+      // -> ./src) so a one-line cursedbelt edit appears with no rebuild; tsc's
+      // customConditions:["source"] (ui/tsconfig.json + tsconfig.lib.json) matches.
+      conditions: ["source", "import", "module", "browser", "default"],
     },
     server: {
       port: env.PORT ? Number(env.VITE_PORT) : 5175,
