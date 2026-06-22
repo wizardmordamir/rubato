@@ -1390,3 +1390,28 @@ export interface ClaudeRateLimitInfo {
   /** Error message if the probe call failed. */
   error?: string;
 }
+
+// ── False-done alerts ─────────────────────────────────────────────────────────
+
+/** Why a reported success was auto-reverted. */
+export type FalseDoneReason = 'empty-done' | 'regression';
+
+/** A deduped false-done alert record (one per offending task id). */
+export interface FalseDoneAlert {
+  taskId: number;
+  slug: string | null;
+  repo: string | null;
+  title: string;
+  reason: FalseDoneReason;
+  status: 'on_hold' | 'needs_input';
+  note: string;
+  /** Epoch-ms of the (most recent) detection. */
+  detectedAt: number;
+  /** How many times this task has been auto-reverted. */
+  count: number;
+}
+
+/** Response from `GET /api/orchestration/false-done`. */
+export interface FalseDoneAlertsResult {
+  alerts: FalseDoneAlert[];
+}

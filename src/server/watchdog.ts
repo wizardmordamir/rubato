@@ -20,6 +20,7 @@
 import { readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { taskqHome } from 'cwip/taskq';
 import {
   applyDrainPatch,
   buildWatchdogCommands,
@@ -58,6 +59,8 @@ import type {
   ConfigPatchResult,
   DrainConfig,
   DrainConfigPatch,
+  FalseDoneAlert,
+  FalseDoneAlertsResult,
   FileLocation,
   FleetPreset,
   LaunchdInfo,
@@ -1162,4 +1165,27 @@ export async function tailLog(key: string, lines = DEFAULT_TAIL_LINES): Promise<
     lines: all.slice(-n),
     totalLines: all.length,
   };
+}
+
+// ── False-done alerts ─────────────────────────────────────────────────────────
+
+/**
+ * Read the deduped false-done alert store from `~/.taskq/false-done.json`.
+ * The path is fixed/derived from `taskqHome()` — no caller-supplied path, so
+ * there is no traversal surface. Returns an empty array when the file is absent.
+ */
+export async function getFalseDoneAlerts(): Promise<FalseDoneAlertsResult> {
+  const path = join(taskqHome(), 'false-done.json');
+  try {
+    const raw = JSON.parse(await readFile(path, 'utf8')) as Record<
+      string,
+      Omit<FalseDoneAlert, 'count'> & { count?: number }
+    >;
+    const alerts: FalseDoneAlert[] = Object.values(raw)
+      .map((r) => ({ ...r, count: r.count ?? 1 }))
+      .sort((a, b) => b.detectedAt - a.detectedAt);
+    return { alerts };
+  } catch {
+    return { alerts: [] };
+  }
 }

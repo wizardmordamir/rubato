@@ -16,6 +16,7 @@
  *   POST /api/orchestration/watchdog/stop         → stop the drainer + its workers
  *   POST /api/orchestration/watchdog/instance/stop→ stop one worker { pid }
  *   GET  /api/orchestration/logs/:key?lines=N     → LogTail (tail a watchdog/run log)
+ *   GET  /api/orchestration/false-done            → FalseDoneAlertsResult (deduped auto-reverted tasks)
  *
  * Read parsing is done by the pure library (`src/lib/orchestration/`); the file
  * read/write lives in `src/server/orchestration.ts` behind a fixed allowlist, and
@@ -43,6 +44,7 @@ import {
   applyFleetPreset,
   controlWatchdog,
   deleteFleetPreset,
+  getFalseDoneAlerts,
   getWatchdog,
   listFleetPresets,
   reconcileFleet,
@@ -114,6 +116,16 @@ export async function handleOrchestrationApi(pathname: string, req: Request): Pr
     const lines = Number.parseInt(new URL(req.url).searchParams.get('lines') ?? '', 10);
     const tail = await tailLog(key, Number.isFinite(lines) ? lines : undefined);
     return tail ? json(tail) : jsonError(`unknown log: ${key}`, 404);
+  }
+
+  // GET /api/orchestration/false-done → deduped auto-reverted false-done alerts.
+  if (pathname === '/api/orchestration/false-done') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    try {
+      return json(await getFalseDoneAlerts());
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'failed to read false-done alerts', 500);
+    }
   }
 
   if (pathname === '/api/orchestration/files') {
