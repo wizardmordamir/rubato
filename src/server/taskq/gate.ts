@@ -31,9 +31,10 @@ import {
   type Ancestry,
   ancestryFrom,
   decideSystem,
-  integrationNeedsHeal,
+  healReason,
   type PromoteAction,
   type RepoState,
+  repoGreen,
 } from './promote';
 
 /** One repo the gate manages. */
@@ -78,6 +79,16 @@ interface CmdResult {
   err: string;
 }
 
+/** Outcome of a consumer's RUNTIME boot smoke (the shape `GateOptions.runSmoke` returns). */
+export interface GateSmokeResult {
+  /** Did the server boot and answer health? */
+  ok: boolean;
+  /** Human-readable summary (success line, or the failure reason). */
+  detail: string;
+  /** Last lines of the server's output — the gold when a boot fails. */
+  logTail?: string;
+}
+
 export interface GateOptions {
   /** Repos to manage, in any order (build order is derived from `role`). */
   repos: GateRepo[];
@@ -89,6 +100,16 @@ export interface GateOptions {
   board: GateBoard;
   /** Fire the launchd drainer kick when a heal task is (re)armed. No-op under dry. */
   kick: () => void;
+  /**
+   * INJECTED runtime boot smoke: after a green BUILD, boot the consumer's server
+   * against an isolated home/port and check `/api/health` (see `bootSmoke.ts`). Called
+   * for each built+green repo; return `null` for a repo with no smoke (providers, or a
+   * consumer not yet smoke-enabled) so it stays build-only. Kept as a SEAM so `gate.ts`
+   * never hard-imports `bootSmoke` (→ cwip/testing) — preserving its "loads even when
+   * the rest of rubato is mid-broken" resilience; the entrypoint wires the real runner
+   * via a guarded lazy import. Omitted entirely ⇒ build-only gate (today's behaviour).
+   */
+  runSmoke?: (repo: GateRepo) => Promise<GateSmokeResult | null>;
   /** Run the real-cwip dist freshness self-heal (production only; off when repos are overridden). */
   selfHealCwip: boolean;
   /** cwip main checkout + its `-integration` sibling, for the dist self-heal. */
@@ -108,6 +129,10 @@ export interface GateRepoResult {
   action: PromoteAction;
   built: boolean;
   integrationGreen: boolean;
+  /** Whether the runtime boot smoke ran this cycle (vs. not applicable/skipped). */
+  smoked: boolean;
+  /** The boot-smoke result (undefined = not run; true/false = passed/failed). */
+  smokeGreen?: boolean;
 }
 
 export type GateOutcome = 'ran' | 'skipped-worker-active' | 'skipped-locked';
@@ -200,14 +225,19 @@ interface RepoFacts extends RepoState {
   intSha: string;
   built: boolean;
   buildTail?: string;
+  /** Whether the runtime boot smoke ran this cycle. */
+  smoked: boolean;
+  /** Last lines of the smoked server's output (the gold when a boot fails). */
+  smokeTail?: string;
 }
 
 /**
  * Run ONE gate cycle. Returns a structured summary; performs the real git/build/ff
  * side effects against `opts.repos` unless `opts.dry`. The lock, log, status JSON,
- * launchd kick, and taskq board are all injected so this is fully driveable in a test.
+ * launchd kick, taskq board, and runtime boot smoke are all injected so this is fully
+ * driveable in a test. Async because the boot smoke (`opts.runSmoke`) is async.
  */
-export function runGate(opts: GateOptions): GateSummary {
+export async function runGate(opts: GateOptions): Promise<GateSummary> {
   const { repos, board, dry } = opts;
   const ts = () => new Date().toISOString();
   const log = (m: string) => opts.onLog?.(`[${ts()}]${dry ? ' [dry]' : ''} ${m}`);
@@ -256,7 +286,7 @@ export function runGate(opts: GateOptions): GateSummary {
   }
 
   try {
-    return cycle();
+    return await cycle();
   } finally {
     if (!dry) {
       try {
@@ -267,7 +297,7 @@ export function runGate(opts: GateOptions): GateSummary {
     }
   }
 
-  function cycle(): GateSummary {
+  async function cycle(): Promise<GateSummary> {
     // ── 1. self-heal: cwip dist freshness + first-party symlink drift (production only).
     if (opts.selfHealCwip && !dry) {
       const rebuildIfStale = (dir: string | undefined, label: string) => {
@@ -319,6 +349,7 @@ export function runGate(opts: GateOptions): GateSummary {
         mainSha: c.mainSha,
         intSha: c.intSha,
         built: false,
+        smoked: false,
       };
     });
     const factOf = (name: string) => facts.find((f) => f.repo === name)!;
@@ -326,7 +357,9 @@ export function runGate(opts: GateOptions): GateSummary {
 
     // Which integrations need building? Those AHEAD (unique commits gate promotion):
     // `main-behind` (integration ahead) or `diverged`.
-    const aheadNames = facts.filter((f) => f.ancestry === 'main-behind' || f.ancestry === 'diverged').map((f) => f.repo);
+    const aheadNames = facts
+      .filter((f) => f.ancestry === 'main-behind' || f.ancestry === 'diverged')
+      .map((f) => f.repo);
     const consumersAhead = aheadNames.filter((n) => repoOf(n).role === 'consumer');
     const toBuild = new Set(aheadNames);
     // A consumer build resolves its providers' INTEGRATION dist via symlink, so refresh
@@ -357,25 +390,61 @@ export function runGate(opts: GateOptions): GateSummary {
       log(`${r.name}: integration build ${f.integrationGreen ? 'GREEN' : 'RED'} (${f.ancestry})`);
     }
 
+    // ── 2b. RUNTIME boot smoke — the cross-repo "apps run together" RUNTIME check.
+    // After a green BUILD, boot each smoke-configured consumer (isolated home/port) and
+    // wait for /api/health, catching builds that COMPILE but won't RUN. The runner is an
+    // injected seam (so gate.ts never imports cwip/testing); it returns null for a repo
+    // with no smoke (providers / not-yet-enabled consumers), leaving it build-only.
+    if (opts.runSmoke) {
+      for (const r of repos) {
+        const f = factOf(r.name);
+        if (!f.built || !f.integrationGreen) continue; // only smoke a freshly-built, green integration
+        if (dry) {
+          // Dry skips the actual boot (it would spawn a real server), so we can't know
+          // here whether this repo even has a smoke — `runSmoke` is the source of truth.
+          log(`${r.name}: [dry] would runtime boot-smoke (if smoke-configured)`);
+          f.smoked = true;
+          continue;
+        }
+        const result = await opts.runSmoke(r);
+        if (!result) continue; // no smoke configured for this repo → stays build-only
+        f.smoked = true;
+        f.smokeGreen = result.ok;
+        f.smokeTail = result.logTail;
+        log(`${r.name}: runtime boot smoke ${result.ok ? 'GREEN' : 'RED'} — ${result.detail}`);
+      }
+    }
+
     // ── 3. decide + (4) promote / catch-up / heal ───────────────────────────
+    // Fold the smoke INTO the green signal the decision core consumes: a repo that
+    // BUILDS but fails its boot smoke is not promotable-green (`repoGreen`), so it holds
+    // promotion + earns a heal task, exactly like a build failure.
     const actions = decideSystem(
-      facts.map((f) => ({ repo: f.repo, ancestry: f.ancestry, integrationGreen: f.integrationGreen })),
+      facts.map((f) => ({
+        repo: f.repo,
+        ancestry: f.ancestry,
+        integrationGreen: f.integrationGreen,
+        smokeGreen: f.smokeGreen,
+      })),
     );
-    const systemGreen = facts.every((f) => f.integrationGreen);
+    const systemGreen = facts.every(repoGreen);
     const promoted: string[] = [];
     let kicked = false;
 
-    const ensureHealTask = (r: GateRepo, kind: 'red' | 'diverged', tail: string): boolean => {
+    const ensureHealTask = (r: GateRepo, kind: 'build' | 'smoke' | 'diverged', tail: string): boolean => {
       const slug = `heal-${r.name}-integration`;
       const intro =
-        kind === 'red'
+        kind === 'build'
           ? `P0 — refactor/integration is RED on ${r.name}: \`bun run build\` fails, so the promotion gate cannot advance main. Fix it ON refactor/integration.`
-          : `P0 — ${r.name} main and refactor/integration have DIVERGED (neither fast-forwards). Reconcile them on refactor/integration (merge main into refactor/integration, resolve, verify) so the gate can promote again.`;
+          : kind === 'smoke'
+            ? `P0 — refactor/integration BUILDS but won't BOOT on ${r.name}: \`bun run build\` passes yet the runtime boot smoke (boot the server on an isolated home/port, hit /api/health) FAILS — a missing-export crash or a bad import at startup. The gate cannot advance main. Fix it ON refactor/integration; confirm the server actually boots + answers /api/health.`
+            : `P0 — ${r.name} main and refactor/integration have DIVERGED (neither fast-forwards). Reconcile them on refactor/integration (merge main into refactor/integration, resolve, verify) so the gate can promote again.`;
+      const tailLabel = kind === 'smoke' ? 'Recent server boot output' : 'Recent build output';
       const body =
         `${intro}\n` +
         `WORKFLOW: branch a worktree FROM refactor/integration (name it <slug>-integration), fix, verify THIS repo builds (\`bun run build\`), then merge back to refactor/integration — NEVER main. main is promotion-only; the gate fast-forwards it once the whole system is green.\n` +
         `FIRST in a fresh worktree: \`bun run setup\` (or \`bun i\`) then \`bun run relink\` — first-party deps (cwip/cursedbelt) are SYMLINKED, never bun-link-copied; do not "fix" a missing export by downgrading code.\n` +
-        `Recent build output:\n${tail || '(none)'}`;
+        `${tailLabel}:\n${tail || '(none)'}`;
       const existing = board.list().find((t) => t.slug === slug);
       if (dry) {
         log(`${r.name}: [dry] would ${existing ? 're-arm' : 'create'} heal task ${slug} (${kind})`);
@@ -431,12 +500,21 @@ export function runGate(opts: GateOptions): GateSummary {
           }
           break;
         }
-        case 'hold-red':
-          log(
-            `${r.name}: integration ahead but held (${f.integrationGreen ? 'system not all-green' : 'this repo RED'}) — main stays put`,
-          );
-          if (integrationNeedsHeal(f)) kicked = ensureHealTask(r, 'red', f.buildTail ?? '') || kicked;
+        case 'hold-red': {
+          const reason = healReason(f); // 'build' | 'smoke' | null
+          const why =
+            reason === 'build'
+              ? 'this repo build RED'
+              : reason === 'smoke'
+                ? 'this repo boot-smoke RED'
+                : 'system not all-green';
+          log(`${r.name}: integration ahead but held (${why}) — main stays put`);
+          // Only the repo that's actually broken (build or smoke) gets a heal task; a repo
+          // held merely because a SIBLING is red (reason === null) just waits.
+          if (reason === 'build') kicked = ensureHealTask(r, 'build', f.buildTail ?? '') || kicked;
+          else if (reason === 'smoke') kicked = ensureHealTask(r, 'smoke', f.smokeTail ?? '') || kicked;
           break;
+        }
         case 'diverged':
           log(`${r.name}: main/integration DIVERGED — needs reconcile`);
           kicked = ensureHealTask(r, 'diverged', f.buildTail ?? '') || kicked;
@@ -476,16 +554,16 @@ export function runGate(opts: GateOptions): GateSummary {
               : promoted.includes(f.repo)
                 ? 'promoted'
                 : f.integrationGreen
-                  ? 'promotable'
+                  ? f.smokeGreen === false
+                    ? 'integration-boot-red'
+                    : 'promotable'
                   : 'integration-red';
     }
 
     // ── kick the drainer if a heal task was (re)armed ──
     if (!dry && kicked) opts.kick();
 
-    log(
-      `cycle done: systemGreen=${systemGreen} promoted=[${promoted.join(',')}] ${JSON.stringify(mainStatus)}`,
-    );
+    log(`cycle done: systemGreen=${systemGreen} promoted=[${promoted.join(',')}] ${JSON.stringify(mainStatus)}`);
 
     return {
       checkedAt: ts(),
@@ -501,6 +579,8 @@ export function runGate(opts: GateOptions): GateSummary {
             action: actions.get(f.repo) ?? 'none',
             built: f.built,
             integrationGreen: f.integrationGreen,
+            smoked: f.smoked,
+            smokeGreen: f.smokeGreen,
           },
         ]),
       ),

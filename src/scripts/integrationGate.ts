@@ -27,6 +27,7 @@ import {
   defaultGateRepos,
   enrichedPath,
   type GateRepo,
+  type GateSmokeResult,
   type GateSummary,
   runGate,
   taskqCliBoard,
@@ -35,7 +36,38 @@ import { integrationGateLaunchdPlist } from '../server/taskq/launchd';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-function main(): void {
+/**
+ * Build the per-repo runtime boot smoke. `bootSmoke` (→ cwip/testing) is imported
+ * LAZILY + guarded, memoized across repos: a mid-broken cwip/testing degrades to the
+ * build-only gate (returns `null`) instead of crashing the entrypoint — the same
+ * resilience the rest of this file keeps by shelling out rather than importing cwip.
+ * Only `ru` boots today; `ca`'s smoke is a follow-up (`fu-intgate-smoke-ca`) and
+ * providers have no server, so they return `null` (build-only).
+ */
+function makeRunSmoke(onLog: (line: string) => void) {
+  let mod: typeof import('../server/taskq/bootSmoke') | null | undefined;
+  const load = async () => {
+    if (mod !== undefined) return mod;
+    try {
+      mod = await import('../server/taskq/bootSmoke');
+    } catch (e) {
+      onLog(`[${new Date().toISOString()}] smoke: bootSmoke helper unavailable (${e}) — build-only gate`);
+      mod = null;
+    }
+    return mod;
+  };
+  return async (repo: GateRepo): Promise<GateSmokeResult | null> => {
+    if (repo.name !== 'ru') return null;
+    const m = await load();
+    if (!m) return null;
+    const port = await m.pickFreePort();
+    const homeDir = m.smokeHomeDir(repo.name, `${process.pid}-${port}`);
+    const res = await m.runBootSmoke(m.rubatoSmokeSpec({ cwd: repo.integ, port, homeDir, timeoutMs: 45_000 }));
+    return { ok: res.ok, detail: res.detail, logTail: res.logTail };
+  };
+}
+
+async function main(): Promise<void> {
   const home = process.env.HOME ?? '';
   const path = enrichedPath(home);
   const tqHome = process.env.TASKQ_HOME?.trim() || `${home}/.taskq`;
@@ -65,7 +97,14 @@ function main(): void {
   const board = taskqCliBoard({ bun: process.execPath, taskqPath: `${gh}/cwip/src/bin/taskq.ts`, env });
 
   const logFile = `${tqHome}/main-health.log`;
-  const summary = runGate({
+  const onLog = (line: string) => {
+    try {
+      appendFileSync(logFile, `${line}\n`);
+    } catch {
+      /* log best-effort */
+    }
+  };
+  const summary = await runGate({
     repos,
     taskqHome: tqHome,
     dry,
@@ -79,13 +118,8 @@ function main(): void {
       if (noKick) return;
       spawnSync('bash', ['-c', 'launchctl kickstart -k gui/$(id -u)/com.taskq.drain'], { env });
     },
-    onLog: (line) => {
-      try {
-        appendFileSync(logFile, `${line}\n`);
-      } catch {
-        /* log best-effort */
-      }
-    },
+    runSmoke: makeRunSmoke(onLog),
+    onLog,
   });
 
   if (!dry && summary.outcome === 'ran') writeStatus(tqHome, summary);
@@ -109,4 +143,4 @@ function writeStatus(tqHome: string, s: GateSummary): void {
   );
 }
 
-if (import.meta.main) main();
+if (import.meta.main) await main();

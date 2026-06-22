@@ -12,13 +12,21 @@
  *  C. HEAL + DEDUP   — the red integration spawns one deduped heal-<repo>-integration task.
  *  D. RECOVERY       — repair the red integration → the whole system promotes.
  *  E. CATCH-UP       — main ahead of integration → integration fast-forwarded up to main.
+ *  F. SMOKE-GATING   — integration BUILDS green but the runtime boot smoke FAILS → NOT
+ *                      promoted + a smoke-flavoured heal task (the boot-smoke gate).
+ *  G. SMOKE-RECOVERY — repair the boot → smoke green → promoted.
+ *
+ * The boot smoke is injected (`runSmoke`); here it's a fast fake gated on a committed
+ * `BOOT_BROKEN` marker (the REAL boot of `rubato-serve` is covered by
+ * `src/test/functional/bootSmoke.func.test.ts`). This test proves the gate WIRING —
+ * that `runGate` folds the smoke result into the promote/heal decision.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type GateBoard, type GateRepo, type GateTask, runGate } from '../../server/taskq/gate';
+import { type GateBoard, type GateRepo, type GateSmokeResult, type GateTask, runGate } from '../../server/taskq/gate';
 
 let ROOT: string;
 let TASKQ_HOME: string;
@@ -76,7 +84,7 @@ let app: { main: string; integ: string };
 let repos: GateRepo[];
 let store: ReturnType<typeof makeBoard>;
 
-const drive = () =>
+const drive = (runSmoke?: (repo: GateRepo) => Promise<GateSmokeResult | null>) =>
   runGate({
     repos,
     taskqHome: TASKQ_HOME,
@@ -86,9 +94,18 @@ const drive = () =>
     selfHealCwip: false,
     bun: process.execPath,
     path: process.env.PATH ?? '',
+    runSmoke,
   });
 
 const healOf = (slug: string) => store.tasks.filter((t) => t.slug === slug);
+
+// A fast boot-smoke fake: a consumer's server "boots" unless a committed `BOOT_BROKEN`
+// marker is present; providers have no server (→ null, stays build-only).
+const bootSmokeFake = async (repo: GateRepo): Promise<GateSmokeResult | null> => {
+  if (repo.role !== 'consumer') return null;
+  const ok = !existsSync(join(repo.integ, 'BOOT_BROKEN'));
+  return { ok, detail: ok ? 'booted + healthy at /api/health' : 'server exited on boot (missing export)' };
+};
 
 beforeAll(() => {
   ROOT = mkdtempSync(join(tmpdir(), 'intgate-'));
@@ -109,23 +126,23 @@ afterAll(() => {
 
 // The scenarios share evolving git state, so they run as ordered steps (verify-intgate's flow).
 describe('promotion gate — runGate against temp repos', () => {
-  test('A. PROMOTE: a green consumer integration ahead → main fast-forwarded; no heal', () => {
+  test('A. PROMOTE: a green consumer integration ahead → main fast-forwarded; no heal', async () => {
     commitOn(app.integ, 'file.txt', 'v2\n', 'feat: green change on integration');
     const appInt = rev('refactor/integration', app.main);
-    const summary = drive();
+    const summary = await drive();
     expect(rev('main', app.main)).toBe(appInt); // app main promoted to its green integration
     expect(summary.promoted).toContain('app');
     expect(summary.systemGreen).toBe(true);
     expect(store.tasks.length).toBe(0); // nothing red → no heal task
   });
 
-  test('B+C. a RED integration blocks promotion system-wide and spawns ONE deduped heal task', () => {
+  test('B+C. a RED integration blocks promotion system-wide and spawns ONE deduped heal task', async () => {
     commitOn(app.integ, 'BROKEN', 'boom\n', 'break the integration build'); // app integration RED + ahead
     commitOn(fp.integ, 'file.txt', 'v2\n', 'feat: green provider change'); // fp integration GREEN + ahead
     const appMainBefore = rev('main', app.main);
     const fpMainBefore = rev('main', fp.main);
 
-    const summary = drive();
+    const summary = await drive();
     expect(rev('main', app.main)).toBe(appMainBefore); // RED integration → app main held
     expect(rev('main', fp.main)).toBe(fpMainBefore); // system not all-green → fp held too
     expect(summary.systemGreen).toBe(false);
@@ -135,30 +152,63 @@ describe('promotion gate — runGate against temp repos', () => {
     expect(heal.length).toBe(1);
     expect(['ready', 'claimed']).toContain(heal[0].status);
 
-    drive(); // a second cycle must NOT duplicate the heal task
+    await drive(); // a second cycle must NOT duplicate the heal task
     expect(healOf('heal-app-integration').length).toBe(1);
   });
 
-  test('D. RECOVERY: repairing the red integration promotes the whole system', () => {
+  test('D. RECOVERY: repairing the red integration promotes the whole system', async () => {
     git(['rm', '-q', 'BROKEN'], app.integ);
     git(['commit', '-qm', 'fix: repair integration build'], app.integ);
     const appInt = rev('refactor/integration', app.main);
     const fpInt = rev('refactor/integration', fp.main);
 
-    const summary = drive();
+    const summary = await drive();
     expect(rev('main', app.main)).toBe(appInt); // app promoted once green again
     expect(rev('main', fp.main)).toBe(fpInt); // fp promoted now the system is green
     expect(summary.systemGreen).toBe(true);
     expect(summary.promoted.sort()).toEqual(['app', 'fp']);
   });
 
-  test('E. CATCH-UP: a commit straight on main → integration fast-forwarded up to main', () => {
+  test('E. CATCH-UP: a commit straight on main → integration fast-forwarded up to main', async () => {
     commitOn(fp.main, 'file.txt', 'v3-main\n', 'chore: a commit on fp main ahead of integration');
     const fpMain = rev('main', fp.main);
 
-    const summary = drive();
+    const summary = await drive();
     expect(rev('refactor/integration', fp.main)).toBe(fpMain); // integration caught up to main
     expect(summary.repos.fp.action).toBe('catch-up');
     expect(summary.repos.fp.ancestry).toBe('main-ahead');
+  });
+
+  test('F. SMOKE-GATING: build green but the server wont boot → held + smoke heal, NOT promoted', async () => {
+    // Retire the prior (build) heal so F proves a FRESH, smoke-flavoured re-arm.
+    const prior = healOf('heal-app-integration')[0];
+    if (prior) store.board.setStatus(prior.id, 'done');
+    commitOn(app.integ, 'file.txt', 'v4-green-build\n', 'feat: a green build on integration');
+    commitOn(app.integ, 'BOOT_BROKEN', 'boom\n', 'break the RUNTIME boot (server exits on startup)');
+    const appMainBefore = rev('main', app.main);
+
+    const summary = await drive(bootSmokeFake);
+    expect(rev('main', app.main)).toBe(appMainBefore); // built fine, but won't boot → NOT promoted
+    expect(summary.repos.app.built).toBe(true);
+    expect(summary.repos.app.integrationGreen).toBe(true); // the BUILD was green
+    expect(summary.repos.app.smoked).toBe(true);
+    expect(summary.repos.app.smokeGreen).toBe(false); // ...the runtime smoke was RED
+    expect(summary.systemGreen).toBe(false);
+    expect(summary.promoted).toEqual([]);
+
+    const heal = healOf('heal-app-integration');
+    expect(heal.length).toBe(1);
+    expect(heal[0].status).toBe('ready'); // re-armed for the boot failure
+  });
+
+  test('G. SMOKE-RECOVERY: repairing the boot → smoke green → app promoted', async () => {
+    git(['rm', '-q', 'BOOT_BROKEN'], app.integ);
+    git(['commit', '-qm', 'fix: server boots + serves /api/health again'], app.integ);
+    const appInt = rev('refactor/integration', app.main);
+
+    const summary = await drive(bootSmokeFake);
+    expect(rev('main', app.main)).toBe(appInt); // promoted once it boots + smoke is green
+    expect(summary.repos.app.smokeGreen).toBe(true);
+    expect(summary.promoted).toContain('app');
   });
 });

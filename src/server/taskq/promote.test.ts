@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { ancestryFrom, decideRepo, decideSystem, integrationNeedsHeal, type RepoState } from './promote';
+import {
+  ancestryFrom,
+  decideRepo,
+  decideSystem,
+  healReason,
+  integrationNeedsHeal,
+  type RepoState,
+  repoGreen,
+} from './promote';
 
 describe('ancestryFrom', () => {
   test('equal tips → equal', () => {
@@ -44,6 +52,36 @@ describe('decideRepo', () => {
   test('diverged → diverged', () => {
     expect(decideRepo({ repo: 'ru', ancestry: 'diverged', integrationGreen: true }, true)).toBe('diverged');
   });
+
+  test("main-behind + build green + smoke explicitly RED → hold-red (built but won't boot)", () => {
+    expect(decideRepo({ repo: 'ru', ancestry: 'main-behind', integrationGreen: true, smokeGreen: false }, true)).toBe(
+      'hold-red',
+    );
+  });
+  test('main-behind + build green + smoke green + systemGreen → promote', () => {
+    expect(decideRepo({ repo: 'ru', ancestry: 'main-behind', integrationGreen: true, smokeGreen: true }, true)).toBe(
+      'promote',
+    );
+  });
+  test('main-behind + build green + smoke undefined (no smoke ran) → promote (smoke never blocks unless it fails)', () => {
+    expect(decideRepo({ repo: 'ru', ancestry: 'main-behind', integrationGreen: true }, true)).toBe('promote');
+  });
+});
+
+describe('repoGreen', () => {
+  test('build green + no smoke → green (smoke is optional)', () => {
+    expect(repoGreen({ integrationGreen: true })).toBe(true);
+  });
+  test('build green + smoke green → green', () => {
+    expect(repoGreen({ integrationGreen: true, smokeGreen: true })).toBe(true);
+  });
+  test('build green + smoke FAILED → NOT green (the runtime-only break the build missed)', () => {
+    expect(repoGreen({ integrationGreen: true, smokeGreen: false })).toBe(false);
+  });
+  test('build red → not green regardless of smoke', () => {
+    expect(repoGreen({ integrationGreen: false })).toBe(false);
+    expect(repoGreen({ integrationGreen: false, smokeGreen: true })).toBe(false);
+  });
 });
 
 describe('decideSystem', () => {
@@ -74,13 +112,47 @@ describe('decideSystem', () => {
   test('empty system → no promotions (systemGreen is false on empty)', () => {
     expect(decideSystem([]).size).toBe(0);
   });
+
+  test('a repo that BUILDS green but FAILS its boot smoke holds back ALL promotions', () => {
+    const repos: RepoState[] = [
+      // ca built fine but crashes on boot → smoke red → not promotable + drags the system red.
+      { repo: 'ca', ancestry: 'main-behind', integrationGreen: true, smokeGreen: false },
+      // ru is fully green (build + smoke) but is held because the system isn't all-green.
+      { repo: 'ru', ancestry: 'main-behind', integrationGreen: true, smokeGreen: true },
+      { repo: 'cwip', ancestry: 'main-ahead', integrationGreen: true },
+    ];
+    const d = decideSystem(repos);
+    expect(d.get('ca')).toBe('hold-red'); // built but won't boot
+    expect(d.get('ru')).toBe('hold-red'); // green, but system not all-green
+    expect(d.get('cwip')).toBe('catch-up'); // safe regardless
+  });
 });
 
 describe('integrationNeedsHeal', () => {
-  test('red integration → heal', () => {
+  test('red build → heal', () => {
     expect(integrationNeedsHeal({ integrationGreen: false })).toBe(true);
   });
-  test('green integration → no heal', () => {
+  test('green build, no smoke → no heal', () => {
     expect(integrationNeedsHeal({ integrationGreen: true })).toBe(false);
+  });
+  test('green build but FAILED boot smoke → heal (runtime break)', () => {
+    expect(integrationNeedsHeal({ integrationGreen: true, smokeGreen: false })).toBe(true);
+  });
+  test('green build + green smoke → no heal', () => {
+    expect(integrationNeedsHeal({ integrationGreen: true, smokeGreen: true })).toBe(false);
+  });
+});
+
+describe('healReason', () => {
+  test('build failure → "build" (takes precedence)', () => {
+    expect(healReason({ integrationGreen: false })).toBe('build');
+    expect(healReason({ integrationGreen: false, smokeGreen: false })).toBe('build');
+  });
+  test('build green but smoke failed → "smoke"', () => {
+    expect(healReason({ integrationGreen: true, smokeGreen: false })).toBe('smoke');
+  });
+  test('fully green → null', () => {
+    expect(healReason({ integrationGreen: true })).toBeNull();
+    expect(healReason({ integrationGreen: true, smokeGreen: true })).toBeNull();
   });
 });
