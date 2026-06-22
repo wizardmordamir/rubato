@@ -55,6 +55,8 @@ const SUCCESS: TaskResult = { ok: true, outputTokens: 100 };
  * A scripted world the fake git/build/fs read from. `head` is the integration tip
  * (snapshot reads it as `before`, verify re-reads it as `after`); `landed` is what
  * `rev-list --count` returns; `buildGreen`/`knownGreen` drive the regression check.
+ * `commitSubjects` is what `git log --format=%s` returns (undefined = git error =
+ * no subject info, so attribution falls back to the raw landed count).
  */
 interface World {
   head: string;
@@ -63,6 +65,8 @@ interface World {
   knownGreen: boolean | undefined;
   hasIntegBranch: boolean;
   worktreeExists: boolean;
+  /** Commit subjects in the run window (controls attribution). Omit to simulate no subject info. */
+  commitSubjects?: string[];
 }
 
 function fakeDeps(w: World, alerts: FalseDoneAlert[], buildCalls: { count: number }): DoneCheckDeps {
@@ -70,6 +74,11 @@ function fakeDeps(w: World, alerts: FalseDoneAlert[], buildCalls: { count: numbe
     git: (args) => {
       if (args[0] === 'rev-parse') return w.hasIntegBranch ? { code: 0, out: `${w.head}\n` } : { code: 128, out: '' };
       if (args[0] === 'rev-list') return { code: 0, out: `${w.landed}\n` };
+      if (args[0] === 'log') {
+        // `git log --format=%s before..after` -- return scripted subjects or simulate error.
+        if (w.commitSubjects === undefined) return { code: 1, out: '' };
+        return { code: 0, out: w.commitSubjects.length > 0 ? `${w.commitSubjects.join('\n')}\n` : '' };
+      }
       return { code: 1, out: '' };
     },
     build: () => {
@@ -235,7 +244,7 @@ describe('makeDoneGuard', () => {
     }
   });
 
-  test('build is skipped when the integration worktree is absent (can’t build → no regression flag)', async () => {
+  test("build is skipped when the integration worktree is absent (can't build → no regression flag)", async () => {
     const w: World = {
       head: 'sha0',
       landed: 2,
@@ -247,5 +256,109 @@ describe('makeDoneGuard', () => {
     const { verdict, buildCalls } = await run(w, { landAfter: 'sha1' });
     expect(verdict.accept).toBe(true); // landed code, build couldn't run → accept
     expect(buildCalls.count).toBe(0);
+  });
+
+  // ── Attribution tests ──────────────────────────────────────────────────────────
+
+  test('SIBLING-MASKING: stamped commits in window carry another task id → treated as empty-done', async () => {
+    // Two workers running concurrently on the same repo. Sibling (#99) lands first;
+    // our task (#31) lands nothing. rawLanded=2 but none reference #31 or its slug.
+    const w: World = {
+      head: 'sha0',
+      landed: 2,
+      buildGreen: true,
+      knownGreen: true,
+      hasIntegBranch: true,
+      worktreeExists: true,
+      commitSubjects: ['chore: land sibling work (#99)', 'fix: another sibling commit (#99)'],
+    };
+    const { verdict, alerts, buildCalls } = await run(w, { landAfter: 'sha2' });
+    expect(verdict.accept).toBe(false);
+    if (verdict.accept) throw new Error('unreachable');
+    expect(verdict.reason).toBe('empty-done');
+    expect(verdict.status).toBe('needs_input');
+    expect(buildCalls.count).toBe(0); // attribution resolves to 0 → no build
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ taskId: 31, slug: 'rfc-31', repo: 'ru', reason: 'empty-done' });
+  });
+
+  test('ATTRIBUTION: commit referencing this task by #id is credited → accepted', async () => {
+    const w: World = {
+      head: 'sha0',
+      landed: 3,
+      buildGreen: true,
+      knownGreen: true,
+      hasIntegBranch: true,
+      worktreeExists: true,
+      // Mix of sibling and this task's commit (#31).
+      commitSubjects: ['chore: sibling work (#99)', 'feat: this task work (#31)', 'chore: sibling follow-up (#99)'],
+    };
+    const { verdict, alerts } = await run(w, { landAfter: 'sha3' });
+    expect(verdict.accept).toBe(true);
+    expect(alerts).toHaveLength(0);
+  });
+
+  test('ATTRIBUTION: commit referencing this task by slug is credited → accepted', async () => {
+    const w: World = {
+      head: 'sha0',
+      landed: 1,
+      buildGreen: true,
+      knownGreen: true,
+      hasIntegBranch: true,
+      worktreeExists: true,
+      commitSubjects: ['feat(rfc-31): wire up the refactor (#99 sibling also landed)'],
+    };
+    const { verdict, alerts } = await run(w, { landAfter: 'sha1' });
+    expect(verdict.accept).toBe(true);
+    expect(alerts).toHaveLength(0);
+  });
+
+  test('ATTRIBUTION fallback: no stamp in any commit → raw landed count kept (backward compat)', async () => {
+    const w: World = {
+      head: 'sha0',
+      landed: 2,
+      buildGreen: true,
+      knownGreen: true,
+      hasIntegBranch: true,
+      worktreeExists: true,
+      // Honest commits with no #N stamp -- worker pre-dates the attribution feature.
+      commitSubjects: ['chore: update deps', 'fix: handle edge case'],
+    };
+    const { verdict, alerts } = await run(w, { landAfter: 'sha2' });
+    expect(verdict.accept).toBe(true);
+    expect(alerts).toHaveLength(0);
+  });
+
+  test('ATTRIBUTION: id boundary -- #31 matches but #310 does not', async () => {
+    const w: World = {
+      head: 'sha0',
+      landed: 2,
+      buildGreen: true,
+      knownGreen: true,
+      hasIntegBranch: true,
+      worktreeExists: true,
+      // #310 is a different task; should NOT be credited to task #31.
+      commitSubjects: ['feat: work for a different task (#310)', 'chore: more work (#310)'],
+    };
+    const { verdict } = await run(w, { landAfter: 'sha2' });
+    expect(verdict.accept).toBe(false);
+    if (verdict.accept) throw new Error('unreachable');
+    expect(verdict.reason).toBe('empty-done');
+  });
+
+  test('ATTRIBUTION: git log error → falls back to raw count (fail-open)', async () => {
+    // commitSubjects: undefined → fake returns { code: 1 } → no subject info → fallback.
+    const w: World = {
+      head: 'sha0',
+      landed: 2,
+      buildGreen: true,
+      knownGreen: true,
+      hasIntegBranch: true,
+      worktreeExists: true,
+      // No commitSubjects → git log fails → fallback to raw count.
+    };
+    const { verdict, alerts } = await run(w, { landAfter: 'sha2' });
+    expect(verdict.accept).toBe(true); // fail-open: treat as landed
+    expect(alerts).toHaveLength(0);
   });
 });

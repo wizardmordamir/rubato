@@ -13,6 +13,15 @@
  *     the snapshot, and — only when code landed and the check is enabled — a
  *     `bun run build` of the integration worktree to catch a regression. Feeds the
  *     evidence to {@link decideDone}; on a reject it fires a deduped alert.
+ *
+ * Attribution tightening (task #277): when workers stamp `#<id>` in commit subjects
+ * (as `buildWorkerPrompt` instructs them to), the landed-commit count is narrowed to
+ * commits that reference THIS task's id or slug. A window where sibling workers
+ * stamped commits but none belong to this task is treated as empty-done (the sibling
+ * masked an otherwise-undetected zero-landing). When no commit in the window carries
+ * any `#N` stamp (workers pre-date the feature or forgot), the raw commit count is
+ * kept as a backward-compatible fallback so honest-but-unstamped workers are not
+ * penalised.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -106,8 +115,16 @@ export function makeDoneGuard(config: TaskqConfig, deps: Partial<DoneCheckDeps> 
     // 1. Landed-code delta: new commits on refactor/integration in the run window.
     const after = d.git(['rev-parse', 'refactor/integration'], snap.repoRoot);
     const afterSha = after.code === 0 ? after.out.trim() : '';
-    const landedCommits =
+    const rawLanded =
       afterSha && afterSha !== snap.beforeSha ? countNewCommits(d, snap.repoRoot, snap.beforeSha, afterSha) : 0;
+
+    // 1a. Attribution: when workers stamp #<id> in commit subjects, require >=1
+    //     commit for THIS task in the window. A window where sibling workers stamped
+    //     but this task didn't lands as empty-done (sibling masking). When no commit
+    //     carries any stamp, fall back to rawLanded (backward compat for unstamped workers).
+    const landedCommits = rawLanded > 0
+      ? resolveAttributed(d, snap.repoRoot, snap.beforeSha, afterSha, task.id, task.slug, rawLanded)
+      : 0;
 
     // 2. Regression check (only meaningful once code landed): build the integration
     //    worktree. Skipped when disabled, nothing landed, or the worktree is absent.
@@ -152,6 +169,50 @@ function countNewCommits(d: DoneCheckDeps, cwd: string, before: string, after: s
   if (r.code !== 0) return 0;
   const n = Number.parseInt(r.out.trim(), 10);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Resolve the effective landed count for a task, applying attribution when workers
+ * stamp commit subjects with `#<id>`:
+ *  - >=1 subject matches this task → return the attributed count (credited).
+ *  - other subjects carry a `#N` stamp but none match this task → sibling masking,
+ *    return 0 (forces an empty-done rejection).
+ *  - no subject carries any stamp → backward-compat fallback, return rawLanded.
+ */
+function resolveAttributed(
+  d: DoneCheckDeps,
+  cwd: string,
+  before: string,
+  after: string,
+  taskId: number,
+  slug: string | null,
+  rawLanded: number,
+): number {
+  const subjects = getCommitSubjects(d, cwd, before, after);
+  if (subjects.length === 0) return rawLanded; // no subject info → keep raw
+  const attributed = subjects.filter(s => isAttributedToTask(s, taskId, slug)).length;
+  if (attributed > 0) return attributed;
+  if (subjects.some(s => /#\d+/.test(s))) return 0; // stamped window, not this task
+  return rawLanded; // no stamps → backward-compat fallback
+}
+
+/** One-line commit subjects in the given range; empty on any git error. */
+function getCommitSubjects(d: DoneCheckDeps, cwd: string, before: string, after: string): string[] {
+  const r = d.git(['log', '--format=%s', `${before}..${after}`], cwd);
+  if (r.code !== 0 || !r.out.trim()) return [];
+  return r.out
+    .trim()
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+/** True when a commit subject references this task: contains `#<taskId>` or the slug. */
+function isAttributedToTask(subject: string, taskId: number, slug: string | null): boolean {
+  // `#31` matches but `#310` does not — require a non-digit (or end) after the id.
+  if (new RegExp(`#${taskId}(?!\\d)`).test(subject)) return true;
+  if (slug !== null && subject.includes(slug)) return true;
+  return false;
 }
 
 // ── Real default seams ─────────────────────────────────────────────────────────
