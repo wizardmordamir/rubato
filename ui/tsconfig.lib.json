@@ -24,7 +24,13 @@
       "react": ["./node_modules/@types/react"],
       "react/*": ["./node_modules/@types/react/*"],
       "react-dom": ["./node_modules/@types/react-dom"],
-      "react-dom/*": ["./node_modules/@types/react-dom/*"]
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
+      // cursedbelt source (resolved via its `source` condition) re-exports hooks
+      // built on @tanstack/react-query + recharts; dedupe those to ru-ui's single
+      // copies too, or their generics resolve to `any` here (TS7006 in
+      // createApiHooks/charts) even though the app tsconfig.json maps them.
+      "@tanstack/react-query": ["./node_modules/@tanstack/react-query"],
+      "recharts": ["./node_modules/recharts"]
     }
   },
   // vite-env.d.ts supplies `import.meta.env` (vite/client) + the __RUBATO_DEV_WS_URL__
