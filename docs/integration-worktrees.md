@@ -97,17 +97,37 @@ touched by a worker.
 1. Classifies each repo's `main` ↔ `refactor/integration` ancestry.
 2. **Builds** the integration worktrees that are ahead (providers `cwip`/`cursedbelt`
    first, so consumers `ca`/`ru` resolve their fresh integration dist — the cross-repo
-   "apps run together" check).
+   "apps run together" check). This is the TYPE/bundler gate.
+2b. **Runtime boot smoke** — after a green build, boots each smoke-configured consumer
+   against an **isolated state dir + a free port** and waits for a healthy `/api/health`
+   (`ru` → `rubato-serve`, `RUBATO_HOME`/`RUBATO_PORT`), then tears it down. This catches
+   runtime-only breaks a green build misses — a missing-export crash on boot, a bad
+   dynamic import — so a build that *compiles* but *won't run* can never promote `main`.
+   Bounded by a timeout and isolated, like the rest of the gate.
 3. **Promotes** (`git merge --ff-only` `main` → integration) only when the **whole
-   system** is green, so `main` never advances to a broken state. It **catches up** the
-   reverse (ff integration → `main`) when `main` is ahead, and **holds** (no promote)
-   when any repo's integration is red.
+   system** is green — where "green" now means BOTH the build passed AND the runtime
+   smoke didn't fail — so `main` never advances to a broken-OR-unbootable state. It
+   **catches up** the reverse (ff integration → `main`) when `main` is ahead, and
+   **holds** (no promote) when any repo's integration is build-red or boot-red.
 4. Spawns ONE deduped **`heal-<repo>-integration`** task per red/diverged repo, on the
-   integration flow, then kicks the drainer.
+   integration flow, then kicks the drainer. The heal body distinguishes a build failure
+   from a boot-smoke failure ("BUILDS but won't BOOT").
 5. After promoting, rebuilds the providers' main `dist` and re-relinks the consumer
    main checkouts so localhost (which runs off `main`) stays current.
 
 The promote/ancestry decision core is the pure, unit-tested
-`src/server/taskq/promote.ts` (`decideSystem`/`decideRepo`/`ancestryFrom`), imported by
-the watchdog. Run the watchdog with `--dry` to see the decisions without mutating
-anything; its repo set + `TASKQ_HOME` are env-overridable for an isolated end-to-end test.
+`src/server/taskq/promote.ts` (`decideSystem`/`decideRepo`/`ancestryFrom`, plus
+`repoGreen`/`healReason` for the smoke gate); the impure boot smoke is
+`src/server/taskq/bootSmoke.ts` (`rubatoSmokeSpec`/`planSmoke`/`runBootSmoke`, reusing
+cwip/testing's hardened spawn+health-poll). Both are imported by the watchdog — the
+smoke helper **lazily + guarded** so a not-yet-promoted main checkout degrades to the
+build-only gate instead of crashing (the watchdog is what promotes that very code, so a
+hard dependency would deadlock). Run the watchdog with `--dry` to see the decisions
+without mutating anything; its repo set, `TASKQ_HOME`, and the smoke-helper path
+(`MAINHEALTH_BOOTSMOKE_PATH`) are env-overridable for an isolated end-to-end test (see
+`~/.taskq/verify-intgate.ts`, scenarios F/G).
+
+> **ca's runtime smoke is a follow-up** (`fu-intgate-smoke-ca`): its multi-workspace boot
+> needs an isolated `CA_DATA_DIR` + `PORT` (and a `caSmokeSpec` mirroring `rubatoSmokeSpec`)
+> verified in the ca repo first. Until then ca stays build-only so an unverified smoke
+> can't freeze the system-gated promotion.

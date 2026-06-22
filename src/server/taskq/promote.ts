@@ -8,8 +8,17 @@
  * **fast-forwarding it to a verified-green integration** — so the owner's localhost,
  * which runs off main, never sees a broken build.
  *
+ * A repo's integration is "promotable-green" on TWO independent signals, both of
+ * which must pass: the **build** (`bun run build` of the integration worktree — the
+ * type/bundler gate) AND a lightweight **runtime boot smoke** (boot the consumer's
+ * server against an isolated home/port and hit `/api/health`). The smoke catches
+ * runtime-only breaks a green build misses — a missing-export crash on boot, a bad
+ * dynamic import — so a build that compiles but won't run can never promote `main`.
+ * The smoke is per-repo OPTIONAL (a provider with no server to boot has none); see
+ * `repoGreen`/`RepoState.smokeGreen` for exactly how it gates.
+ *
  * This module answers, given each repo's `main`↔`integration` ancestry and whether
- * its integration build is green, what the gate should do:
+ * its integration build (and runtime smoke) are green, what the gate should do:
  *
  *  - **promote**  — ff `main` → `refactor/integration` (integration is ahead AND the
  *                   WHOLE system is green). This is the only path that moves main.
@@ -44,10 +53,33 @@ export interface RepoState {
   ancestry: Ancestry;
   /** Did `bun run build` on `refactor/integration` (the integration worktree) pass? */
   integrationGreen: boolean;
+  /**
+   * Did the RUNTIME boot smoke pass — booting the consumer's server against an
+   * isolated home/port and getting a healthy `/api/health`? This is the second,
+   * independent gate on top of `integrationGreen` (which is only the type/bundler
+   * build): it catches breaks that COMPILE but don't RUN (a missing-export crash on
+   * boot, a bad dynamic import).
+   *
+   * `undefined` ⇒ no smoke applies/was run for this repo (e.g. a provider with no
+   * server to boot, or a repo whose integration isn't ahead so nothing was built) →
+   * it never blocks. Only an explicit `false` (smoke ran and FAILED) holds promotion.
+   */
+  smokeGreen?: boolean;
 }
 
 /** What the gate should do for one repo this cycle. */
 export type PromoteAction = 'promote' | 'catch-up' | 'hold-red' | 'diverged' | 'none';
+
+/**
+ * Is this repo's integration "promotable-green"? It must clear BOTH gates: the
+ * build passed AND the runtime boot smoke didn't explicitly fail. An `undefined`
+ * `smokeGreen` (no smoke applies/was run) does NOT block — only a `false` does. So a
+ * build that compiles but crashes on boot (`integrationGreen` true, `smokeGreen`
+ * false) is correctly NOT green.
+ */
+export function repoGreen(s: Pick<RepoState, 'integrationGreen' | 'smokeGreen'>): boolean {
+  return s.integrationGreen && s.smokeGreen !== false;
+}
 
 /**
  * Decide one repo's action given the per-repo ancestry/health and whether the
@@ -65,9 +97,10 @@ export function decideRepo(s: RepoState, systemGreen: boolean): PromoteAction {
     case 'diverged':
       return 'diverged';
     case 'main-behind':
-      // Integration is ahead. Only advance main when the integration is green AND
-      // the whole system is green — otherwise hold so main never goes red.
-      return s.integrationGreen && systemGreen ? 'promote' : 'hold-red';
+      // Integration is ahead. Only advance main when this repo is green (build AND
+      // runtime smoke) AND the whole system is green — otherwise hold so main never
+      // goes red, nor boots broken.
+      return repoGreen(s) && systemGreen ? 'promote' : 'hold-red';
   }
 }
 
@@ -78,13 +111,28 @@ export function decideRepo(s: RepoState, systemGreen: boolean): PromoteAction {
  * apply (they don't touch main).
  */
 export function decideSystem(repos: RepoState[]): Map<string, PromoteAction> {
-  const systemGreen = repos.length > 0 && repos.every((r) => r.integrationGreen);
+  const systemGreen = repos.length > 0 && repos.every(repoGreen);
   return new Map(repos.map((r) => [r.repo, decideRepo(r, systemGreen)]));
 }
 
-/** True when a repo's integration build is red and so warrants a heal task. */
-export function integrationNeedsHeal(s: Pick<RepoState, 'integrationGreen'>): boolean {
-  return !s.integrationGreen;
+/**
+ * True when a repo's integration isn't promotable-green — its build failed OR its
+ * runtime boot smoke failed — and so warrants a heal task.
+ */
+export function integrationNeedsHeal(s: Pick<RepoState, 'integrationGreen' | 'smokeGreen'>): boolean {
+  return !repoGreen(s);
+}
+
+/**
+ * Why a repo isn't promotable-green, for routing/labelling a heal task. `'build'`
+ * (failed `bun run build`) takes precedence over `'smoke'` (built fine but the
+ * runtime boot smoke failed); `null` when the repo IS green. Ancestry-driven
+ * `'diverged'` is handled separately by the caller (it's not a redness).
+ */
+export function healReason(s: Pick<RepoState, 'integrationGreen' | 'smokeGreen'>): 'build' | 'smoke' | null {
+  if (!s.integrationGreen) return 'build';
+  if (s.smokeGreen === false) return 'smoke';
+  return null;
 }
 
 /** Classify ancestry from the two pairwise `git merge-base --is-ancestor` results. */
