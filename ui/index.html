@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- cursedbelt VIEWPORT_META (src/react/constants/viewport.ts): viewport-fit=cover →
+         real env(safe-area-inset-*) on iOS; interactive-widget=resizes-content → native
+         Android keyboard handling (iOS falls back to useKeyboardInset/visualViewport). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Rubato</title>
     <!-- Favicon: the violet eighth-note brand mark (SVG where supported, .ico fallback). -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
