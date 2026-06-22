@@ -1,3 +1,4 @@
+import { cn, SelectField, type SelectOption } from "cursedbelt/react";
 import type { ChangeEvent, ReactNode } from "react";
 
 // ---- Shared class tokens -----------------------------------------------------
@@ -119,7 +120,68 @@ const BADGE_TONES: Record<BadgeTone, string> = {
 // `Alert` is the themeable inline status banner / callout (info/success/warning/
 // error) — reach for it over a hand-rolled `rounded border bg-…-50 text-…` block so
 // status messages stay on-brand and announce themselves to assistive tech.
-export { Alert, type AlertTone, Dropdown, type DropdownOption, InfoHint, Tooltip } from "cursedbelt/react";
+export { Alert, type AlertTone, InfoHint, Tooltip } from "cursedbelt/react";
+
+// `Dropdown` bridge: cursedbelt's floating-layer rebuild (task 05) replaced the old
+// absolute-position single-select with the portal-based `SelectField` (never clipped
+// by an overflow ancestor, auto-flips/shifts). This thin adapter maps the old
+// `value/onChange/options` API onto SelectField so rubato's ~29 builder/page call
+// sites keep working unchanged; it is removed when task 40 re-skins ru onto the new
+// primitives. Custom trigger classes (the function `classNames.trigger`) carry over as
+// the SelectField trigger className; `align`/`direction` are no-ops (Radix positions).
+export type DropdownOption = SelectOption;
+
+type DropdownClassSlot = string | (() => string) | undefined;
+const resolveSlot = (slot: DropdownClassSlot): string | undefined =>
+  typeof slot === "function" ? slot() : slot;
+
+export interface DropdownProps {
+  options: DropdownOption[];
+  value: string | null | undefined;
+  onChange: (value: string) => void;
+  placeholder?: ReactNode;
+  align?: "left" | "right";
+  direction?: "auto" | "up" | "down";
+  disabled?: boolean;
+  className?: string;
+  classNames?: {
+    root?: DropdownClassSlot;
+    trigger?: DropdownClassSlot;
+    caret?: DropdownClassSlot;
+    backdrop?: DropdownClassSlot;
+    popover?: DropdownClassSlot;
+    option?: DropdownClassSlot;
+  };
+  "aria-label"?: string;
+  id?: string;
+}
+
+export function Dropdown({
+  options,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  className,
+  classNames,
+  "aria-label": ariaLabel,
+}: DropdownProps) {
+  const triggerCls = resolveSlot(classNames?.trigger);
+  return (
+    <SelectField
+      options={options}
+      value={value ?? undefined}
+      onValueChange={onChange}
+      placeholder={typeof placeholder === "string" ? placeholder : undefined}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      // A custom trigger class already provides its own field styling; otherwise keep
+      // the field look but default to auto width (the old trigger was inline/auto).
+      fieldStyle={!triggerCls}
+      className={cn(!triggerCls && "w-auto", resolveSlot(classNames?.root), triggerCls, className)}
+    />
+  );
+}
 
 // "Open in editor" affordances for any filesystem path shown in the UI
 // (re-exported here so pages get them from the same module as the other shared
