@@ -62,7 +62,25 @@ export function buildWorkerPrompt(task: TaskRow): string {
     `Follow the target repo's CLAUDE.md workflow (worktree, scoped verify gate, commit,`,
     `merge to the default branch — local only, never push). Do not pick up any other task.`,
     `If you hit a blocker you cannot resolve, explain why and stop (do not land partial work).`,
+    `A transient failure (a flaky service, a download that won't resolve) is retried`,
+    `automatically — just explain what went wrong. ONLY if the task is fundamentally`,
+    `impossible or needs a human decision/credential you cannot supply, begin your final`,
+    `reply with "${PERMANENT_FAILURE_MARKER}" so the orchestrator parks it for a human`,
+    `instead of wasting automatic retries.`,
   ].join('\n');
+}
+
+/**
+ * The marker a worker prefixes its final reply with to signal a NON-retryable
+ * failure (impossible / needs a human). Explicit + low-false-positive: the
+ * orchestrator skips auto-retry only when the agent deliberately emits it. A
+ * truly-stuck task with no marker still parks terminal once attempts run out.
+ */
+export const PERMANENT_FAILURE_MARKER = 'TASKQ-PERMANENT:';
+
+/** True when a result string declares itself a permanent (non-retryable) failure. */
+export function isPermanentFailureMessage(s: string | null | undefined): boolean {
+  return !!s && s.toLowerCase().includes(PERMANENT_FAILURE_MARKER.toLowerCase());
 }
 
 /** The `claude -p --output-format json` result envelope (the fields we use). */
@@ -137,6 +155,8 @@ export function parseClaudeResult(stdout: string): TaskResult {
     reason: ok ? undefined : brief || env.subtype || 'run did not succeed',
     outputTokens: env.usage?.output_tokens,
     rateLimited: !ok && isUsageLimitMessage(`${brief} ${env.subtype ?? ''}`),
+    // The worker can declare the failure non-retryable (impossible / needs human).
+    permanent: !ok && isPermanentFailureMessage(full),
   };
 }
 

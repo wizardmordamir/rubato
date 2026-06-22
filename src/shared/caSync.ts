@@ -82,6 +82,17 @@ export interface CaTaskSummary {
   model: string | null;
   think: string | null;
   updatedAt: string;
+  /** Failures so far (bounded auto-retry); 0 for a task that hasn't failed. */
+  attempts: number;
+  /** Effective retry ceiling (per-task `max_attempts` ?? the config default). */
+  maxAttempts: number;
+  /** Last failure reason (also why it's on_hold/blocked); null when none. */
+  note: string | null;
+  /**
+   * Epoch-ms when the task next becomes eligible — set in the future while it
+   * waits out a retry backoff, so ca can render "retry N/M in …". Null = due now.
+   */
+  nextEligibleAt: number | null;
 }
 export interface CaTasksPayload {
   ready: CaTaskSummary[];

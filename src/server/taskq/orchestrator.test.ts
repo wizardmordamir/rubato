@@ -26,15 +26,72 @@ describe('runDrain', () => {
     expect(listTasks(db, { status: 'ready' }).length).toBe(0);
   });
 
-  test('a failing task lands as failed + note', async () => {
+  test('a failing task lands terminal failed + note once attempts are exhausted', async () => {
     const db = fresh();
     addTask(db, { title: 'ok1' }, { at: 'bottom' });
     addTask(db, { title: 'boom' }, { at: 'bottom' });
-    const summary = await runDrain(db, { jobs: 1, executor: okExecutor });
+    // maxAttempts:1 → the first failure is already terminal (no retry).
+    const summary = await runDrain(db, { jobs: 1, executor: okExecutor, retry: { maxAttempts: 1 } });
     expect(summary.completed).toBe(1);
     expect(summary.failed).toBe(1);
+    expect(summary.retried).toBe(0);
     const failed = listTasks(db, { status: 'failed' });
     expect(failed[0]?.note).toBe('kaboom');
+  });
+
+  test('a transient failure is RETRIED with a backoff (not burned); independents still drain', async () => {
+    const db = fresh();
+    addTask(db, { title: 'ok1' }, { at: 'bottom' });
+    addTask(db, { title: 'boom' }, { at: 'bottom' });
+    // A real (future) backoff holds the retried task out of THIS pass — proving it
+    // was re-queued, not terminal — while the independent task still completes.
+    const summary = await runDrain(db, {
+      jobs: 1,
+      executor: okExecutor,
+      retry: { maxAttempts: 3, backoff: { baseMs: 60_000, jitter: 0 } },
+    });
+    expect(summary.completed).toBe(1); // ok1
+    expect(summary.retried).toBe(1); // boom re-queued
+    expect(summary.failed).toBe(0);
+    expect(listTasks(db, { status: 'failed' }).length).toBe(0);
+    const boom = listTasks(db, { status: 'ready' }).find((t) => t.title === 'boom');
+    expect(boom?.attempts).toBe(1);
+    expect(boom?.note).toBe('kaboom');
+    expect(boom?.recur_next_at).toBeGreaterThan(Date.now()); // waiting out the backoff
+  });
+
+  test('a permanent failure skips retries — terminal on the first failure', async () => {
+    const db = fresh();
+    addTask(db, { title: 'dead-end' });
+    const summary = await runDrain(db, {
+      jobs: 1,
+      executor: async () => ({ ok: false, reason: 'impossible', permanent: true }),
+      retry: { maxAttempts: 5 }, // ample budget, but permanent skips it
+    });
+    expect(summary.failed).toBe(1);
+    expect(summary.retried).toBe(0);
+    expect(listTasks(db, { status: 'failed' })[0]?.note).toBe('impossible');
+  });
+
+  test('retries up to the ceiling within a pass, then parks terminal failed', async () => {
+    const db = fresh();
+    addTask(db, { title: 'always-fails' });
+    let calls = 0;
+    // Zero backoff → each retry is immediately eligible, so the budget burns in one pass.
+    const summary = await runDrain(db, {
+      jobs: 1,
+      executor: async () => {
+        calls++;
+        return { ok: false, reason: 'still broken' };
+      },
+      retry: { maxAttempts: 3, backoff: { baseMs: 0 } },
+    });
+    expect(calls).toBe(3); // attempt 1 + 2 retries
+    expect(summary.retried).toBe(2);
+    expect(summary.failed).toBe(1);
+    const failed = listTasks(db, { status: 'failed' });
+    expect(failed.length).toBe(1);
+    expect(failed[0]?.attempts).toBe(3);
   });
 
   test('a rate-limited result releases the task back to ready and winds the pool down', async () => {
@@ -89,17 +146,36 @@ describe('runDrain', () => {
     expect(listTasks(db, { status: 'done' }).length).toBe(1);
   });
 
-  test('executor throwing fails the task, not the drain', async () => {
+  test('executor throwing fails the task, not the drain (terminal once attempts exhausted)', async () => {
     const db = fresh();
     addTask(db, { title: 'throws' });
+    // A throw is treated as transient and retried; pin maxAttempts:1 so it parks at once.
     const summary = await runDrain(db, {
       jobs: 1,
       executor: async () => {
         throw new Error('boom');
       },
+      retry: { maxAttempts: 1 },
     });
     expect(summary.failed).toBe(1);
     expect(listTasks(db, { status: 'failed' })[0]?.note).toContain('executor threw');
+  });
+
+  test('an executor throw is retried by default (transient), not immediately terminal', async () => {
+    const db = fresh();
+    addTask(db, { title: 'flaky-throw' });
+    const summary = await runDrain(db, {
+      jobs: 1,
+      executor: async () => {
+        throw new Error('spawn EAGAIN');
+      },
+      retry: { maxAttempts: 3, backoff: { baseMs: 60_000, jitter: 0 } },
+    });
+    expect(summary.retried).toBe(1);
+    expect(summary.failed).toBe(0);
+    const t = listTasks(db, { status: 'ready' })[0];
+    expect(t?.attempts).toBe(1);
+    expect(t?.note).toContain('executor threw');
   });
 
   test('grows the pool to a raised desiredJobs mid-run (no restart)', async () => {

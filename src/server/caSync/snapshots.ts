@@ -9,10 +9,11 @@ import type {
 } from '../../shared/caSync';
 import { getTimingOverview } from '../orchestrationTimings';
 import { capacitySnapshot } from '../taskq/capacity';
+import { loadTaskqConfig } from '../taskq/config';
 import { getTaskqDb } from '../taskqDb';
 
 const nowIso = () => new Date().toISOString();
-const summary = (t: TaskRow): CaTaskSummary => ({
+const summary = (t: TaskRow, defaultMaxAttempts: number): CaTaskSummary => ({
   id: t.id,
   title: t.title,
   status: t.status,
@@ -20,6 +21,13 @@ const summary = (t: TaskRow): CaTaskSummary => ({
   model: t.model,
   think: t.think,
   updatedAt: t.updated_at,
+  // Retry visibility: how many times it has failed, its effective ceiling, the
+  // last failure reason, and (for a task awaiting a backoff) when it next runs —
+  // so ca's Rubato Status can show "retry 2/3 in 4m" instead of a silent stall.
+  attempts: t.attempts,
+  maxAttempts: t.max_attempts ?? defaultMaxAttempts,
+  note: t.note,
+  nextEligibleAt: t.recur_next_at,
 });
 
 /** Token-bucket usage (the same numbers the Usage tab shows). */
@@ -55,6 +63,8 @@ export function buildCapacity(): CaCapacityPayload {
 /** Queue snapshot: status counts + the running / recently-finished tasks. */
 export function buildTasks(): CaTasksPayload {
   const all = listTasks(getTaskqDb());
+  const defaultMax = loadTaskqConfig().maxAttempts;
+  const sum = (t: TaskRow) => summary(t, defaultMax);
   const counts: Record<string, number> = {};
   for (const t of all) counts[t.status] = (counts[t.status] ?? 0) + 1;
   const byUpdatedDesc = (a: TaskRow, b: TaskRow) => (a.updated_at < b.updated_at ? 1 : -1);
@@ -63,17 +73,17 @@ export function buildTasks(): CaTasksPayload {
     ready: all
       .filter((t) => t.status === 'ready')
       .slice(0, 20)
-      .map(summary),
+      .map(sum),
     claimed: all
       .filter((t) => t.status === 'claimed')
       .sort(byUpdatedDesc)
       .slice(0, 20)
-      .map(summary),
+      .map(sum),
     recentDone: all
       .filter((t) => t.status === 'done')
       .sort(byUpdatedDesc)
       .slice(0, 20)
-      .map(summary),
+      .map(sum),
     at: nowIso(),
   };
 }

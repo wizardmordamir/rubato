@@ -10,9 +10,11 @@
  */
 
 import {
+  type BackoffOpts,
   type ClaimFilters,
   claimNext,
   completeTask,
+  type FailOpts,
   failTask,
   heartbeat,
   nextEligibleId,
@@ -39,6 +41,12 @@ export interface TaskResult {
    * the task just failed" (proof we are NOT out → recalibrate the estimate).
    */
   rateLimited?: boolean;
+  /**
+   * True when the failure is non-retryable (the worker determined the task is
+   * impossible / needs a human). Skips the auto-retry so we don't burn the whole
+   * attempt budget on a known dead-end — it parks terminal `failed` at once.
+   */
+  permanent?: boolean;
 }
 
 /** Runs one assigned task to completion (spawn an agent, etc.). */
@@ -56,7 +64,24 @@ export type DrainEvent =
   | { type: 'reaped'; count: number }
   | { type: 'claimed'; worker: number; task: TaskRow }
   | { type: 'completed'; worker: number; taskId: number; durationS: number }
-  | { type: 'failed'; worker: number; taskId: number; reason: string; rateLimited?: boolean }
+  | {
+      type: 'failed';
+      worker: number;
+      taskId: number;
+      reason: string;
+      rateLimited?: boolean;
+      attempts: number;
+      maxAttempts: number;
+    }
+  | {
+      type: 'retrying';
+      worker: number;
+      taskId: number;
+      reason: string;
+      attempts: number;
+      maxAttempts: number;
+      retryAt: number;
+    }
   | { type: 'rate-limited'; worker: number; taskId: number; reason: string }
   | { type: 'idle'; worker: number }
   | { type: 'error'; worker: number; taskId: number; error: string };
@@ -79,6 +104,14 @@ export interface DrainOptions {
   /** Wall-clock now in ms (injectable for tests). */
   now?: () => number;
   leaseTtlMs?: number;
+  /**
+   * Bounded auto-retry policy for failed/reaped tasks. A transient failure is
+   * re-queued (status `ready`) with the {@link BackoffOpts} delay until `attempts`
+   * reaches `maxAttempts`, then it parks terminal `failed`. Omit to use the
+   * engine defaults (max 3, 1m→5m→20m backoff). A per-task `max_attempts`
+   * overrides `maxAttempts`.
+   */
+  retry?: { maxAttempts?: number; backoff?: BackoffOpts };
   /** Heartbeat cadence while a task runs (default 60s). */
   heartbeatMs?: number;
   /**
@@ -101,7 +134,10 @@ export interface DrainOptions {
 
 export interface DrainSummary {
   completed: number;
+  /** Tasks that exhausted their attempts (or failed permanently) → terminal `failed`. */
   failed: number;
+  /** Transient failures that were re-queued with a backoff (not terminal). */
+  retried: number;
   reaped: number;
   /**
    * True when a worker hit a genuine usage/rate limit and the pool wound down
@@ -135,10 +171,55 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
   const tickMs = opts.tickMs ?? DEFAULT_TICK_MS;
   const desired = () => Math.max(1, Math.floor(opts.desiredJobs?.() ?? opts.jobs));
   const emit = (e: DrainEvent) => opts.onEvent?.(e);
-  const summary: DrainSummary = { completed: 0, failed: 0, reaped: 0, rateLimited: false };
+  const summary: DrainSummary = { completed: 0, failed: 0, retried: 0, reaped: 0, rateLimited: false };
 
-  // Reclaim leases stranded by a prior crashed run before we start.
-  summary.reaped = reapExpired(db, now());
+  // Retry policy threaded into every failure/reap so a transient hiccup is
+  // re-queued (with backoff) instead of burning a task; `permanent` skips it.
+  const failOpts = (permanent?: boolean): FailOpts => ({
+    maxAttempts: opts.retry?.maxAttempts,
+    backoff: opts.retry?.backoff,
+    permanent,
+  });
+  // Fail a task with bounded retry, then update the summary + emit the matching
+  // event ('retrying' while re-queued; 'failed' once terminal). Shared by the
+  // executor-failure and executor-throw paths.
+  const recordFailure = (
+    index: number,
+    taskId: number,
+    reason: string,
+    info: { permanent?: boolean; rateLimited?: boolean } = {},
+  ): void => {
+    const outcome = failTask(db, taskId, reason, now(), failOpts(info.permanent));
+    if (outcome.terminal) {
+      summary.failed++;
+      emit({
+        type: 'failed',
+        worker: index,
+        taskId,
+        reason,
+        rateLimited: info.rateLimited,
+        attempts: outcome.attempts,
+        maxAttempts: outcome.maxAttempts,
+      });
+    } else {
+      summary.retried++;
+      emit({
+        type: 'retrying',
+        worker: index,
+        taskId,
+        reason,
+        attempts: outcome.attempts,
+        maxAttempts: outcome.maxAttempts,
+        retryAt: outcome.retryAt ?? now(),
+      });
+    }
+  };
+
+  // Reclaim leases stranded by a prior crashed run before we start. A reap means
+  // the worker *vanished* (not that the task failed), so resume it promptly — a
+  // zero backoff — but still count the attempt (same accounting) so a task that
+  // repeatedly hangs eventually parks terminal instead of looping forever.
+  summary.reaped = reapExpired(db, now(), { maxAttempts: opts.retry?.maxAttempts, backoff: { baseMs: 0 } });
   if (summary.reaped) emit({ type: 'reaped', count: summary.reaped });
 
   // Set when a worker hits a real usage limit: stop claiming/refilling and let
@@ -200,22 +281,20 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
           emit({ type: 'rate-limited', worker: index, taskId: task.id, reason: res.reason ?? 'usage limit' });
           return;
         } else {
-          failTask(db, task.id, res.reason ?? 'task failed', now());
-          summary.failed++;
-          emit({
-            type: 'failed',
-            worker: index,
-            taskId: task.id,
-            reason: res.reason ?? 'task failed',
+          // Bounded auto-retry: re-queue with a backoff unless the worker flagged
+          // the failure permanent (impossible / needs human) or the budget is spent.
+          recordFailure(index, task.id, res.reason ?? 'task failed', {
+            permanent: res.permanent,
             rateLimited: res.rateLimited,
           });
         }
       } catch (e) {
         clearInterval(hb);
         const msg = e instanceof Error ? e.message : String(e);
-        failTask(db, task.id, `executor threw: ${msg}`, now());
-        summary.failed++;
+        // An executor throw is an infra hiccup (spawn failed, DB blip) → transient;
+        // retry it like any other failure. Emit 'error' first for the diagnostic.
         emit({ type: 'error', worker: index, taskId: task.id, error: msg });
+        recordFailure(index, task.id, `executor threw: ${msg}`);
       }
     }
   };

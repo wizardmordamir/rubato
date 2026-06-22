@@ -3,8 +3,10 @@ import type { TaskRow } from 'cwip/taskq';
 import {
   agentPath,
   buildWorkerPrompt,
+  isPermanentFailureMessage,
   isUsageLimitMessage,
   makeClaudeExecutor,
+  PERMANENT_FAILURE_MARKER,
   parseClaudeResult,
 } from './claudeExecutor';
 import { loadTaskqConfig } from './config';
@@ -29,6 +31,8 @@ const task = (over: Partial<TaskRow> = {}): TaskRow => ({
   recur_next_at: null,
   is_template: 0,
   is_saved: 0,
+  attempts: 0,
+  max_attempts: null,
   parent_id: null,
   note: null,
   triage_state: null,
@@ -76,6 +80,39 @@ describe('buildWorkerPrompt', () => {
     const p = buildWorkerPrompt(task({ id: 7, title: 'fix bug', repo: 'ru' }));
     expect(p).toContain('TASK #7');
     expect(p).toContain('CLAUDE.md');
+  });
+
+  test('documents the permanent-failure marker so the worker can opt out of retries', () => {
+    const p = buildWorkerPrompt(task());
+    expect(p).toContain(PERMANENT_FAILURE_MARKER);
+  });
+});
+
+describe('permanent-failure classification', () => {
+  test('isPermanentFailureMessage matches only the explicit marker', () => {
+    expect(isPermanentFailureMessage(`${PERMANENT_FAILURE_MARKER} this needs a human credential`)).toBe(true);
+    expect(isPermanentFailureMessage('taskq-permanent: lowercased works too')).toBe(true);
+    expect(isPermanentFailureMessage('the task failed but might work next time')).toBe(false);
+    expect(isPermanentFailureMessage('')).toBe(false);
+    expect(isPermanentFailureMessage(null)).toBe(false);
+  });
+
+  test('parseClaudeResult flags a marked failure permanent; ordinary failures + successes are not', () => {
+    const marked = parseClaudeResult(
+      JSON.stringify({ subtype: 'error', is_error: true, result: `${PERMANENT_FAILURE_MARKER} cannot proceed` }),
+    );
+    expect(marked.ok).toBe(false);
+    expect(marked.permanent).toBe(true);
+
+    const ordinary = parseClaudeResult(JSON.stringify({ subtype: 'error', is_error: true, result: 'tsc failed' }));
+    expect(ordinary.permanent).toBe(false);
+
+    const success = parseClaudeResult(
+      JSON.stringify({ subtype: 'success', result: `done ${PERMANENT_FAILURE_MARKER}`, usage: {} }),
+    );
+    // A successful run is never permanent-failed, even if the marker appears in prose.
+    expect(success.ok).toBe(true);
+    expect(success.permanent).toBe(false);
   });
 });
 

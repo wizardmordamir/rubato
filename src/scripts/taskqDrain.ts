@@ -162,6 +162,10 @@ async function main(): Promise<void> {
     desiredJobs: () => planDrain().jobs,
     executor,
     leaseTtlMs: config.leaseTtlMs,
+    // Bounded auto-retry so one transient hiccup (a download that won't resolve, a
+    // service down for a bit) can't strand the unattended run — the task is
+    // re-queued with a backoff and retried, only parking `failed` after the cap.
+    retry: { maxAttempts: config.maxAttempts, backoff: config.retryBackoff },
     worker: (i) => ({ filters: planDrain().perWorker[i] ?? {} }),
     tickMs,
     onTick: () => writeFileSync(lastFireFile, String(Date.now())),
@@ -179,8 +183,14 @@ async function main(): Promise<void> {
         // estimate predicts the wall sooner; the next pass resumes after reset.
         process.stdout.write(`  ⏸ #${e.taskId}: usage limit (${e.reason}) — released, backing off this pass\n`);
         logReconcile(reconcileUsageObservation(db, 'exhausted'));
+      } else if (e.type === 'retrying') {
+        const inMin = Math.max(0, Math.round((e.retryAt - Date.now()) / 60_000));
+        process.stdout.write(`  ↻ #${e.taskId}: ${e.reason} — retry ${e.attempts}/${e.maxAttempts} in ~${inMin}m\n`);
+        // A retry means the call reached the API (the task just didn't finish) →
+        // proof we are NOT out of tokens.
+        logReconcile(reconcileUsageObservation(db, 'not-exhausted'));
       } else if (e.type === 'failed') {
-        process.stdout.write(`  ✗ #${e.taskId}: ${e.reason}\n`);
+        process.stdout.write(`  ✗ #${e.taskId} (failed ${e.attempts}/${e.maxAttempts}): ${e.reason}\n`);
         // The call reached the API (it just didn't finish the task) → proof we
         // are NOT out, so treat it as a not-exhausted signal. (Real usage-limit
         // failures come through the 'rate-limited' branch above instead.)
@@ -194,7 +204,12 @@ async function main(): Promise<void> {
   // so a stuck "0% remaining" corrects itself without waiting for a task. Skip it
   // when a worker already hit a real usage limit this pass (summary.rateLimited):
   // we KNOW we're out, so a probe would just waste a call during the outage.
-  if (!dryRun && !summary.rateLimited && wasExhausted.length > 0 && summary.completed + summary.failed === 0) {
+  if (
+    !dryRun &&
+    !summary.rateLimited &&
+    wasExhausted.length > 0 &&
+    summary.completed + summary.failed + summary.retried === 0
+  ) {
     process.stdout.write(`${ts()} estimate read 0% but nothing ran — probing real capacity…\n`);
     const probe = await probeClaudeCapacity();
     if (probe.rateLimited) {
@@ -216,7 +231,7 @@ async function main(): Promise<void> {
 
   regenerateView(db);
   process.stdout.write(
-    `${ts()} taskq drain done: ${summary.completed} completed, ${summary.failed} failed, ${summary.reaped} reaped\n`,
+    `${ts()} taskq drain done: ${summary.completed} completed, ${summary.retried} retried, ${summary.failed} failed, ${summary.reaped} reaped\n`,
   );
 }
 

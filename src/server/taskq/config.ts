@@ -7,7 +7,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { taskqHome } from 'cwip/taskq';
+import { type BackoffOpts, DEFAULT_BACKOFF, DEFAULT_MAX_ATTEMPTS, taskqHome } from 'cwip/taskq';
 
 /** Worker model aliases + thinking levels the config accepts. */
 export const CONFIG_MODEL_ALIASES = ['opus', 'opus-1m', 'sonnet', 'haiku', 'fable'];
@@ -41,6 +41,18 @@ export interface TaskqConfig {
    * legitimate task; only catches genuine hangs).
    */
   taskTimeoutMs: number;
+  /**
+   * Bounded auto-retry ceiling: how many times a failed/reaped task is re-queued
+   * (with backoff) before it parks terminal `failed`. A per-task `max_attempts`
+   * overrides this. Default 3.
+   */
+  maxAttempts: number;
+  /**
+   * Exponential-backoff schedule for the re-queue delay (base/factor/cap/jitter).
+   * Spreads a fleet's retries and gives a transient outage time to clear before
+   * the automatic retry. Default 1m → 5m → 20m (capped), ±20% jitter.
+   */
+  retryBackoff: BackoffOpts;
   /** repo alias → absolute checkout root. */
   repos: Record<string, string>;
   /** Opt-in auto-triage / epic decomposition (off by default — conservative). */
@@ -62,6 +74,8 @@ export type TaskqConfigPatch = Partial<
     | 'fleet'
     | 'leaseTtlMs'
     | 'taskTimeoutMs'
+    | 'maxAttempts'
+    | 'retryBackoff'
     | 'usagePollMinutes'
     | 'usageCostPollMinutes'
   > & { triageEnabled: boolean }
@@ -77,6 +91,8 @@ function defaults(): TaskqConfig {
     model: 'opus',
     leaseTtlMs: 15 * 60_000,
     taskTimeoutMs: 2 * 60 * 60_000,
+    maxAttempts: DEFAULT_MAX_ATTEMPTS,
+    retryBackoff: { ...DEFAULT_BACKOFF },
     usagePollMinutes: 5,
     usageCostPollMinutes: 30,
     repos: {
@@ -96,6 +112,8 @@ export function loadTaskqConfig(): TaskqConfig {
       ...base,
       ...raw,
       repos: { ...base.repos, ...(raw.repos ?? {}) },
+      // Merge sub-fields so a partial backoff override keeps the rest of the defaults.
+      retryBackoff: { ...base.retryBackoff, ...(raw.retryBackoff ?? {}) },
     };
   } catch {
     return base;
@@ -138,6 +156,35 @@ export function validateConfigPatch(patch: TaskqConfigPatch): TaskqConfigPatch {
     if (!Number.isInteger(patch.taskTimeoutMs) || patch.taskTimeoutMs < 60_000 || patch.taskTimeoutMs > 86_400_000)
       throw new Error('taskTimeoutMs must be 60000–86400000');
     out.taskTimeoutMs = patch.taskTimeoutMs;
+  }
+  if (patch.maxAttempts !== undefined) {
+    if (!Number.isInteger(patch.maxAttempts) || patch.maxAttempts < 1 || patch.maxAttempts > 10)
+      throw new Error('maxAttempts must be 1–10');
+    out.maxAttempts = patch.maxAttempts;
+  }
+  if (patch.retryBackoff !== undefined) {
+    const b = patch.retryBackoff;
+    const numOk = (v: unknown, min: number) =>
+      v === undefined || (typeof v === 'number' && Number.isFinite(v) && v >= min);
+    if (
+      !b ||
+      typeof b !== 'object' ||
+      !numOk(b.baseMs, 0) ||
+      !numOk(b.capMs, 0) ||
+      !numOk(b.factor, 1) ||
+      !(b.jitter === undefined || (typeof b.jitter === 'number' && b.jitter >= 0 && b.jitter <= 1))
+    ) {
+      throw new Error('retryBackoff must be { baseMs≥0, capMs≥0, factor≥1, jitter 0–1 } (any subset)');
+    }
+    if (b.baseMs !== undefined && b.capMs !== undefined && b.capMs < b.baseMs)
+      throw new Error('retryBackoff.capMs must be ≥ baseMs');
+    // Keep only the recognised numeric knobs.
+    out.retryBackoff = {
+      ...(b.baseMs !== undefined ? { baseMs: b.baseMs } : {}),
+      ...(b.capMs !== undefined ? { capMs: b.capMs } : {}),
+      ...(b.factor !== undefined ? { factor: b.factor } : {}),
+      ...(b.jitter !== undefined ? { jitter: b.jitter } : {}),
+    };
   }
   if (patch.triageEnabled !== undefined) {
     if (typeof patch.triageEnabled !== 'boolean') throw new Error('triageEnabled must be boolean');
@@ -194,6 +241,8 @@ export function saveTaskqConfig(patch: TaskqConfigPatch): TaskqConfig {
   if (clean.fast !== undefined) raw.fast = clean.fast;
   if (clean.leaseTtlMs !== undefined) raw.leaseTtlMs = clean.leaseTtlMs;
   if (clean.taskTimeoutMs !== undefined) raw.taskTimeoutMs = clean.taskTimeoutMs;
+  if (clean.maxAttempts !== undefined) raw.maxAttempts = clean.maxAttempts;
+  if (clean.retryBackoff !== undefined) raw.retryBackoff = { ...(raw.retryBackoff as object), ...clean.retryBackoff };
   if (clean.usagePollMinutes !== undefined) raw.usagePollMinutes = clean.usagePollMinutes;
   if (clean.usageCostPollMinutes !== undefined) raw.usageCostPollMinutes = clean.usageCostPollMinutes;
   if (clean.triageEnabled !== undefined) raw.triage = { enabled: clean.triageEnabled };
