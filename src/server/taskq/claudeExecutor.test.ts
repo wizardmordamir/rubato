@@ -82,6 +82,19 @@ describe('buildWorkerPrompt', () => {
     expect(p).toContain('CLAUDE.md');
   });
 
+  test('directs the integration flow: branch from + merge to refactor/integration, main is promotion-only', () => {
+    const p = buildWorkerPrompt(task({ id: 9, title: 'do work', repo: 'ru' }));
+    expect(p).toContain('refactor/integration');
+    expect(p).toContain('PROMOTION-ONLY'); // main only advances via the gate
+    // It must NOT tell the worker to merge to the default branch / main anymore.
+    expect(p).not.toContain('merge to the default branch');
+    // Own-repo scoped verify + tolerated cross-repo breakage are spelled out.
+    expect(p).toContain('YOUR OWN repo');
+    expect(p).toContain('TOLERATED');
+    // First-party deps are symlinked, never bun-link-copied.
+    expect(p.toLowerCase()).toContain('symlinked');
+  });
+
   test('documents the permanent-failure marker so the worker can opt out of retries', () => {
     const p = buildWorkerPrompt(task());
     expect(p).toContain(PERMANENT_FAILURE_MARKER);
