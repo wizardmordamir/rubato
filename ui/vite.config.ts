@@ -118,7 +118,9 @@ export default defineConfig(({ mode }) => {
       // without deduping Vite bundles a SECOND copy for cwip/react — two Reacts means
       // hooks read a null dispatcher and the app white-screens; two query clients
       // means cwip's useApiMutation can't see the app's QueryClientProvider.
-      dedupe: ["react", "react-dom", "react/jsx-runtime", "@tanstack/react-query"],
+      // recharts lives in ru-ui's node_modules; dedupe so cursedbelt's chart source
+      // (resolved from the repo-root cursedbelt) bundles the single ui-local copy.
+      dedupe: ["react", "react-dom", "react/jsx-runtime", "@tanstack/react-query", "recharts"],
     },
     server: {
       port: env.PORT ? Number(env.VITE_PORT) : 5175,
