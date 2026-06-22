@@ -24,7 +24,11 @@ export default defineConfig({
   // exactly as in vite.config.ts — friend apps don't need to re-map it for the JS.
   resolve: {
     alias: { "@shared": resolve(here, "../src/shared") },
-    dedupe: ["react", "react-dom", "react/jsx-runtime", "@tanstack/react-query"],
+    // recharts + glide-data-grid are cursedbelt OPTIONAL peers; without deduping them
+    // to ru-ui's installed copy, rolldown resolves cursedbelt's imports to the
+    // `__vite-optional-peer-dep` stub and the bundle fails (e.g. "DataEditor is not
+    // exported" from cursedbelt/react/spreadsheet). Dedupe so they bundle for real.
+    dedupe: ["react", "react-dom", "react/jsx-runtime", "@tanstack/react-query", "recharts", "@glideapps/glide-data-grid"],
   },
   build: {
     outDir: "dist-lib",
