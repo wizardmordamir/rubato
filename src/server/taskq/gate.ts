@@ -27,6 +27,9 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+// Both are zero-import pure cores — keeps the gate loadable when the rest of rubato/cwip
+// is mid-broken (the whole point of a health watchdog).
+import { buildIsGreen } from './buildOutputGate';
 import {
   type Ancestry,
   ancestryFrom,
@@ -415,7 +418,11 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
       }
       const res = build(r.integ);
       f.built = true;
-      f.integrationGreen = res.code === 0;
+      // Don't trust the exit code ALONE — a build script can exit 0 on failure (a
+      // trailing `|| true`, a swallowed catch). Scan the output for known bundler/
+      // build failure markers too, so a lying exit code can't certify a red build
+      // green (exactly how a broken ca was once promoted to main) (#297).
+      f.integrationGreen = buildIsGreen(res);
       f.buildTail = res.out
         .split('\n')
         .filter((l) => l.trim())
@@ -505,7 +512,11 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
               ? `P0 — refactor/integration WHITE-SCREENS on ${r.name}: \`bun run build\` + the boot smoke pass, yet the headless render smoke (load the built UI in a real browser) finds the React root never mounts cleanly — a React-dedupe gap (a second React copy → null hook dispatcher), a runtime mount throw, or a missing context provider. The gate cannot advance main. Fix it ON refactor/integration; confirm \`bun run build\` then \`bun run src/scripts/renderSmoke.ts\` is GREEN.`
               : `P0 — ${r.name} main and refactor/integration have DIVERGED (neither fast-forwards). Reconcile them on refactor/integration (merge main into refactor/integration, resolve, verify) so the gate can promote again.`;
       const tailLabel =
-        kind === 'smoke' ? 'Recent server boot output' : kind === 'render' ? 'Render smoke detail + server output' : 'Recent build output';
+        kind === 'smoke'
+          ? 'Recent server boot output'
+          : kind === 'render'
+            ? 'Render smoke detail + server output'
+            : 'Recent build output';
       const body =
         `${intro}\n` +
         `WORKFLOW: branch a worktree FROM refactor/integration (name it <slug>-integration), fix, verify THIS repo builds (\`bun run build\`), then merge back to refactor/integration — NEVER main. main is promotion-only; the gate fast-forwards it once the whole system is green.\n` +

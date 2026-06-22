@@ -28,6 +28,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type TaskRow, taskqHome } from 'cwip/taskq';
+import { buildIsGreen } from './buildOutputGate';
 import { agentPath } from './claudeExecutor';
 import { repoRoot, type TaskqConfig } from './config';
 import { type DoneEvidence, type DoneGuard, type DoneVerdict, decideDone, type FalseDoneAlert } from './falseDone';
@@ -122,9 +123,8 @@ export function makeDoneGuard(config: TaskqConfig, deps: Partial<DoneCheckDeps> 
     //     commit for THIS task in the window. A window where sibling workers stamped
     //     but this task didn't lands as empty-done (sibling masking). When no commit
     //     carries any stamp, fall back to rawLanded (backward compat for unstamped workers).
-    const landedCommits = rawLanded > 0
-      ? resolveAttributed(d, snap.repoRoot, snap.beforeSha, afterSha, task.id, task.slug, rawLanded)
-      : 0;
+    const landedCommits =
+      rawLanded > 0 ? resolveAttributed(d, snap.repoRoot, snap.beforeSha, afterSha, task.id, task.slug, rawLanded) : 0;
 
     // 2. Regression check (only meaningful once code landed): build the integration
     //    worktree. Skipped when disabled, nothing landed, or the worktree is absent.
@@ -132,7 +132,10 @@ export function makeDoneGuard(config: TaskqConfig, deps: Partial<DoneCheckDeps> 
     let buildGreen: boolean | undefined;
     if (config.falseDoneBuildCheck && landedCommits > 0 && d.exists(snap.integWorktree)) {
       buildChecked = true;
-      buildGreen = d.build(snap.integWorktree).code === 0;
+      // Don't trust the exit code ALONE — a build script can exit 0 on failure
+      // (a trailing `|| true`, a swallowed catch). Treat known bundler/build
+      // failure markers in the output as RED too (#297).
+      buildGreen = buildIsGreen(d.build(snap.integWorktree));
     }
 
     const evidence: DoneEvidence = {
@@ -190,9 +193,9 @@ function resolveAttributed(
 ): number {
   const subjects = getCommitSubjects(d, cwd, before, after);
   if (subjects.length === 0) return rawLanded; // no subject info → keep raw
-  const attributed = subjects.filter(s => isAttributedToTask(s, taskId, slug)).length;
+  const attributed = subjects.filter((s) => isAttributedToTask(s, taskId, slug)).length;
   if (attributed > 0) return attributed;
-  if (subjects.some(s => /#\d+/.test(s))) return 0; // stamped window, not this task
+  if (subjects.some((s) => /#\d+/.test(s))) return 0; // stamped window, not this task
   return rawLanded; // no stamps → backward-compat fallback
 }
 
@@ -203,7 +206,7 @@ function getCommitSubjects(d: DoneCheckDeps, cwd: string, before: string, after:
   return r.out
     .trim()
     .split('\n')
-    .map(s => s.trim())
+    .map((s) => s.trim())
     .filter(Boolean);
 }
 
