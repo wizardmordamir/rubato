@@ -1,4 +1,4 @@
-import { DivergingBars } from 'cursedbelt/react/charts';
+import { BarChart } from 'cursedbelt/react/charts';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { StatTile } from "cursedbelt/react";
 import { type ReactNode, useMemo, useState } from "react";
@@ -256,14 +256,21 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* Chart: branch divergence vs main — diverging bars (behind ← | → ahead). */}
+      {/* Chart: branch divergence vs main — grouped horizontal bars (behind vs ahead). */}
       {divergence.length > 0 && (
         <div className={`${CARD_CLASS} flex flex-col gap-2 p-3`}>
           <span className="text-sm font-medium">Branch divergence vs main</span>
-          <DivergingBars
-            data={divergence.map((d) => ({ label: d.app, left: d.behind, right: d.ahead }))}
-            leftLabel="behind"
-            rightLabel="ahead"
+          <BarChart
+            data={divergence.map((d) => ({ app: d.app, behind: d.behind, ahead: d.ahead }))}
+            xKey="app"
+            series={[
+              { dataKey: "behind", name: "Behind", tone: "danger" },
+              { dataKey: "ahead", name: "Ahead", tone: "success" },
+            ]}
+            ariaLabel="Branch divergence vs main"
+            orientation="horizontal"
+            height={Math.max(200, divergence.length * 48)}
+            yWidth={120}
           />
         </div>
       )}

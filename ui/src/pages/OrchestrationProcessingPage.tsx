@@ -1,4 +1,4 @@
-import { type BarDatum, CategoryBars, CategoryDonut, ChartThemeProvider, chartThemeFor, type DonutSlice, formatMs, TimeSeriesChart } from 'cursedbelt/react/charts';
+import { AreaChart, BarChart, type ChartDatum, DonutChart, formatMs, formatTimeFull, formatTimeTick, type PieDatum } from 'cursedbelt/react/charts';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CATEGORY_GROUP_LABELS, colorForCategory } from "cwip/orchestration";
 import { DisclosureButton, StatTile } from "cursedbelt/react";
@@ -26,7 +26,6 @@ import {
   Tooltip,
 } from "../components";
 import { useConfirm } from "../confirm";
-import { getTheme } from "../theme";
 import { useToast } from "../toast";
 
 /**
@@ -50,7 +49,7 @@ const VIEWS: readonly { key: View; label: string }[] = [
   { key: "table", label: "Table" },
 ];
 
-/** A bar-metric the CategoryBars chart can show. */
+/** A bar-metric the duration-by-category bar chart can show. */
 type BarMetric = "avgMs" | "maxMs" | "totalMs";
 const BAR_METRICS: readonly { key: BarMetric; label: string }[] = [
   { key: "avgMs", label: "Average" },
@@ -79,7 +78,6 @@ export function OrchestrationProcessingPage({ embedded }: { embedded?: boolean }
   const qc = useQueryClient();
   const { notify } = useToast();
   const confirm = useConfirm();
-  const isDark = getTheme() === "dark";
 
   const [view, setView] = useState<View>("chart");
   const [barMetric, setBarMetric] = useState<BarMetric>("avgMs");
@@ -177,24 +175,31 @@ export function OrchestrationProcessingPage({ embedded }: { embedded?: boolean }
     }
   };
 
-  // Bar chart: one bar per category, colored by the canonical category hue.
-  const barData: BarDatum[] = useMemo(
-    () => stats.map((s) => ({ label: s.label, value: s[barMetric], color: colorForCategory(s.category) })),
+  // Bar chart: one bar per category for the selected metric. The cursedbelt charts
+  // color from the theme palette (per-series, token-driven) — the canonical category
+  // hue still anchors the table dots + KPI tile via colorForCategory.
+  const barData: ChartDatum[] = useMemo(
+    () => stats.map((s) => ({ label: s.label, value: s[barMetric] })),
     [stats, barMetric],
   );
 
-  // Donut: share of total time, by category (canonical hues) or rolled up by group.
-  const donutData: DonutSlice[] = useMemo(() => {
+  // Donut: share of total time, by category or rolled up by group.
+  const donutData: PieDatum[] = useMemo(() => {
     if (donutBy === "group") {
       return (summary?.byGroup ?? []).map((g) => ({
         name: CATEGORY_GROUP_LABELS[g.group as keyof typeof CATEGORY_GROUP_LABELS] ?? g.group,
         value: g.totalMs,
       }));
     }
-    return stats.map((s) => ({ name: s.label, value: s.totalMs, color: colorForCategory(s.category) }));
+    return stats.map((s) => ({ name: s.label, value: s.totalMs }));
   }, [stats, summary, donutBy]);
 
-  const trendData = data?.trend ?? [];
+  // Trend buckets carry epoch-ms `ts` — flatten to plain chart rows so the cursedbelt
+  // AreaChart (which types `data` as ChartDatum[]) accepts them without a cast.
+  const trendData: ChartDatum[] = useMemo(
+    () => (data?.trend ?? []).map((p) => ({ ts: p.ts, totalMs: p.totalMs })),
+    [data],
+  );
 
   const filterControls = (
     <div className="flex flex-wrap items-center gap-2">
@@ -331,7 +336,7 @@ export function OrchestrationProcessingPage({ embedded }: { embedded?: boolean }
       )}
 
       {data && data.total > 0 && summary && (
-        <ChartThemeProvider theme={chartThemeFor(isDark)}>
+        <>
           {/* KPIs */}
           <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
             <div className={`${CARD_CLASS} p-4`}>
@@ -383,7 +388,16 @@ export function OrchestrationProcessingPage({ embedded }: { embedded?: boolean }
                     ))}
                   </div>
                 </div>
-                <CategoryBars data={barData} height={280} valueFormatter={formatMs} />
+                <BarChart
+                  data={barData}
+                  xKey="label"
+                  series={[{ dataKey: "value", name: BAR_METRICS.find((m) => m.key === barMetric)?.label ?? "Duration" }]}
+                  ariaLabel="Duration by category"
+                  orientation="horizontal"
+                  height={280}
+                  yWidth={140}
+                  valueFormatter={formatMs}
+                />
               </div>
 
               {/* Share-of-time donut */}
@@ -407,24 +421,26 @@ export function OrchestrationProcessingPage({ embedded }: { embedded?: boolean }
                     ))}
                   </div>
                 </div>
-                <CategoryDonut
+                <DonutChart
                   data={donutData}
+                  ariaLabel={`Share of time by ${donutBy}`}
                   height={280}
                   valueFormatter={formatMs}
-                  centerValue={formatMs(summary.totalMs)}
-                  centerLabel="total"
                 />
               </div>
 
               {/* Duration trend over time */}
               <div className={`${CARD_CLASS} p-4`}>
                 <h3 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Duration over time</h3>
-                <TimeSeriesChart
+                <AreaChart
                   data={trendData}
-                  series={[{ key: "totalMs", name: "Work time", kind: "area" }]}
+                  xKey="ts"
+                  series={[{ dataKey: "totalMs", name: "Work time" }]}
+                  ariaLabel="Work duration over time"
                   height={280}
                   valueFormatter={formatMs}
-                  includeDate
+                  xTickFormatter={(v) => formatTimeTick(Number(v), true)}
+                  labelFormatter={(v) => formatTimeFull(Number(v))}
                 />
               </div>
             </div>
@@ -444,7 +460,7 @@ export function OrchestrationProcessingPage({ embedded }: { embedded?: boolean }
             setClearBeforeDate={setClearBeforeDate}
             busy={clear.isPending}
           />
-        </ChartThemeProvider>
+        </>
       )}
     </div>
   );

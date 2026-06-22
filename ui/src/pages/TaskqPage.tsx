@@ -1,4 +1,4 @@
-import { type BarDatum, CategoryBars, ChartThemeProvider, chartThemeFor, TimeSeriesChart } from 'cursedbelt/react/charts';
+import { AreaChart, BarChart, type ChartDatum, formatTimeFull, formatTimeTick } from 'cursedbelt/react/charts';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DisclosureButton, DragHandle, ModalShell, StatTile, useDragReorder } from "cursedbelt/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -61,7 +61,6 @@ import {
 } from "../api";
 import { Alert, Badge, BTN_GHOST_CLASS, BTN_PRIMARY_CLASS, CARD_CLASS, FIELD_CLASS, PageHeading, Spinner, Tabs, Tooltip } from "../components";
 import { useConfirm } from "../confirm";
-import { getTheme } from "../theme";
 import { useToast } from "../toast";
 import { ForgePage } from "./ForgePage";
 import { OllamaPage } from "./OllamaPage";
@@ -1544,45 +1543,54 @@ function DiagnosticsCard({ telemetry }: { telemetry: TaskqClaudeTelemetry }) {
 
 /** Daily cost + token breakdown from ccusage. */
 function CostCard({ cost }: { cost: TaskqCcusageReport }) {
-  const isDark = getTheme() === "dark";
   const recent = cost.daily.slice(-14);
   const trend = recent.map((d) => ({ ts: new Date(d.period).getTime(), cost: d.totalCost }));
   const byModel = new Map<string, number>();
   for (const day of cost.daily) {
     for (const b of day.modelBreakdowns) byModel.set(b.modelName, (byModel.get(b.modelName) ?? 0) + b.cost);
   }
-  const modelBars: BarDatum[] = [...byModel.entries()]
+  const modelBars: ChartDatum[] = [...byModel.entries()]
     .sort((a, b) => b[1] - a[1])
     .map(([name, c]) => ({ label: shortModel(name), value: c }));
 
   return (
     <div className={`${CARD_CLASS} p-4`}>
       <h3 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Cost &amp; tokens</h3>
-      <ChartThemeProvider theme={chartThemeFor(isDark)}>
-        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile label="Total cost" value={fmtUsd(cost.totals.totalCost)} />
-          <StatTile label="Total tokens" value={fmtTokens(cost.totals.totalTokens)} />
-          <StatTile label="Output tokens" value={fmtTokens(cost.totals.outputTokens)} />
-          <StatTile label="Days tracked" value={String(cost.daily.length)} />
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile label="Total cost" value={fmtUsd(cost.totals.totalCost)} />
+        <StatTile label="Total tokens" value={fmtTokens(cost.totals.totalTokens)} />
+        <StatTile label="Output tokens" value={fmtTokens(cost.totals.outputTokens)} />
+        <StatTile label="Days tracked" value={String(cost.daily.length)} />
+      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div>
+          <h4 className="mb-2 text-xs font-semibold text-gray-500">Daily cost (last {recent.length}d)</h4>
+          <AreaChart
+            data={trend}
+            xKey="ts"
+            series={[{ dataKey: "cost", name: "Cost" }]}
+            ariaLabel="Daily cost"
+            height={220}
+            valueFormatter={fmtUsd}
+            yWidth={72}
+            xTickFormatter={(v) => formatTimeTick(Number(v), true)}
+            labelFormatter={(v) => formatTimeFull(Number(v))}
+          />
         </div>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div>
-            <h4 className="mb-2 text-xs font-semibold text-gray-500">Daily cost (last {recent.length}d)</h4>
-            <TimeSeriesChart
-              data={trend}
-              series={[{ key: "cost", name: "Cost", kind: "area" }]}
-              height={220}
-              valueFormatter={fmtUsd}
-              yAxisWidth={72}
-              includeDate
-            />
-          </div>
-          <div>
-            <h4 className="mb-2 text-xs font-semibold text-gray-500">Cost by model</h4>
-            <CategoryBars data={modelBars} height={220} valueFormatter={fmtUsd} yAxisWidth={72} />
-          </div>
+        <div>
+          <h4 className="mb-2 text-xs font-semibold text-gray-500">Cost by model</h4>
+          <BarChart
+            data={modelBars}
+            xKey="label"
+            series={[{ dataKey: "value", name: "Cost" }]}
+            ariaLabel="Cost by model"
+            orientation="horizontal"
+            height={220}
+            yWidth={72}
+            valueFormatter={fmtUsd}
+          />
         </div>
-      </ChartThemeProvider>
+      </div>
     </div>
   );
 }
