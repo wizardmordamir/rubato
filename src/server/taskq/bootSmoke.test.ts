@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  caSmokeSpec,
   pickFreePort,
   planSmoke,
   rubatoSmokeSpec,
@@ -70,6 +71,27 @@ describe('rubatoSmokeSpec', () => {
     expect(spec.portEnvVar).toBe('RUBATO_PORT');
     expect(spec.healthPath).toBe('/api/health');
     expect(smokeEnv(spec)).toEqual({ RUBATO_HOME: '/tmp/ru-home', RUBATO_PORT: '4848' });
+  });
+});
+
+describe('caSmokeSpec', () => {
+  test('boots ca via CA_DATA_DIR/PORT at /api/health with the env it needs at boot', () => {
+    const spec = caSmokeSpec({ cwd: '/repo/cursedalchemy-integration/server', port: 5099, homeDir: '/tmp/ca-home' });
+    expect(spec.repo).toBe('ca');
+    expect(spec.cmd).toEqual(['bun', 'src/index.ts']);
+    expect(spec.cwd).toBe('/repo/cursedalchemy-integration/server');
+    expect(spec.homeEnvVar).toBe('CA_DATA_DIR');
+    expect(spec.portEnvVar).toBe('PORT');
+    expect(spec.healthPath).toBe('/api/health');
+    const env = smokeEnv(spec);
+    // Isolation knobs.
+    expect(env.CA_DATA_DIR).toBe('/tmp/ca-home');
+    expect(env.PORT).toBe('5099');
+    // The keys ca's server requires at boot (ensureRequiredKeysExist + jwt.ts).
+    expect(env.COMPANY_NAME).toBeTruthy();
+    expect(env.BASE_URL).toBe('http://127.0.0.1:5099');
+    expect(env.JWT_SECRET.length).toBeGreaterThanOrEqual(32);
+    expect(env.NODE_ENV).toBe('development');
   });
 });
 

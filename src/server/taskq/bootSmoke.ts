@@ -129,6 +129,54 @@ export function rubatoSmokeSpec(opts: { cwd: string; port: number; homeDir: stri
   });
 }
 
+/**
+ * The deterministic test env ca's server REQUIRES at boot, so its smoke boots even in a
+ * fresh worktree with no `server/.env` (mirrors ca's `runFt.ts` testDefaults + ca's own
+ * `caSmokeEnv` in `server/__functional_tests/bootSmoke.ts`, where it is verified against
+ * the real server):
+ *   - COMPANY_NAME + BASE_URL — ca's auth handler runs `ensureRequiredKeysExist` at module
+ *     load and throws if either is absent (presence-only — BASE_URL is never dereferenced
+ *     during a boot smoke).
+ *   - JWT_SECRET — ca's jwt.ts requires one >= 32 chars; a throwaway test secret, never real.
+ *   - NODE_ENV/ALLOW_FORGED_SESSIONS — the shape ca's `dev:server:testrunner` script uses.
+ *   - USE_MOCK_BITCOIN_PRICE_RESPONSE — keep any crypto-price path off the network.
+ */
+function caSmokeEnv(port: number): Record<string, string> {
+  return {
+    NODE_ENV: 'development',
+    ALLOW_FORGED_SESSIONS: 'true',
+    USE_MOCK_BITCOIN_PRICE_RESPONSE: 'true',
+    COMPANY_NAME: 'Cursed Alchemy Boot Smoke',
+    BASE_URL: `http://127.0.0.1:${port}`,
+    JWT_SECRET: 'ca-bootsmoke-deterministic-secret-0000000000000000000000000000',
+  };
+}
+
+/**
+ * The cursedalchemy (`ca`) preset: boot ca's server (`bun src/index.ts`) from the
+ * integration worktree's `server/` workspace, isolated via `CA_DATA_DIR` + `PORT`,
+ * health-checked at `/api/health`. The caller passes the worktree's `server/` dir as
+ * `cwd` (e.g. `join(repo.integ, 'server')`), a free `port`, and a throwaway `homeDir`.
+ *
+ * This is ca's boot recipe held gate-side; ca's repo carries the canonical, real-server-
+ * verified copy (`server/__functional_tests/bootSmoke.ts` `caSmokeSpec`) — keep the two in
+ * sync. (A future cleanup could lift the shared machinery into `cwip/testing`.)
+ */
+export function caSmokeSpec(opts: { cwd: string; port: number; homeDir: string; timeoutMs?: number }): SmokeSpec {
+  return planSmoke({
+    repo: 'ca',
+    cmd: ['bun', 'src/index.ts'],
+    cwd: opts.cwd,
+    homeEnvVar: 'CA_DATA_DIR',
+    portEnvVar: 'PORT',
+    port: opts.port,
+    homeDir: opts.homeDir,
+    healthPath: '/api/health',
+    timeoutMs: opts.timeoutMs,
+    extraEnv: caSmokeEnv(opts.port),
+  });
+}
+
 /** Injectable seams so `runBootSmoke` is unit-testable without a real process/fs. */
 export interface SmokeDeps {
   startServer?: (opts: StartTestServerOptions) => Promise<{
