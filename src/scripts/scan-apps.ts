@@ -9,8 +9,9 @@
  * (name, aliases, and any API metadata like gitlab/quay/rancher) are preserved.
  *
  * Linked git worktrees and submodules (where `.git` is a file, not a directory)
- * are skipped, as are `*-worktrees/` directories — transient feature checkouts
- * shouldn't pollute the registry with duplicates of a repo indexed elsewhere.
+ * are skipped, as are `*-worktrees/` and `*-integration` directories — transient
+ * feature checkouts and integration worktree siblings shouldn't pollute the registry
+ * with duplicates of a repo indexed elsewhere.
  *
  * Apps that have disappeared from disk are flagged `"missing": true` if you've
  * customized them (title/aliases/metadata), or dropped if they were purely

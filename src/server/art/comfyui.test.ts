@@ -282,9 +282,9 @@ describe('comfyui failure handling', () => {
   test('throws DiffusionTimeoutError when max polls are exhausted', async () => {
     // Always returns empty history.
     const { DiffusionTimeoutError } = await import('./diffusion');
-    let callCount = 0;
-    const fetchStub = (async (url: string, init?: RequestInit) => {
-      callCount++;
+    let _callCount = 0;
+    const fetchStub = (async (url: string, _init?: RequestInit) => {
+      _callCount++;
       if ((url as string).endsWith('/prompt')) {
         return new Response(JSON.stringify({ prompt_id: 'x', number: 1 }), { status: 200 });
       }

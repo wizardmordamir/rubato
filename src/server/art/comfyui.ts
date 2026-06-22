@@ -81,7 +81,7 @@ function userWorkflowPath(): string {
 }
 
 /** Load, parse, and deep-clone the workflow template (deep-clone so each call gets its own copy). */
-async function loadWorkflow(customFetch?: typeof fetch): Promise<WorkflowGraph> {
+async function loadWorkflow(_customFetch?: typeof fetch): Promise<WorkflowGraph> {
   // User override wins when present.
   let raw: string | null = null;
   try {
