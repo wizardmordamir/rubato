@@ -24,7 +24,9 @@ import {
   setStatus,
   type TaskqDb,
   type TaskRow,
+  withTx,
 } from 'cwip/taskq';
+import type { DoneGuard, DoneSnapshot, DoneVerdict } from './falseDone';
 
 /** What a worker did with a task. */
 export interface TaskResult {
@@ -84,6 +86,19 @@ export type DrainEvent =
     }
   | { type: 'rate-limited'; worker: number; taskId: number; reason: string }
   | { type: 'idle'; worker: number }
+  | {
+      /**
+       * A reported "success" failed the completion gate (false-done): it landed no
+       * code, or it regressed the integration build. The task was reverted to a hold
+       * status (NOT marked done) so its downstream `needs:` deps stay blocked.
+       */
+      type: 'false-done';
+      worker: number;
+      taskId: number;
+      status: 'on_hold' | 'needs_input';
+      reason: string;
+      note: string;
+    }
   | { type: 'error'; worker: number; taskId: number; error: string };
 
 export interface DrainOptions {
@@ -112,6 +127,15 @@ export interface DrainOptions {
    * overrides `maxAttempts`.
    */
   retry?: { maxAttempts?: number; backoff?: BackoffOpts };
+  /**
+   * Completion gate: before a reported-success task is marked `done`, verify it
+   * really landed (non-empty git delta on `refactor/integration`) and didn't
+   * regress the integration build. A `revert` verdict parks the task in a hold
+   * status (on_hold/needs_input) with a note INSTEAD of completing it — so a
+   * false-done can never silently flip downstream `needs:` deps to ready. Omit to
+   * accept every success (legacy behavior; the unit tests rely on this default).
+   */
+  verifyDone?: DoneGuard;
   /** Heartbeat cadence while a task runs (default 60s). */
   heartbeatMs?: number;
   /**
@@ -140,6 +164,11 @@ export interface DrainSummary {
   retried: number;
   reaped: number;
   /**
+   * Reported-success tasks the completion gate caught as false-dones (no landed
+   * code, or a build regression) and reverted to a hold instead of completing.
+   */
+  falseDone: number;
+  /**
    * True when a worker hit a genuine usage/rate limit and the pool wound down
    * early. The released task is back to `ready` (NOT burned to `failed`), so the
    * next drain pass — after the limit resets — picks it up. Lets the caller skip
@@ -150,6 +179,21 @@ export interface DrainSummary {
 
 const DEFAULT_HEARTBEAT_MS = 60_000;
 const DEFAULT_TICK_MS = 5_000;
+
+/**
+ * Auto-revert a false-done: drop the worker's lease and park the task in a hold
+ * status (on_hold/needs_input) with the explanatory note, atomically — the
+ * completion-path counterpart to {@link completeTask}/{@link failTask}. Dropping
+ * the lease is essential: otherwise the reaper would later route the still-leased
+ * task back through the retry machinery and undo the hold. (TODO: graduate this
+ * into cwip's taskq engine alongside completeTask/failTask once we touch cwip.)
+ */
+function revertFalseDone(db: TaskqDb, taskId: number, status: 'on_hold' | 'needs_input', note: string): void {
+  withTx(db, () => {
+    db.run(`DELETE FROM leases WHERE task_id = ?`, taskId);
+    setStatus(db, taskId, status, note);
+  });
+}
 
 /**
  * Drain the queue: reap stranded leases, then run a worker pool until no
@@ -171,7 +215,7 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
   const tickMs = opts.tickMs ?? DEFAULT_TICK_MS;
   const desired = () => Math.max(1, Math.floor(opts.desiredJobs?.() ?? opts.jobs));
   const emit = (e: DrainEvent) => opts.onEvent?.(e);
-  const summary: DrainSummary = { completed: 0, failed: 0, retried: 0, reaped: 0, rateLimited: false };
+  const summary: DrainSummary = { completed: 0, failed: 0, retried: 0, reaped: 0, falseDone: 0, rateLimited: false };
 
   // Retry policy threaded into every failure/reap so a transient hiccup is
   // re-queued (with backoff) instead of burning a task; `permanent` skips it.
@@ -253,12 +297,63 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
       }
       emit({ type: 'claimed', worker: index, task });
 
+      // Capture pre-run state for the completion gate (e.g. the integration tip)
+      // BEFORE the executor runs, so a false-done is measured against the right
+      // baseline. A snapshot hiccup is non-fatal — the gate then can't enforce.
+      let doneSnapshot: DoneSnapshot;
+      if (opts.verifyDone) {
+        try {
+          doneSnapshot = await opts.verifyDone.snapshot(task, ctx);
+        } catch (e) {
+          emit({
+            type: 'error',
+            worker: index,
+            taskId: task.id,
+            error: `done-gate snapshot: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        }
+      }
+
       const startedAt = now();
       const hb = setInterval(() => heartbeat(db, task.id, now(), opts.leaseTtlMs), heartbeatMs);
       try {
         const res = await opts.executor(task, ctx);
         clearInterval(hb);
         if (res.ok) {
+          // Completion gate: a reported success is no longer trusted on its own —
+          // verify it landed code + didn't regress the build before marking it done.
+          let verdict: DoneVerdict = { accept: true };
+          if (opts.verifyDone) {
+            try {
+              verdict = await opts.verifyDone.verify(task, res, doneSnapshot, ctx);
+            } catch (e) {
+              // Fail OPEN on a gate error (git/build hiccup): the periodic promotion-
+              // gate watchdog is the backstop; never strand a finished task on flakiness.
+              emit({
+                type: 'error',
+                worker: index,
+                taskId: task.id,
+                error: `done-gate verify: ${e instanceof Error ? e.message : String(e)}`,
+              });
+            }
+          }
+          if (!verdict.accept) {
+            // False-done: revert to a hold (NEVER done) so downstream `needs:` deps
+            // stay blocked + the cascade can't start; record the alert + clear note.
+            revertFalseDone(db, task.id, verdict.status, verdict.note);
+            // Tokens were really spent — keep the usage ledger honest.
+            if (res.outputTokens) recordRun(db, { at: now(), model: task.model, outputTokens: res.outputTokens });
+            summary.falseDone++;
+            emit({
+              type: 'false-done',
+              worker: index,
+              taskId: task.id,
+              status: verdict.status,
+              reason: verdict.reason,
+              note: verdict.note,
+            });
+            continue;
+          }
           const durationS = Math.round((now() - startedAt) / 1000);
           completeTask(db, task.id, { commit: res.commit, summary: res.summary, startedAt, durationS }, now());
           if (res.outputTokens) recordRun(db, { at: now(), model: task.model, outputTokens: res.outputTokens });

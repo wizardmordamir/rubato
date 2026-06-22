@@ -28,6 +28,7 @@ import {
 import { agentPath, dryRunExecutor, makeClaudeExecutor, probeClaudeCapacity } from '../server/taskq/claudeExecutor';
 import { loadTaskqConfig } from '../server/taskq/config';
 import { currentInterval } from '../server/taskq/control';
+import { makeDoneGuard } from '../server/taskq/doneCheck';
 import { taskqLaunchdPlist } from '../server/taskq/launchd';
 import { runDrain } from '../server/taskq/orchestrator';
 import { runEpicDecomposition, runTriage } from '../server/taskq/triage';
@@ -102,6 +103,11 @@ async function main(): Promise<void> {
   const db = getTaskqDb();
   const dryRun = process.env.TASKQ_DRY_RUN === '1';
   const executor = dryRun ? dryRunExecutor : makeClaudeExecutor(config);
+  // False-done gate: before a reported success is marked done, require it landed
+  // code on refactor/integration + didn't regress the build (see doneCheck.ts).
+  // Skipped in dry-run (the no-op executor lands nothing, so every "done" would —
+  // correctly — read as empty; there's nothing real to verify there).
+  const verifyDone = dryRun ? undefined : makeDoneGuard(config);
 
   // Opt-in: grade blank tasks + decompose epics before draining.
   if (config.triage?.enabled && !dryRun) {
@@ -161,6 +167,7 @@ async function main(): Promise<void> {
     jobs: plan0.jobs,
     desiredJobs: () => planDrain().jobs,
     executor,
+    verifyDone,
     leaseTtlMs: config.leaseTtlMs,
     // Bounded auto-retry so one transient hiccup (a download that won't resolve, a
     // service down for a bit) can't strand the unattended run — the task is
@@ -195,6 +202,15 @@ async function main(): Promise<void> {
         // are NOT out, so treat it as a not-exhausted signal. (Real usage-limit
         // failures come through the 'rate-limited' branch above instead.)
         logReconcile(reconcileUsageObservation(db, e.rateLimited ? 'exhausted' : 'not-exhausted'));
+      } else if (e.type === 'false-done') {
+        // A reported success that landed nothing / regressed the build — reverted to a
+        // hold instead of done, so it never cascades to release downstream deps.
+        process.stdout.write(`  ⚠ #${e.taskId}: FALSE-DONE (${e.reason}) → reverted to ${e.status} — ${e.note}\n`);
+        // The call DID reach the API (the agent ran, it just didn't really land) →
+        // proof we are NOT out of tokens.
+        logReconcile(reconcileUsageObservation(db, 'not-exhausted'));
+      } else if (e.type === 'error') {
+        process.stderr.write(`  ! #${e.taskId} w${e.worker}: ${e.error}\n`);
       } else if (e.type === 'reaped') process.stdout.write(`  reaped ${e.count} stranded lease(s)\n`);
     },
   });
@@ -231,7 +247,7 @@ async function main(): Promise<void> {
 
   regenerateView(db);
   process.stdout.write(
-    `${ts()} taskq drain done: ${summary.completed} completed, ${summary.retried} retried, ${summary.failed} failed, ${summary.reaped} reaped\n`,
+    `${ts()} taskq drain done: ${summary.completed} completed, ${summary.retried} retried, ${summary.failed} failed, ${summary.falseDone} false-done, ${summary.reaped} reaped\n`,
   );
 }
 

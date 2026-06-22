@@ -1,7 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { addTask, claim, listTasks, migrate, type TaskqDb } from 'cwip/taskq';
-import { runDrain, type TaskExecutor } from './orchestrator';
+import { addTask, claim, getTask, listTasks, migrate, type TaskqDb } from 'cwip/taskq';
+import type { DoneGuard } from './falseDone';
+import { type DrainEvent, runDrain, type TaskExecutor } from './orchestrator';
 
 function fresh(): TaskqDb {
   const d = new Database(':memory:') as unknown as TaskqDb;
@@ -266,5 +267,97 @@ describe('runDrain', () => {
     });
     // Initial stamp + several heartbeats while the single task ran.
     expect(ticks).toBeGreaterThan(2);
+  });
+});
+
+/**
+ * The completion gate ({@link DoneGuard}) — a reported "success" only becomes `done`
+ * if the gate accepts it; a `revert` verdict parks it in a hold instead. Modeled
+ * here with a fake guard so the orchestrator wiring is tested without git/builds.
+ */
+describe('runDrain false-done gate', () => {
+  // Reject anything titled 'fake' as an empty-done; accept the rest.
+  const guard = (verdict: (title: string) => ReturnType<DoneGuard['verify']>): DoneGuard => ({
+    snapshot: () => ({ captured: true }),
+    verify: (task) => verdict(task.title),
+  });
+  const emptyDone = guard((title) =>
+    title === 'fake'
+      ? { accept: false, status: 'needs_input', reason: 'empty-done', note: 'landed ZERO commits' }
+      : { accept: true },
+  );
+
+  test('a rejected success is reverted to the hold status (not done) + counted + alert-evented', async () => {
+    const db = fresh();
+    const id = addTask(db, { title: 'fake' });
+    const events: DrainEvent[] = [];
+    const summary = await runDrain(db, {
+      jobs: 1,
+      executor: okExecutor,
+      verifyDone: emptyDone,
+      onEvent: (e) => events.push(e),
+    });
+    expect(summary.completed).toBe(0);
+    expect(summary.falseDone).toBe(1);
+    const t = getTask(db, id);
+    expect(t?.status).toBe('needs_input'); // reverted, NOT done
+    expect(t?.note).toBe('landed ZERO commits');
+    expect(listTasks(db, { status: 'done' }).length).toBe(0);
+    expect(listTasks(db, { status: 'claimed' }).length).toBe(0); // lease dropped
+    const fd = events.find((e) => e.type === 'false-done');
+    expect(fd).toBeTruthy();
+    if (fd?.type === 'false-done') expect(fd.reason).toBe('empty-done');
+  });
+
+  test('a false-done never cascades: a downstream needs: dep stays blocked', async () => {
+    const db = fresh();
+    addTask(db, { title: 'fake', slug: 'upstream' }, { at: 'bottom' });
+    const downId = addTask(db, { title: 'downstream', needs: ['upstream'] }, { at: 'bottom' });
+    const summary = await runDrain(db, { jobs: 1, executor: okExecutor, verifyDone: emptyDone });
+    // upstream was caught as a false-done; downstream's needs: is therefore NOT
+    // satisfied (upstream isn't `done`), so it was never claimed/run.
+    expect(summary.falseDone).toBe(1);
+    expect(summary.completed).toBe(0);
+    expect(getTask(db, downId)?.status).toBe('ready'); // still waiting, not done
+    expect(listTasks(db, { status: 'done' }).length).toBe(0);
+  });
+
+  test('an accepted success still completes to done as normal', async () => {
+    const db = fresh();
+    const id = addTask(db, { title: 'real-work' });
+    const summary = await runDrain(db, { jobs: 1, executor: okExecutor, verifyDone: emptyDone });
+    expect(summary.completed).toBe(1);
+    expect(summary.falseDone).toBe(0);
+    expect(getTask(db, id)?.status).toBe('done');
+  });
+
+  test('fails OPEN: a guard that throws does not strand a finished task (it completes)', async () => {
+    const db = fresh();
+    const id = addTask(db, { title: 'work' });
+    const events: DrainEvent[] = [];
+    const throwingGuard: DoneGuard = {
+      snapshot: () => ({}),
+      verify: () => {
+        throw new Error('git exploded');
+      },
+    };
+    const summary = await runDrain(db, {
+      jobs: 1,
+      executor: okExecutor,
+      verifyDone: throwingGuard,
+      onEvent: (e) => events.push(e),
+    });
+    expect(summary.completed).toBe(1);
+    expect(summary.falseDone).toBe(0);
+    expect(getTask(db, id)?.status).toBe('done');
+    expect(events.some((e) => e.type === 'error' && e.error.includes('done-gate verify'))).toBe(true);
+  });
+
+  test('without a guard, behavior is unchanged (every success completes)', async () => {
+    const db = fresh();
+    addTask(db, { title: 'fake' }); // would be rejected IF a guard were attached
+    const summary = await runDrain(db, { jobs: 1, executor: okExecutor });
+    expect(summary.completed).toBe(1);
+    expect(summary.falseDone).toBe(0);
   });
 });
