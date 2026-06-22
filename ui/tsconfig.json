@@ -18,7 +18,10 @@
       "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
       "react-dom": ["./node_modules/@types/react-dom"],
       "@tanstack/react-query": ["./node_modules/@tanstack/react-query"],
-      "recharts": ["./node_modules/recharts"]
+      "recharts": ["./node_modules/recharts"],
+      // glide-data-grid lives in ui/node_modules; dedupe its types so cursedbelt
+      // source (resolved via the `source` export condition) uses the same copy.
+      "@glideapps/glide-data-grid": ["./node_modules/@glideapps/glide-data-grid"]
     },
     "types": []
   },

@@ -30,7 +30,8 @@
       // copies too, or their generics resolve to `any` here (TS7006 in
       // createApiHooks/charts) even though the app tsconfig.json maps them.
       "@tanstack/react-query": ["./node_modules/@tanstack/react-query"],
-      "recharts": ["./node_modules/recharts"]
+      "recharts": ["./node_modules/recharts"],
+      "@glideapps/glide-data-grid": ["./node_modules/@glideapps/glide-data-grid"]
     }
   },
   // vite-env.d.ts supplies `import.meta.env` (vite/client) + the __RUBATO_DEV_WS_URL__
