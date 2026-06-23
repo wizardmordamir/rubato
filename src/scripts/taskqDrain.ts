@@ -143,8 +143,16 @@ async function main(): Promise<void> {
       baseJobs: cfg.jobs,
       pauseOnExhausted: false,
     });
-    const jobs = cfg.throttle ? Math.min(maxJobs, decision.recommendedJobs) : maxJobs;
-    return { perWorker, maxJobs, decision, jobs, throttle: cfg.throttle };
+    // EMERGENCY exclusivity: when an `emergency-*` task is open (a broken-main heal,
+    // filed by the localhost watchdog), collapse the pool to a SINGLE worker. With the
+    // emergency pinned to the top of the board it's claimed first, so the one worker
+    // fixes main BEFORE starting anything else — no fleet of workers piling on while
+    // localhost is down. Normal pool resumes the cycle after it clears.
+    const emergencyOpen = listTasks(db).some(
+      (t) => (t.slug?.startsWith('emergency-') ?? false) && (t.status === 'ready' || t.status === 'claimed'),
+    );
+    const jobs = emergencyOpen ? 1 : cfg.throttle ? Math.min(maxJobs, decision.recommendedJobs) : maxJobs;
+    return { perWorker, maxJobs, decision, jobs, throttle: cfg.throttle, emergencyOpen };
   };
 
   // Capacity snapshot for the empty-queue self-heal probe (start of run only).
