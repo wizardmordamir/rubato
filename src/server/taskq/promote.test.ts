@@ -1,10 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import {
   ancestryFrom,
+  decideCycle,
   decideRepo,
   decideSystem,
   healReason,
   integrationNeedsHeal,
+  isActionSafeWhileBusy,
+  promoteShaStillVerified,
   type RepoState,
   repoGreen,
 } from './promote';
@@ -185,5 +188,69 @@ describe('render smoke gate (anti white-screen)', () => {
   });
   test('integrationNeedsHeal: white-screened render → heal', () => {
     expect(integrationNeedsHeal({ integrationGreen: true, smokeGreen: true, renderGreen: false })).toBe(true);
+  });
+});
+
+describe('decideCycle (anti-starvation: keep verifying + promoting while workers are active)', () => {
+  test('no workers active → full cycle, run unsafe mutations, counter reset', () => {
+    const d = decideCycle({ workersActive: false, consecutiveDeferrals: 4, forceFullEvery: 6 });
+    expect(d.mode).toBe('full');
+    expect(d.runUnsafeMutations).toBe(true);
+    expect(d.nextConsecutiveDeferrals).toBe(0);
+  });
+
+  test('worker active, under the backstop → promote-safe, defer unsafe mutations, counter increments', () => {
+    const d = decideCycle({ workersActive: true, consecutiveDeferrals: 0, forceFullEvery: 6 });
+    expect(d.mode).toBe('promote-safe');
+    expect(d.runUnsafeMutations).toBe(false);
+    expect(d.nextConsecutiveDeferrals).toBe(1);
+  });
+
+  test('the counter keeps climbing across consecutive busy cycles', () => {
+    expect(decideCycle({ workersActive: true, consecutiveDeferrals: 3, forceFullEvery: 6 }).nextConsecutiveDeferrals).toBe(4);
+  });
+
+  test('starvation backstop: once deferrals reach the threshold, force a full cycle (and reset)', () => {
+    const d = decideCycle({ workersActive: true, consecutiveDeferrals: 6, forceFullEvery: 6 });
+    expect(d.mode).toBe('full');
+    expect(d.runUnsafeMutations).toBe(true);
+    expect(d.nextConsecutiveDeferrals).toBe(0);
+  });
+
+  test('backstop also fires when deferrals exceed the threshold (e.g. after a config lowering)', () => {
+    expect(decideCycle({ workersActive: true, consecutiveDeferrals: 9, forceFullEvery: 6 }).mode).toBe('full');
+  });
+
+  test('forceFullEvery <= 0 disables the backstop → stay promote-safe no matter how long busy', () => {
+    const d = decideCycle({ workersActive: true, consecutiveDeferrals: 100, forceFullEvery: 0 });
+    expect(d.mode).toBe('promote-safe');
+    expect(d.runUnsafeMutations).toBe(false);
+    expect(d.nextConsecutiveDeferrals).toBe(101);
+  });
+});
+
+describe('isActionSafeWhileBusy (only catch-up races a worker landing on integration)', () => {
+  test('promote is always safe — it ff\'s the promotion-only main branch to a verified SHA', () => {
+    expect(isActionSafeWhileBusy('promote')).toBe(true);
+  });
+  test('none / hold-red / diverged perform no integration-branch mutation → safe', () => {
+    expect(isActionSafeWhileBusy('none')).toBe(true);
+    expect(isActionSafeWhileBusy('hold-red')).toBe(true);
+    expect(isActionSafeWhileBusy('diverged')).toBe(true);
+  });
+  test('catch-up ff\'s the INTEGRATION branch a worker may be landing on → NOT safe while busy', () => {
+    expect(isActionSafeWhileBusy('catch-up')).toBe(false);
+  });
+});
+
+describe('promoteShaStillVerified (promote only the SHA we classified + built this cycle)', () => {
+  test('tip unchanged since classification → still verified, promote may proceed', () => {
+    expect(promoteShaStillVerified('abc123', 'abc123')).toBe(true);
+  });
+  test('a worker landed mid-cycle (tip moved) → NOT the SHA we built → defer the promote', () => {
+    expect(promoteShaStillVerified('abc123', 'def456')).toBe(false);
+  });
+  test('empty/unknown classified SHA is never treated as verified', () => {
+    expect(promoteShaStillVerified('', '')).toBe(false);
   });
 });

@@ -161,3 +161,111 @@ export function ancestryFrom(opts: {
   if (opts.integrationIsAncestorOfMain) return 'main-ahead';
   return 'diverged';
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cycle gating — keep the gate VERIFYING + PROMOTING even while workers are active.
+//
+// The old gate skipped its ENTIRE cycle whenever ANY task was claimed ("don't race a
+// worker landing"). On a continuously-busy queue that starved the gate: it could skip
+// for hours, so `main` was never re-verified or re-promoted and sat stale + broken —
+// the exact opposite of the always-green-main goal.
+//
+// The fix splits a cycle's work into two safety classes:
+//  - Everything EXCEPT one mutation is safe to run alongside a worker: classify, BUILD
+//    the integration worktrees (fail-safe — a torn read just yields RED → hold, never a
+//    wrong promote), boot/render smoke, PROMOTE (a fast-forward of `main` to a SPECIFIC
+//    gate-verified integration SHA is atomic, and `main` is the promotion-only branch
+//    workers never touch), and queue heal tasks.
+//  - The ONE genuinely-unsafe mutation while busy is **catch-up** (`git merge --ff-only`
+//    of the INTEGRATION branch): it mutates the very worktree/index a worker may be
+//    fast-forwarding its own landing into right now, so two concurrent git writes could
+//    corrupt the index or fail. It DEFERS while a worker is active.
+//
+// A starvation backstop forces a full cycle (catch-up included) after N consecutive
+// deferrals, so a perpetually-busy queue still re-syncs integration eventually.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How much of the gate cycle to run this pass.
+ * - `full`         — run everything, including the unsafe-while-busy mutation (catch-up).
+ * - `promote-safe` — a worker may be mid-land: run the read-only verification + the
+ *                    ATOMIC safe promote, but DEFER the unsafe mutation(s).
+ */
+export type CycleMode = 'full' | 'promote-safe';
+
+export interface CycleInput {
+  /** Are any taskq tasks currently claimed (a worker possibly mid-land)? */
+  workersActive: boolean;
+  /**
+   * How many consecutive prior cycles ran in `promote-safe` mode (deferred the unsafe
+   * subset). The starvation counter — a continuously-busy queue must not defer forever.
+   */
+  consecutiveDeferrals: number;
+  /**
+   * Force a `full` cycle once this many cycles in a row have deferred (the starvation
+   * backstop). `<= 0` disables the backstop (stay promote-safe for as long as busy).
+   */
+  forceFullEvery: number;
+}
+
+export interface CycleDecision {
+  mode: CycleMode;
+  /** Run the unsafe-while-busy mutation(s) (catch-up ff of integration) this cycle? */
+  runUnsafeMutations: boolean;
+  /** The next persisted deferral counter (0 after a full cycle; +1 after a deferral). */
+  nextConsecutiveDeferrals: number;
+  /** Human-readable reason, for logs/status. */
+  reason: string;
+}
+
+/**
+ * Decide how much of the gate cycle to run, so the gate keeps verifying + promoting
+ * `main` without ever racing a worker's landing on integration. See the block comment
+ * above for the full rationale. The impure watchdog persists `nextConsecutiveDeferrals`
+ * and re-feeds it as `consecutiveDeferrals` next cycle.
+ */
+export function decideCycle(input: CycleInput): CycleDecision {
+  if (!input.workersActive) {
+    return { mode: 'full', runUnsafeMutations: true, nextConsecutiveDeferrals: 0, reason: 'no workers active — full cycle' };
+  }
+  if (input.forceFullEvery > 0 && input.consecutiveDeferrals >= input.forceFullEvery) {
+    return {
+      mode: 'full',
+      runUnsafeMutations: true,
+      nextConsecutiveDeferrals: 0,
+      reason: `starvation backstop: ${input.consecutiveDeferrals} consecutive deferrals ≥ ${input.forceFullEvery} → forcing full cycle`,
+    };
+  }
+  return {
+    mode: 'promote-safe',
+    runUnsafeMutations: false,
+    nextConsecutiveDeferrals: input.consecutiveDeferrals + 1,
+    reason: 'worker active — verify + promote only, deferring unsafe mutations',
+  };
+}
+
+/**
+ * Is this gate action safe to EXECUTE while a worker may be mid-land on integration?
+ * - `promote` ff's MAIN to a specific gate-verified SHA — atomic, and `main` is the
+ *   promotion-only branch workers never touch → ALWAYS safe.
+ * - `none` does nothing; `hold-red`/`diverged` perform no git mutation on the integration
+ *   branch (they only queue a heal task) → safe.
+ * - `catch-up` ff's the INTEGRATION branch forward — the one branch/worktree a worker may
+ *   be landing on this very moment → it DEFERS to a `full` cycle.
+ */
+export function isActionSafeWhileBusy(action: PromoteAction): boolean {
+  return action !== 'catch-up';
+}
+
+/**
+ * Guard the atomic-promote invariant: a promote must fast-forward `main` to the SAME
+ * integration SHA the gate classified AND verified this cycle. If a worker landed on
+ * integration mid-cycle the tip will have moved, so the build we just ran no longer
+ * matches `classifiedSha`; defer the promote to the next cycle (which re-classifies +
+ * rebuilds the new tip) rather than promote a SHA whose build we can't vouch for. Because
+ * integration only ever fast-forwards (monotonic), `currentSha === classifiedSha` proves
+ * nothing landed since classification.
+ */
+export function promoteShaStillVerified(classifiedSha: string, currentSha: string): boolean {
+  return !!classifiedSha && classifiedSha === currentSha;
+}
