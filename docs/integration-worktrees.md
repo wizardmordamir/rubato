@@ -219,3 +219,14 @@ that far:
   which a prod-bundle render smoke can't see. The guardrail runs against ru's own
   `ui/vite.config.ts` as a test, so a regression fails the gate; the pure checker is
   reusable by the cross-repo anti-drift guardrails (`fu-guardrails-enforce`).
+
+The checks above prove a UI **runs**. They cannot prove it was **re-thought** — a green
+`tsc` + build + render smoke pass just as readily on a faithful re-skin of the old app. So a
+task that designs or builds a UI surface (the shell/nav, the page domains, ru adoption, and
+all future UI work) also runs the **UX anchoring critic** — an adversarial status-quo-bias
+gate that flags every way the design still mirrors the pre-refactor app and demands a bolder,
+north-star-realizing alternative for each, passing only when no anchoring or clear improvement
+remains. Run it at design time (before building) and again before landing, after the scoped
+engineering gate is green. Spec + runnable: **`UX_ANCHORING_CRITIC.md`** →
+`tools/critics/uxAnchoringCritic.mjs` (bar: the UX north-star). It is the design analogue of
+`q-code-review-gate`: that one proves the diff is correct, this one proves it escaped inertia.
