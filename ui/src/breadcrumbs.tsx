@@ -1,14 +1,84 @@
 import { type NavGroup, NAV_HUBS, UI_PAGES } from "@shared/ui";
-import { type BreadcrumbNode, Breadcrumbs, buildBreadcrumbTrail } from "cursedbelt/react";
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
 // The app's breadcrumb trail — "where am I in the hubs, and how do I climb back
-// out to any level". Built on the shared cwip/react <Breadcrumbs> + the
-// `buildBreadcrumbTrail` route-hierarchy walker. The hierarchy here is derived
-// from the single source of truth for nav (UI_PAGES + NAV_HUBS): every hub-child
-// page hangs off its hub, and the drill-down detail routes hang off their list
-// page. Rendered once globally (see App.tsx) so no page wires its own back button.
+// out to any level". The hierarchy is derived from the single source of truth for
+// nav (UI_PAGES + NAV_HUBS): every hub-child page hangs off its hub, and the
+// drill-down detail routes hang off their list page. A small local trail walker +
+// renderer (rather than cwip's model-derived <Breadcrumbs>) so the dynamic detail
+// routes — which aren't NavigationModel items — keep their full trail and the
+// per-page leaf-label registration below. Rendered once globally (see App.tsx) so
+// no page wires its own back button.
+
+/** A node in the flat breadcrumb hierarchy: its key (the path), label, parent key. */
+interface BreadcrumbNode {
+  key: string;
+  label: string;
+  parent?: string;
+}
+
+/** One resolved crumb. `href` is omitted for the current (leaf) page. */
+interface Crumb {
+  key: string;
+  label: string;
+  href?: string;
+}
+
+/** Walk `nodes` from `startKey` to the root (root-first), applying the leaf overrides. */
+function buildTrail(
+  nodes: Record<string, BreadcrumbNode>,
+  startKey: string,
+  opts: { leafLabel?: string; leafHref?: string } = {},
+): Crumb[] {
+  const chain: Crumb[] = [];
+  let cur: string | undefined = startKey;
+  while (cur) {
+    const node: BreadcrumbNode | undefined = nodes[cur];
+    if (!node) break;
+    chain.unshift({ key: node.key, label: node.label, href: node.key });
+    cur = node.parent;
+  }
+  const last = chain[chain.length - 1];
+  if (last) {
+    if (opts.leafLabel) last.label = opts.leafLabel;
+    if (opts.leafHref) last.href = opts.leafHref;
+  }
+  return chain;
+}
+
+/** Render a crumb trail; collapses the middle to an ellipsis past `maxItems`. */
+function BreadcrumbTrail({ items, maxItems = 5 }: { items: Crumb[]; maxItems?: number }) {
+  const shown: Array<Crumb | "ellipsis"> =
+    items.length > maxItems ? [items[0], "ellipsis", ...items.slice(items.length - (maxItems - 2))] : items;
+  return (
+    <ol className="flex items-center gap-1.5 overflow-x-auto text-sm text-gray-500 dark:text-gray-400">
+      {shown.map((c, i) => {
+        const isLast = i === shown.length - 1;
+        return (
+          <li key={c === "ellipsis" ? "ellipsis" : c.key} className="flex items-center gap-1.5">
+            {i > 0 && (
+              <span aria-hidden className="text-gray-300 dark:text-gray-600">
+                ›
+              </span>
+            )}
+            {c === "ellipsis" ? (
+              <span className="text-gray-400">…</span>
+            ) : isLast || !c.href ? (
+              <span aria-current="page" className="font-medium text-gray-700 dark:text-gray-200">
+                {c.label}
+              </span>
+            ) : (
+              <Link to={c.href} className="hover:text-accent">
+                {c.label}
+              </Link>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 /** Path of the hub that owns a non-top page group. */
 const hubPath = (group: Exclude<NavGroup, "top">): string | undefined =>
@@ -111,7 +181,7 @@ export function AppBreadcrumbs() {
   const items = useMemo(() => {
     const match = resolveRoute(pathname);
     if (!match) return [];
-    return buildBreadcrumbTrail(NODES, match.key, {
+    return buildTrail(NODES, match.key, {
       leafLabel: registered ?? match.param ?? undefined,
       leafHref: pathname,
     });
@@ -119,8 +189,8 @@ export function AppBreadcrumbs() {
 
   if (items.length <= 1) return null;
   return (
-    <div className="mb-4">
-      <Breadcrumbs items={items} linkComponent={Link} maxItems={5} />
-    </div>
+    <nav aria-label="Breadcrumb" className="mb-4 min-w-0">
+      <BreadcrumbTrail items={items} maxItems={5} />
+    </nav>
   );
 }

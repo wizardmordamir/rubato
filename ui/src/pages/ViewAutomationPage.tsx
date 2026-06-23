@@ -364,7 +364,7 @@ export function ViewAutomationPage({ headerActions }: { headerActions?: ReactNod
     <div className="mx-auto max-w-3xl">
       {isLoading && <p className="text-gray-400">Loading…</p>}
       {isError && (
-        <Alert tone="error" size="sm">
+        <Alert tone="error">
           Couldn't load this automation.
         </Alert>
       )}

@@ -1,17 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  filterNavSearch,
-  HeaderSearch as ResponsiveSearch,
+  allowAllGate,
+  deriveSearchCatalogue,
+  HeaderSearch as CwipHeaderSearch,
   type SearchResultGroup,
-  SearchResults,
   useDebouncedValue,
 } from "cursedbelt/react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchSearch, fetchUi } from "../api";
-import { IconLayers } from "../icons";
-import { buildNavSearchItems, PAGE_ICONS } from "../navMeta";
-import { useNavPrefs } from "../navPrefs";
+import { buildRubatoNavModel, resolveNavIcon } from "../navigationModel";
+import { PAGE_ICONS } from "../navMeta";
 
 // Group key → the page icon shown beside the group header. The chat group maps to
 // the "ask" page's icon (its UI_PAGES key).
@@ -19,78 +18,49 @@ const groupIcon = (key: string) => PAGE_ICONS[key === "chat" ? "ask" : key];
 
 /**
  * The global top-nav search: ONE box that finds both navigation pages (instant,
- * client-side over the same enabled sidebar catalogue) AND content (commands, board
- * tasks, tools, requests, queries, ServiceNow, plans, excel automations, chat — the
- * server `/api/search`, debounced). Hits render in a single grouped dropdown via the
- * shared cwip <SearchResults>; cwip's responsive <HeaderSearch> shell collapses to a
- * magnifying-glass icon on narrow phones (expanding to a full-width drop-down
- * overlay), so the page search now lives only here — the sidebar dropped its box.
+ * client-side over the derived nav catalogue — the same NavigationModel the sidebar
+ * renders) AND content (commands, board tasks, tools, requests, queries, ServiceNow,
+ * plans, excel automations, chat — the server `/api/search`, debounced). The shared
+ * cwip <HeaderSearch> ranks the instant Pages layer from `catalogue` and renders the
+ * debounced server `serverGroups` below it, with full keyboard navigation.
  */
 export function HeaderSearch() {
   const [query, setQuery] = useState("");
   const debounced = useDebouncedValue(query.trim(), 200);
 
-  // Pages: instant, client-side over the same enabled catalogue the sidebar uses.
+  // Pages: instant, client-side over the derived catalogue (same model as the rail).
   const { data: ui } = useQuery({ queryKey: ["ui"], queryFn: fetchUi });
-  const { prefs } = useNavPrefs();
-  const navItems = useMemo(
-    () => buildNavSearchItems(ui?.pages ?? {}, new Set(prefs.hidden)),
-    [ui?.pages, prefs.hidden],
-  );
-  const pageGroups = useMemo<SearchResultGroup[]>(() => {
-    const matched = filterNavSearch(navItems, query).flatMap((g) => g.items);
-    if (!matched.length) return [];
-    return [
-      {
-        key: "pages",
-        label: "Pages",
-        icon: <IconLayers />,
-        items: matched.map((it) => ({
-          id: `page:${it.href}`,
-          href: it.href,
-          title: it.label,
-          sub: it.groupLabel,
-          icon: it.icon,
-        })),
-      },
-    ];
-  }, [navItems, query]);
+  const model = useMemo(() => buildRubatoNavModel(ui?.pages ?? {}, ui?.admin === true), [ui?.pages, ui?.admin]);
+  const catalogue = useMemo(() => deriveSearchCatalogue(model, allowAllGate), [model]);
 
   // Content: server-side, debounced, once the query is meaningful (2+ chars).
-  const { data, isFetching } = useQuery({
+  const { data } = useQuery({
     queryKey: ["contentSearch", debounced],
     queryFn: () => fetchSearch(debounced),
     enabled: debounced.length >= 2,
     staleTime: 10_000,
   });
-  const contentGroups: SearchResultGroup[] = (data?.groups ?? []).map((g) => ({
-    key: g.key,
-    label: g.label,
-    icon: groupIcon(g.key),
-    items: g.items,
-  }));
-
-  const groups = [...pageGroups, ...contentGroups];
+  const serverGroups = useMemo<SearchResultGroup[]>(
+    () =>
+      (data?.groups ?? []).map((g) => ({
+        key: g.key,
+        label: g.label,
+        icon: groupIcon(g.key),
+        items: g.items.map((h) => ({ id: h.id, path: h.href, label: h.title, sub: h.sub })),
+      })),
+    [data],
+  );
 
   return (
-    <ResponsiveSearch value={query} onChange={setQuery} placeholder="Search pages & content…" label="Search">
-      {(close) => {
-        const onNavigate = () => {
-          setQuery("");
-          close();
-        };
-        if (isFetching && groups.length === 0) {
-          return <p className="px-3 py-6 text-center text-sm text-gray-400">Searching…</p>;
-        }
-        return (
-          <SearchResults
-            groups={groups}
-            linkComponent={Link}
-            onNavigate={onNavigate}
-            emptyContent={<p className="px-3 py-6 text-center text-sm text-gray-400">No matches</p>}
-          />
-        );
-      }}
-    </ResponsiveSearch>
+    <CwipHeaderSearch
+      catalogue={catalogue}
+      serverGroups={serverGroups}
+      onQueryChange={setQuery}
+      placeholder="Search pages & content…"
+      linkComponent={Link}
+      onNavigate={() => setQuery("")}
+      resolveIcon={resolveNavIcon}
+      emptyContent={<p className="px-3 py-6 text-center text-sm text-gray-400">No matches</p>}
+    />
   );
 }

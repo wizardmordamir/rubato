@@ -1,21 +1,22 @@
 // The app sidebar: a color-coded, customizable nav of top-level pages + the
-// category hubs, driven by the shared SIDEBAR registry and the user's localStorage
-// prefs (show/hide, color, order, collapsed). The drag-reorder, per-row kebab
-// (recolor/hide), and restore-hidden menu are the shared cwip/react `SideNav`; this
-// file owns the aside shell (header, live dot, footer) + rubato's data, routing, and
-// theming. Searching pages now lives in the top-nav HeaderSearch (App.tsx), so the
-// sidebar no longer carries its own search box. The mobile drawer + hamburger live
-// in App.tsx.
+// category hubs, driven by the shared SIDEBAR registry (→ a cwip NavigationModel,
+// see navigationModel.ts) and the user's localStorage prefs (show/hide, color,
+// order, collapsed). The drag-reorder, per-row kebab (recolor/hide), and
+// restore-hidden menu are the shared cwip/react `SideNav`; this file owns the aside
+// shell (header, live dot, footer) + rubato's data, routing, and theming. Searching
+// pages now lives in the top-nav HeaderSearch (App.tsx), so the sidebar no longer
+// carries its own search box. The mobile drawer + hamburger live in App.tsx.
 
-import { type NavGroup, pagesInGroup, SIDEBAR, type UiPage } from "@shared/ui";
+import type { UiPage } from "@shared/ui";
 import { useQuery } from "@tanstack/react-query";
-import { type NavEntry, type NavPrefsActions, SideNav as CwipSideNav } from "cursedbelt/react";
+import { SideNav as CwipSideNav, type NavPreferences } from "cursedbelt/react";
+import { useCallback, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { fetchUi } from "../api";
 import { appBrand } from "../brand";
 import { Tooltip } from "../components";
-import { IconFileText, IconSliders, IconX } from "../icons";
-import { PAGE_ICONS, resolveSidebarEntry } from "../navMeta";
+import { IconSliders, IconX } from "../icons";
+import { buildRubatoNavModel, resolveNavIcon, toNavPreferences } from "../navigationModel";
 import { useNavPrefs } from "../navPrefs";
 import { ThemeToggle } from "../ThemeToggle";
 import { useLive } from "../useLive";
@@ -31,9 +32,6 @@ function matchPath(pathname: string, path: string): boolean {
   if (pathname === path) return true;
   return path !== "/" && pathname.startsWith(`${path}/`);
 }
-
-// rubato's active highlight uses the accent token (over cwip's neutral-gray default).
-const ITEM_CLASSNAMES = { active: () => "bg-accent-soft text-accent" } as const;
 
 export function SideNav({
   navOpen,
@@ -51,78 +49,27 @@ export function SideNav({
 }) {
   const live = useLive();
   const location = useLocation();
-  const { prefs, setCollapsed, setOrder, setHidden, setColor } = useNavPrefs();
+  const { prefs, setCollapsed, patch } = useNavPrefs();
   const collapsed = prefs.collapsed;
 
   const { data: ui } = useQuery({ queryKey: ["ui"], queryFn: fetchUi });
-  const enabled = pages ? Object.fromEntries(pages.map((p) => [p.key, true])) : (ui?.pages ?? {});
+  const enabled = useMemo(
+    () => (pages ? Object.fromEntries(pages.map((p) => [p.key, true])) : (ui?.pages ?? {})),
+    [pages, ui?.pages],
+  );
   const adminOn = !pages && ui?.admin === true;
 
-  // A hub is active on its own landing page or on any of its member pages.
-  const isActive = (id: string, kind: "page" | "hub", path: string): boolean => {
-    if (matchPath(location.pathname, path)) return true;
-    if (kind === "hub") {
-      return pagesInGroup(id as Exclude<NavGroup, "top">).some((p) => matchPath(location.pathname, p.path));
-    }
-    return false;
-  };
-
-  // Resolve SIDEBAR → eligible entries (drop entries whose page/hub has nothing
-  // enabled); hide/color/active are resolved here, the cwip SideNav orders + hides.
-  // A hub with exactly one enabled page is collapsed to a direct page link so it
-  // doesn't force an unnecessary hub landing page (e.g. a QA app with only Browser).
-  const entries: NavEntry[] = [];
-  for (const sidebarEntry of SIDEBAR) {
-    const r = resolveSidebarEntry(sidebarEntry);
-    if (!r) continue;
-    if (r.kind === "page" && !enabled[r.id]) continue;
-    if (r.kind === "hub") {
-      const hubPages = pagesInGroup(r.id as Exclude<NavGroup, "top">).filter((p) => enabled[p.key]);
-      if (hubPages.length === 0) continue;
-      if (hubPages.length === 1) {
-        // Only one page in this hub — bypass the hub and link directly to the page.
-        const p = hubPages[0];
-        entries.push({
-          id: p.key,
-          label: p.label,
-          href: p.path,
-          icon: PAGE_ICONS[p.key],
-          active: isActive(p.key, "page", p.path),
-          color: prefs.colors[p.key] ?? p.color,
-          hidden: prefs.hidden.includes(p.key),
-        });
-        continue;
-      }
-    }
-    entries.push({
-      id: r.id,
-      label: r.label,
-      href: r.path,
-      icon: r.icon,
-      active: isActive(r.id, r.kind, r.path),
-      color: prefs.colors[r.id] ?? r.defaultColor,
-      hidden: prefs.hidden.includes(r.id),
-    });
-  }
-  // Admin is owner-gated (config `ui.admin`); it joins the list as a normal,
-  // customizable entry when enabled.
-  if (adminOn) {
-    entries.push({
-      id: "/admin",
-      label: "Admin",
-      href: "/admin",
-      icon: <IconFileText />,
-      active: matchPath(location.pathname, "/admin"),
-      color: prefs.colors["/admin"],
-      hidden: prefs.hidden.includes("/admin"),
-    });
-  }
-
-  const actions: NavPrefsActions = {
-    setOrder,
-    setHidden: (entry, hidden) => setHidden(entry.id, hidden),
-    setColor: (entry, color) => setColor(entry.id, color),
-  };
+  // The whole rail derives from the shared registry → a cwip NavigationModel; the
+  // SideNav handles ordering/hiding/active highlight from `prefs` + `activeHref`. A
+  // hub with exactly one enabled page collapses to a direct page row (see the model
+  // builder), and Admin joins as a normal customizable row when owner-enabled.
+  const model = useMemo(() => buildRubatoNavModel(enabled, adminOn), [enabled, adminOn]);
+  const navPreferences = useMemo(() => toNavPreferences(prefs), [prefs]);
+  const onPrefsChange = useCallback(
+    (next: NavPreferences) =>
+      patch({ order: next.order ?? [], hidden: next.hidden ?? [], colors: next.colors ?? {} }),
+    [patch],
+  );
 
   return (
     <aside
@@ -148,13 +95,14 @@ export function SideNav({
       </Tooltip>
 
       <CwipSideNav
-        entries={entries}
-        order={prefs.order}
-        actions={actions}
+        model={model}
+        activeHref={location.pathname}
+        prefs={navPreferences}
+        onPrefsChange={onPrefsChange}
         collapsed={collapsed}
         linkComponent={Link}
         onNavigate={onClose}
-        itemClassNames={ITEM_CLASSNAMES}
+        resolveIcon={resolveNavIcon}
       />
 
       {/* Footer: collapse button stays anchored at the bottom-left corner.

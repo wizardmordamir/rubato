@@ -1,28 +1,29 @@
-import { createContext, type ReactNode, useContext } from "react";
-import { createToastStore, ToastList, type ToastVariant, useToasts } from "cursedbelt/react";
+import type { ReactNode } from "react";
+import { Toaster, toast } from "cursedbelt/react";
 
-// Toasts are backed by cwip's store-agnostic toast queue + view (createToastStore
-// / useToasts / ToastList). The app keeps its tiny `useToast().notify(...)` API so
-// call sites are unchanged; the queue, auto-expire, and rendering are shared.
-type Kind = ToastVariant; // "info" | "success" | "warning" | "error"
+// Toasts are backed by cursedbelt's notification primitive (the sonner-based
+// imperative `toast` API + a single `<Toaster />` mounted at the app root). The app
+// keeps its tiny `useToast().notify(...)` API so call sites are unchanged; the queue,
+// auto-expire, and rendering are shared. `notify` is a stable module-level function,
+// so it's safe to use directly in effect/callback dependency arrays.
+type Kind = "info" | "success" | "warning" | "error";
 
-const store = createToastStore({ defaultDurationMs: 4500 });
-const notify = (message: string, kind: Kind = "info") => store.add(message, { variant: kind });
-
-const ToastContext = createContext<{ notify: (message: string, kind?: Kind) => void } | null>(null);
+const notify = (message: string, kind: Kind = "info") => {
+  if (kind === "success") toast.success(message);
+  else if (kind === "error") toast.error(message);
+  else if (kind === "warning") toast.warning(message);
+  else toast.info(message);
+};
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const { toasts, dismiss } = useToasts(store);
   return (
-    <ToastContext.Provider value={{ notify }}>
+    <>
       {children}
-      <ToastList toasts={toasts} onDismiss={dismiss} position="top-right" />
-    </ToastContext.Provider>
+      <Toaster position="top-right" />
+    </>
   );
 }
 
 export function useToast() {
-  const ctx = useContext(ToastContext);
-  if (!ctx) throw new Error("useToast must be used within ToastProvider");
-  return ctx;
+  return { notify };
 }

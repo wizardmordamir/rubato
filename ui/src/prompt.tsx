@@ -73,7 +73,7 @@ export function PromptProvider({ children }: { children: ReactNode }) {
             onEnter={() => settle(value)}
           />
           <div className="mt-6 flex justify-end gap-2">
-            <Button variant="default" onClick={() => settle(null)}>
+            <Button variant="secondary" onClick={() => settle(null)}>
               {cancelText}
             </Button>
             <Button variant="primary" onClick={() => settle(value)}>

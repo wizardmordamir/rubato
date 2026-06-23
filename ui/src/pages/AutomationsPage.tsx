@@ -249,7 +249,6 @@ export function AutomationsPage({
                   {a.steps.length === 0 && a.capture?.id && (
                     <Alert
                       tone="warning"
-                      size="sm"
                       className="mt-2"
                       actions={
                         <button
