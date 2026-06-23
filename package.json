@@ -111,7 +111,7 @@
   "license": "ISC",
   "dependencies": {
     "cursedbelt": "link:cursedbelt",
-    "cwip": "^2.0.1",
+    "cwip": "link:cwip",
     "exceljs": "^4.4.0",
     "hyperformula": "^3.3.0",
     "yaml": "^2.9.0"

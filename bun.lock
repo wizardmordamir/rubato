@@ -6,7 +6,7 @@
       "name": "tempo",
       "dependencies": {
         "cursedbelt": "link:cursedbelt",
-        "cwip": "^2.0.1",
+        "cwip": "link:cwip",
         "exceljs": "^4.4.0",
         "hyperformula": "^3.3.0",
         "yaml": "^2.9.0",
@@ -204,7 +204,7 @@
 
     "cursedbelt": ["cursedbelt@link:cursedbelt", {}],
 
-    "cwip": ["cwip@2.0.1", "", {}, "sha512-k7Y0SL1k+QpjbW65sHJLGE51GlnV9UmmHQ5UBZwFFKzmY8tsQENLTAIz6SWIyKj1NHXQq/xeDq6sMmqT0axrXw=="],
+    "cwip": ["cwip@link:cwip", { "bin": { "cwip": "./dist/bin/cwip.js", "taskq": "./dist/bin/taskq.js" } }],
 
     "dayjs": ["dayjs@1.11.21", "", {}, "sha512-98IT+HOahAisibz/yjKbzuOBwYcjJ7BCLPzARyHiyEBmRz4fatF+KPJszEHXsGYjUG234aH/cOjW1wwTbKUZlA=="],
 
