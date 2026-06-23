@@ -25,7 +25,7 @@
  * `refactor/integration`), the gate can't and shouldn't judge — it accepts.
  */
 
-import type { TaskRow } from 'cwip/taskq';
+import type { HoldDisposition, TaskRow } from 'cwip/taskq';
 import type { TaskResult, WorkerContext } from './orchestrator';
 
 /** Why a reported success was rejected (drives the note + alert + status). */
@@ -68,6 +68,16 @@ export type DoneVerdict =
       /** Where to park the reverted task — a non-dispatchable hold (never `done`). */
       status: 'on_hold' | 'needs_input';
       reason: FalseDoneReason;
+      /**
+       * WHO/WHAT unblocks the reverted task (the taskq hold-disposition contract):
+       * a false-done revert is a PARK, so it must declare a disposition — never a
+       * bare hold. This is the rfc-31j fix: the original bug parked a false-done in
+       * a note-only on_hold with no owner, no retry, no heal, so it sat STUCK while
+       * blocking its dependents. Today both reasons route to `needs_owner` (a human
+       * must inspect — the gate can't safely auto-resolve a false success); the
+       * orchestrator threads it into {@link revertCompletion}.
+       */
+      disposition: HoldDisposition;
       /** Human-readable explanation, stamped on the task's `note` + the alert. */
       note: string;
     };
@@ -77,8 +87,8 @@ export type DoneVerdict =
  * Pure + total — every branch returns a verdict, so it's exhaustively unit-testable.
  *
  *  - not enforced (non-flow repo)  → accept (can't judge).
- *  - landed 0 commits              → REJECT empty-done → `needs_input`.
- *  - built red, not tolerated      → REJECT regression → `on_hold`.
+ *  - landed 0 commits              → REJECT empty-done → `needs_input` + needs_owner.
+ *  - built red, not tolerated      → REJECT regression → `on_hold` + needs_owner.
  *  - landed ≥1, build green/tolerated/unchecked → accept.
  */
 export function decideDone(e: DoneEvidence): DoneVerdict {
@@ -89,6 +99,7 @@ export function decideDone(e: DoneEvidence): DoneVerdict {
       accept: false,
       status: 'needs_input',
       reason: 'empty-done',
+      disposition: 'needs_owner',
       note:
         'False-done: the worker reported success but landed ZERO commits on refactor/integration ' +
         '(a non-empty git delta is required to mark a task done). Reverted to needs_input — re-run it, ' +
@@ -101,6 +112,7 @@ export function decideDone(e: DoneEvidence): DoneVerdict {
       accept: false,
       status: 'on_hold',
       reason: 'regression',
+      disposition: 'needs_owner',
       note:
         'False-done: the worker landed code but REGRESSED the integration build — `bun run build` on ' +
         'refactor/integration was green before this task and is red after it. Reverted to on_hold; fix the ' +

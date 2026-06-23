@@ -325,7 +325,10 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
           if (!verdict.accept) {
             // False-done: revert to a hold (NEVER done) so downstream `needs:` deps
             // stay blocked + the cascade can't start; record the alert + clear note.
-            revertCompletion(db, task.id, verdict.status, verdict.note, now());
+            // Thread the verdict's hold-disposition through (the rfc-31j fix): a
+            // false-done revert is a PARK that declares WHO unblocks it (needs_owner),
+            // never a bare note-only hold that sits stuck with no owner.
+            revertCompletion(db, task.id, verdict.status, verdict.note, now(), verdict.disposition);
             // Tokens were really spent — keep the usage ledger honest.
             if (res.outputTokens) recordRun(db, { at: now(), model: task.model, outputTokens: res.outputTokens });
             summary.falseDone++;

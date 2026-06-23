@@ -28,6 +28,7 @@ describe('decideDone', () => {
     if (v.accept) throw new Error('unreachable');
     expect(v.reason).toBe('empty-done');
     expect(v.status).toBe('needs_input');
+    expect(v.disposition).toBe('needs_owner'); // rfc-31j: a revert is never a bare hold
     expect(v.note).toContain('ZERO commits');
   });
 
@@ -44,6 +45,7 @@ describe('decideDone', () => {
     if (v.accept) throw new Error('unreachable');
     expect(v.reason).toBe('regression');
     expect(v.status).toBe('on_hold');
+    expect(v.disposition).toBe('needs_owner'); // rfc-31j: a revert is never a bare hold
     expect(v.note).toContain('REGRESSED');
   });
 

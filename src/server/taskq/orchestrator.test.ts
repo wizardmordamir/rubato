@@ -283,7 +283,13 @@ describe('runDrain false-done gate', () => {
   });
   const emptyDone = guard((title) =>
     title === 'fake'
-      ? { accept: false, status: 'needs_input', reason: 'empty-done', note: 'landed ZERO commits' }
+      ? {
+          accept: false,
+          status: 'needs_input',
+          reason: 'empty-done',
+          disposition: 'needs_owner',
+          note: 'landed ZERO commits',
+        }
       : { accept: true },
   );
 
@@ -302,6 +308,8 @@ describe('runDrain false-done gate', () => {
     const t = getTask(db, id);
     expect(t?.status).toBe('needs_input'); // reverted, NOT done
     expect(t?.note).toBe('landed ZERO commits');
+    // rfc-31j: the revert is a PARK that declares WHO unblocks it — never a bare hold.
+    expect(t?.hold_disposition).toBe('needs_owner');
     expect(listTasks(db, { status: 'done' }).length).toBe(0);
     expect(listTasks(db, { status: 'claimed' }).length).toBe(0); // lease dropped
     const fd = events.find((e) => e.type === 'false-done');
