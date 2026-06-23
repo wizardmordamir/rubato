@@ -55,7 +55,12 @@ describe('runEpicDecomposition + resolveGateway', () => {
     expect(es.decomposed).toBe(1);
     expect(es.childrenCreated).toBe(2);
     expect(getTask(db, epicId)?.status).toBe('needs_input');
-    expect(listChildren(db, epicId).every((c) => c.status === 'not_ready')).toBe(true);
+    // The gateway epic is a needs_owner hold (a human must answer it); its children
+    // are not_ready awaiting_task, resolved by the epic — no DIRECT owner action.
+    expect(getTask(db, epicId)?.hold_disposition).toBe('needs_owner');
+    const children = listChildren(db, epicId);
+    expect(children.every((c) => c.status === 'not_ready')).toBe(true);
+    expect(children.every((c) => c.hold_disposition === 'awaiting_task' && c.resolver_ref === `#${epicId}`)).toBe(true);
 
     const open = openClarifications(db);
     expect(open.length).toBe(1);

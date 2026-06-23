@@ -87,15 +87,31 @@ export async function runEpicDecomposition(
   const epics = listTasks(db, { status: 'pending_triage' }).filter((t) => t.complexity === 'epic');
   for (const epic of epics) {
     const plan = await planner(epic);
+    // A child is parked `not_ready` behind the epic's gateway and auto-releases when
+    // the gateway is answered (resolveGateway) — so its hold-disposition is
+    // `awaiting_task` with the epic as the resolver: no DIRECT owner action, it
+    // waits on the epic. (Naming the resolver makes the wait legible on the board.)
+    const epicRef = epic.slug ?? `#${epic.id}`;
     for (const child of plan.children) {
       addTask(
         db,
-        { title: child.title, body: child.body, status: 'not_ready', parent_id: epic.id, repo: epic.repo ?? undefined },
+        {
+          title: child.title,
+          body: child.body,
+          status: 'not_ready',
+          parent_id: epic.id,
+          repo: epic.repo ?? undefined,
+          hold_disposition: 'awaiting_task',
+          resolver_ref: epicRef,
+        },
         { at: 'bottom' },
       );
       summary.childrenCreated++;
     }
-    setStatus(db, epic.id, 'needs_input');
+    // The epic itself parks `needs_input` for the gateway question — a HUMAN must
+    // answer it, so `needs_owner` (the engine default for a parked status; passed
+    // explicitly here to document the gateway → owner contract).
+    setStatus(db, epic.id, 'needs_input', undefined, 'needs_owner');
     addClarification(db, epic.id, plan.question, now());
     summary.decomposed++;
   }
