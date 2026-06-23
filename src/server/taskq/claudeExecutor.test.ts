@@ -85,6 +85,18 @@ describe('buildWorkerPrompt', () => {
     expect(p).toContain('CLAUDE.md');
   });
 
+  test('injects the STANDARDS-first + reuse-not-duplicate directive into every prompt', () => {
+    // The prevention backbone: every worker is told to read the canonical standards
+    // doc first and to reuse shared primitives rather than hand-roll a second copy —
+    // independent of whether the individual task body remembers to say so.
+    const p = buildWorkerPrompt(task({ id: 8, title: 'add a thing', repo: 'ca' }));
+    expect(p).toContain('STANDARDS.md');
+    expect(p).toContain('ENGINEERING STANDARDS');
+    expect(p).toContain('REUSE, never duplicate');
+    // It must point at the standards BEFORE the integration-flow / work instructions.
+    expect(p.indexOf('STANDARDS.md')).toBeLessThan(p.indexOf('INTEGRATION FLOW'));
+  });
+
   test('directs the integration flow: branch from + merge to refactor/integration, main is promotion-only', () => {
     const p = buildWorkerPrompt(task({ id: 9, title: 'do work', repo: 'ru' }));
     expect(p).toContain('refactor/integration');
