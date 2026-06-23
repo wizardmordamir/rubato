@@ -24,6 +24,15 @@ export default defineConfig({
   // exactly as in vite.config.ts — friend apps don't need to re-map it for the JS.
   resolve: {
     alias: { "@shared": resolve(here, "../src/shared") },
+    // Consume cursedbelt as SOURCE (its `source` export condition -> ./src), exactly
+    // like the SPA build (vite.config.ts) and tsc (tsconfig.lib.json inherits
+    // customConditions:["source"]). Without this the lib build falls back to
+    // cursedbelt's published `dist`, which can be stale relative to the integration
+    // source it's symlinked to — re-exporting names its current source no longer
+    // exports (e.g. CodeCell/getCellRenderer/LinkCell from DataTable) ⇒ MISSING_EXPORT
+    // build failures. Resolving source keeps the lib build in lockstep with the
+    // symlinked first-party source, no cursedbelt rebuild needed.
+    conditions: ["source", "import", "module", "browser", "default"],
     // recharts + glide-data-grid are cursedbelt OPTIONAL peers; without deduping them
     // to ru-ui's installed copy, rolldown resolves cursedbelt's imports to the
     // `__vite-optional-peer-dep` stub and the bundle fails (e.g. "DataEditor is not

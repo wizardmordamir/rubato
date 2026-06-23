@@ -32,7 +32,7 @@ export function TypesView({
         <span className="text-gray-400">Inferred from the result data</span>
         <div className="ml-auto flex items-center gap-2">
           <CopyButton
-            text={ts}
+            value={ts}
             showIcon={false}
             tooltip="Copy the TypeScript to the clipboard"
             copiedText="Copied ✓"

@@ -1,4 +1,5 @@
-import { Button, Input, ModalShell } from "cursedbelt/react";
+import { Button, Input } from "cursedbelt/react";
+import { ModalShell } from "./components/ModalShell";
 import { createContext, type ReactNode, useCallback, useContext, useRef, useState } from "react";
 
 // App-wide text-prompt dialog — the styled, app-native replacement for the

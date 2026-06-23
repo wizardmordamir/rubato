@@ -17,7 +17,7 @@ function CodeBlock(props: ComponentPropsWithoutRef<"pre">) {
           the button relative to the code block. */}
       <div className="absolute right-2 top-2 opacity-0 group-hover/code:opacity-100">
         <CopyButton
-          text={() => ref.current?.textContent ?? ""}
+          value={() => ref.current?.textContent ?? ""}
           label="Copy code"
           tooltip="Copy code"
           iconSize={14}
@@ -35,7 +35,7 @@ export function Message({ message }: { message: ChatMessage }) {
   const debug = useDebug();
   const bubbleCopy = (
     <CopyButton
-      text={message.content}
+      value={message.content}
       label="Copy message"
       tooltip="Copy message"
       iconSize={14}

@@ -21,7 +21,7 @@ function ServerRow({ server }: { server: SshServerSummary }) {
           <span className="ml-2 text-xs text-gray-400">index {server.index}</span>
         </div>
         <div className="flex items-center gap-2">
-          <CopyButton text={server.command} tooltip="Copy SSH command" className={BTN_GHOST_CLASS}>
+          <CopyButton value={server.command} tooltip="Copy SSH command" className={BTN_GHOST_CLASS}>
             Copy
           </CopyButton>
           <button

@@ -276,7 +276,7 @@ function LinkEditor({
     <Modal title={link ? "Edit link" : "Add link"} onClose={onClose} widthClass="max-w-xl">
       <div className="flex flex-col gap-3">
         {error && (
-          <Alert tone="error" size="sm">
+          <Alert tone="error">
             {error}
           </Alert>
         )}

@@ -222,7 +222,7 @@ function LockedPanel({ hasMaster, onUnlocked }: { hasMaster: boolean; onUnlocked
           : "This password protects your stored secrets. You'll need it to view or edit them."}
       </p>
       {err && (
-        <Alert tone="error" size="sm">
+        <Alert tone="error">
           {err}
         </Alert>
       )}
@@ -370,7 +370,7 @@ function SecretValue({ value, label }: { value: string; label: string }) {
         {shown ? <IconEyeOff /> : <IconEye />}
       </button>
       <CwipCopyButton
-        text={value}
+        value={value}
         label={`Copy ${label}`}
         tooltip={`Copy ${label}`}
         className="p-1"
@@ -386,7 +386,7 @@ function CopyButton({ value }: { value: string }) {
   const { notify } = useToast();
   if (!value) return null;
   return (
-    <CwipCopyButton text={value} tooltip="Copy" className="p-0.5" onCopied={() => notify("Copied", "success")} />
+    <CwipCopyButton value={value} tooltip="Copy" className="p-0.5" onCopied={() => notify("Copied", "success")} />
   );
 }
 
@@ -431,7 +431,7 @@ function ItemEditor({
     <Modal title={item ? "Edit item" : "Add item"} onClose={onClose} widthClass="max-w-xl">
       <div className="flex flex-col gap-3">
         {err && (
-          <Alert tone="error" size="sm">
+          <Alert tone="error">
             {err}
           </Alert>
         )}
@@ -565,7 +565,7 @@ function ChangeMasterModal({ onClose, onChanged }: { onClose: () => void; onChan
     <Modal title="Change vault password" onClose={onClose} widthClass="max-w-sm">
       <div className="flex flex-col gap-3">
         {err && (
-          <Alert tone="error" size="sm">
+          <Alert tone="error">
             {err}
           </Alert>
         )}

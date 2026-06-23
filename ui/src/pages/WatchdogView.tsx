@@ -1857,7 +1857,7 @@ function CommandRow({ cmd }: { cmd: WatchdogCommand }) {
           <p className="text-xs text-gray-500">{cmd.description}</p>
         </div>
         <CopyButton
-          text={cmd.command}
+          value={cmd.command}
           iconSize={13}
           resetMs={1500}
           onCopied={() => notify("Copied", "success")}

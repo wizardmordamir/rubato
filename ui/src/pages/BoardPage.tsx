@@ -364,7 +364,7 @@ function TaskEditor({
           ))}
         </select>
         {error && (
-          <Alert tone="error" size="sm">
+          <Alert tone="error">
             {error}
           </Alert>
         )}

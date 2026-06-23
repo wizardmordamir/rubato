@@ -132,7 +132,7 @@ export function SavedCommandModal({ initial, onClose }: { initial?: SavedCommand
         )}
 
         {error && (
-          <Alert tone="error" size="sm">
+          <Alert tone="error">
             {error}
           </Alert>
         )}
