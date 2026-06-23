@@ -67,14 +67,13 @@ import { ForgePage } from "./ForgePage";
 import { OllamaPage } from "./OllamaPage";
 import { OrchestrationProcessingPage } from "./OrchestrationProcessingPage";
 
-type TaskqTab = "board" | "forge" | "ollama" | "workers" | "settings" | "history" | "usage" | "processing";
+type TaskqTab = "board" | "forge" | "ollama" | "workers" | "settings" | "usage" | "processing";
 const TASKQ_TABS: readonly { key: TaskqTab; label: string }[] = [
   { key: "board", label: "Board" },
   { key: "forge", label: "Forge" },
   { key: "ollama", label: "Ollama" },
   { key: "workers", label: "Workers" },
   { key: "settings", label: "Settings" },
-  { key: "history", label: "History" },
   { key: "usage", label: "Usage" },
   { key: "processing", label: "Processing" },
 ];
@@ -84,7 +83,6 @@ const VALID_TABS = new Set<string>([
   "ollama",
   "workers",
   "settings",
-  "history",
   "usage",
   "processing",
 ]);
@@ -98,6 +96,20 @@ const VALID_TABS = new Set<string>([
 
 /** Statuses where drag-reorder changes claim priority (running/done are not). */
 const REORDERABLE = new Set<TaskqStatus>(["draft", "ready", "on_hold", "not_ready", "blocked", "pending_triage"]);
+
+/** Board display order: `claimed` (In Progress) floats above `ready` so active work stays visible without scrolling. */
+const BOARD_DISPLAY_ORDER: TaskqStatus[] = [
+  'draft',
+  'pending_triage',
+  'claimed',
+  'ready',
+  'blocked',
+  'on_hold',
+  'needs_input',
+  'not_ready',
+  'failed',
+  'done',
+];
 
 /** 8 distinct color palettes for serial group color-coding. */
 const SERIAL_GROUP_COLORS = [
@@ -210,6 +222,7 @@ export function TaskqPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [serialGroupDialogOpen, setSerialGroupDialogOpen] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<TaskqStatus | null>(null);
   const { data: serialGroupsData } = useQuery({
     queryKey: ["taskq-serial-groups"],
     queryFn: fetchTaskqSerialGroups,
@@ -299,25 +312,50 @@ export function TaskqPage() {
       <div className="min-h-0 flex-1 overflow-auto pt-3">
         {tab === "board" && (
           <div className="space-y-4">
-            <div className="flex flex-wrap gap-2">
-              {TASKQ_STATUSES.filter((s) => board.counts[s] > 0).map((s) => (
-                <Badge key={s} tone={STATUS_TONE[s]}>
-                  {TASKQ_STATUS_LABELS[s]}: {board.counts[s]}
-                </Badge>
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Filter board by status">
+              {BOARD_DISPLAY_ORDER.filter((s) => (board.counts[s] ?? 0) > 0).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setFilterStatus((f) => (f === s ? null : s))}
+                  aria-pressed={filterStatus === s}
+                  className={`cursor-pointer rounded-full transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 ${
+                    filterStatus === s
+                      ? "ring-2 ring-current ring-offset-1"
+                      : filterStatus !== null
+                        ? "opacity-40 hover:opacity-70"
+                        : "hover:opacity-80"
+                  }`}
+                >
+                  <Badge tone={STATUS_TONE[s]}>
+                    {TASKQ_STATUS_LABELS[s]}: {board.counts[s]}
+                  </Badge>
+                </button>
               ))}
-              <Badge tone="neutral">Total: {board.total}</Badge>
+              <button
+                type="button"
+                onClick={() => setFilterStatus(null)}
+                aria-pressed={filterStatus === null}
+                className={`cursor-pointer rounded-full transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 ${
+                  filterStatus === null
+                    ? "ring-2 ring-gray-400 ring-offset-1"
+                    : "opacity-40 hover:opacity-70"
+                }`}
+              >
+                <Badge tone="neutral">Total: {board.total}</Badge>
+              </button>
             </div>
             <DrainStatusBanner onGoToWorkers={() => setTab("workers")} onGoToUsage={() => setTab("usage")} />
             <InputQueuePanel />
             {board.total === 0 ? (
               <p className="text-gray-400">No tasks yet — add one with "New task".</p>
             ) : (
-              TASKQ_STATUSES.flatMap((s) => {
+              (filterStatus ? BOARD_DISPLAY_ORDER.filter((s) => s === filterStatus) : BOARD_DISPLAY_ORDER).flatMap((s) => {
                 const allTasks = board.tasks.filter((t) => t.status === s);
                 if (allTasks.length === 0) return [];
                 const selectProps = { selectMode, selectedIds, onToggleSelect: toggleSelect };
                 if (s !== "on_hold") {
-                  return [
+                  const section = (
                     <BoardSection
                       key={s}
                       status={s}
@@ -338,8 +376,11 @@ export function TaskqPage() {
                       onEnqueue={(t) => enqueue.mutate(t.id)}
                       onDuplicate={(t) => duplicate.mutate(t.id)}
                       {...selectProps}
-                    />,
-                  ];
+                    />
+                  );
+                  return s === "done"
+                    ? [<DoneHistoryAnnotation key="done-stats" />, section]
+                    : [section];
                 }
                 // Split on_hold: saved tasks and templates (things we store to re-run) get their own
                 // section; everything else stays in On hold (waiting on something).
@@ -433,7 +474,6 @@ export function TaskqPage() {
           </div>
         )}
         {tab === "settings" && <SettingsPanel />}
-        {tab === "history" && <HistoryPanel />}
         {tab === "usage" && <UsagePanel />}
         {tab === "forge" && <ForgePage embedded />}
         {tab === "ollama" && <OllamaPage embedded />}
@@ -3143,6 +3183,19 @@ function HistoryDetailModal({
         )}
       </div>
     </ModalShell>
+  );
+}
+
+/** Shows aggregate completion stats ("N done · Xm total") above the Done section,
+ *  surfacing the info from the now-removed History tab inline where it belongs. */
+function DoneHistoryAnnotation() {
+  const { data } = useQuery({ queryKey: ["taskq-history"], queryFn: fetchTaskqHistory });
+  if (!data || data.stats.total === 0) return null;
+  const totalMins = Math.round((data.stats.totalDurationS ?? 0) / 60);
+  return (
+    <p className="text-xs text-gray-400">
+      {data.stats.total} completed total · {totalMins}m total time
+    </p>
   );
 }
 
