@@ -114,7 +114,7 @@ export function RunCommandModal({
     <Modal title={`${command.name} ${command.kind === "cd" ? "(cd)" : ""}`.trim()} onClose={onClose}>
       <p className="mb-3 text-sm text-gray-600 dark:text-gray-300">{command.description}</p>
       {command.kind === "cd" && (
-        <Alert tone="warning" size="sm" className="mb-3">
+        <Alert tone="warning" className="mb-3">
           This is a cd-command — running it here just prints the target path (it can't change your shell's directory).
         </Alert>
       )}
@@ -278,7 +278,7 @@ export function RunCommandModal({
       )}
 
       {error && (
-        <Alert tone="error" size="sm" className="mt-3">
+        <Alert tone="error" className="mt-3">
           {error}
         </Alert>
       )}

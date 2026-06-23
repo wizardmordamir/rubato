@@ -1,6 +1,7 @@
 import { AreaChart, BarChart, type ChartDatum, formatTimeFull, formatTimeTick } from 'cursedbelt/react/charts';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DisclosureButton, DragHandle, ModalShell, StatTile, useDragReorder } from "cursedbelt/react";
+import { DisclosureButton, DragHandle, StatTile, useDragReorder } from "cursedbelt/react";
+import { ModalShell } from "../components/ModalShell";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";

@@ -237,7 +237,7 @@ function TokenView({ result, fresh }: { result: SessionTokenResult; fresh: boole
             </button>
           </Tooltip>
           <CopyButton
-            text={result.token}
+            value={result.token}
             showIcon={false}
             tooltip="Copies the full JWT to your clipboard (even while it's masked on screen) so you can paste it into a request or tool."
             className={`${BTN_GHOST_CLASS} text-xs`}
@@ -252,7 +252,7 @@ function TokenView({ result, fresh }: { result: SessionTokenResult; fresh: boole
       {result.cookieHeader && (
         <div className="mt-2">
           <CopyButton
-            text={result.cookieHeader}
+            value={result.cookieHeader}
             showIcon={false}
             tooltip="Copies the full Cookie header value from the login response, for endpoints that authenticate via a session cookie instead of a Bearer token."
             className={`${BTN_GHOST_CLASS} text-xs`}

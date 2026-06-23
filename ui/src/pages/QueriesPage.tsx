@@ -483,7 +483,7 @@ export function QueriesPage() {
                     {run.isPending ? "Running…" : "Run"}
                   </button>
                   <CopyButton
-                    text={isMongo ? mongoPreview : sqlText}
+                    value={isMongo ? mongoPreview : sqlText}
                     className={BTN_GHOST_CLASS}
                     tooltip={
                       isMongo

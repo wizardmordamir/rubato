@@ -62,7 +62,7 @@ export function TableQueryExplorer({
 
       {result && <FilterBuilder columns={result.columns} onApply={apply} />}
       {error && (
-        <Alert tone="error" size="sm">
+        <Alert tone="error">
           {error}
         </Alert>
       )}

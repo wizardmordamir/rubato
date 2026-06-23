@@ -254,7 +254,7 @@ export function SplunkPage() {
                   </label>
                 )}
                 <CopyButton
-                  text={built?.query ?? ""}
+                  value={built?.query ?? ""}
                   disabled={!built?.query}
                   className={BTN_GHOST_CLASS}
                   onCopied={() => notify("Query copied", "success")}
