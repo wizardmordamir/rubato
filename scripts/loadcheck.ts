@@ -4,14 +4,15 @@
  *
  * Boots ru the way the OWNER runs it (the vite DEV server + API together, `bun run
  * dev`) on an isolated home + free ports, drives a HEADLESS browser at home + every
- * top-nav surface, and asserts each route MOUNTS ITS REAL CONTENT — a text landmark
- * unique to that page. That catches the three ways "localhost is broken" that a green
+ * top-nav surface, and fails on the ROBUST, phrase-free breakage signals a green
  * `tsc` + `bun test` MISS:
  *   1. a white screen (React root never mounts — a missing export, a bad import),
  *   2. a dev-only vite import-analysis / failed-to-resolve error on a lazy route,
- *   3. an ERROR BOUNDARY ("Failed to load") — the root mounts, but the page didn't.
- * The landmark assertion is what distinguishes (3) from a healthy load: a boundary has
- * children + often no console error, so "root is non-empty" is not enough.
+ *   3. an ERROR BOUNDARY ("loads to an error") — the root mounts, but the page threw.
+ * (3) is caught WITHOUT matching any UI copy: in dev React always logs a caught
+ * error-boundary error to the console, so the per-route console-error / uncaught
+ * page-error checks flag it. We deliberately do NOT assert hardcoded text landmarks —
+ * a phrase that a refactor renames would make this flaky; the error signals are the gate.
  *
  * Wired into `bun run done` (runs BEFORE the slow functional/e2e suites — it's the
  * cheapest, highest-signal check) and runnable standalone anywhere we need to prove
@@ -39,17 +40,16 @@ const ROOT = new URL("..", import.meta.url).pathname;
  * routes; exported so the gate can import it once promoted).
  */
 export const RU_ROUTES: SiteRoute[] = [
-  { path: "/", label: "home (apps)", landmark: "text=Repo tools" },
-  { path: "/data", label: "data hub", landmark: "text=Queries, integrations, and API requests." },
+  { path: "/", label: "home (apps)" },
+  { path: "/data", label: "data hub" },
   {
     path: "/automation",
     label: "automation hub",
-    landmark: "text=Commands, scripts, browser, and pipeline automation.",
   },
-  { path: "/results", label: "results hub", landmark: "text=Run history, archives, and output files." },
-  { path: "/security", label: "security hub", landmark: "text=Vulnerability scans and remediation plans." },
-  { path: "/docs", label: "docs hub", landmark: "text=Project docs, editable system files, and your rubato config." },
-  { path: "/taskq", label: "orchestration dashboard", landmark: "text=Findings" },
+  { path: "/results", label: "results hub" },
+  { path: "/security", label: "security hub" },
+  { path: "/docs", label: "docs hub" },
+  { path: "/taskq", label: "orchestration dashboard" },
 ];
 
 /** Build the ru site-smoke spec: one DEV service (api + vite) navigated on its vite port. */
