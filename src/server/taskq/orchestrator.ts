@@ -89,13 +89,14 @@ export type DrainEvent =
   | {
       /**
        * A reported "success" failed the completion gate (false-done): it landed no
-       * code, or it regressed the integration build. The task was reverted to a hold
-       * status (NOT marked done) so its downstream `needs:` deps stay blocked.
+       * code, or it regressed the integration build. The task was reverted to an
+       * `on_hold` PARK (NOT marked done) — with a hold-disposition, never the
+       * question-bearing `needs_input` — so its downstream `needs:` deps stay blocked.
        */
       type: 'false-done';
       worker: number;
       taskId: number;
-      status: 'on_hold' | 'needs_input';
+      status: 'on_hold';
       reason: string;
       note: string;
     }
@@ -129,11 +130,12 @@ export interface DrainOptions {
   retry?: { maxAttempts?: number; backoff?: BackoffOpts };
   /**
    * Completion gate: before a reported-success task is marked `done`, verify it
-   * really landed (non-empty git delta on `refactor/integration`) and didn't
-   * regress the integration build. A `revert` verdict parks the task in a hold
-   * status (on_hold/needs_input) with a note INSTEAD of completing it — so a
-   * false-done can never silently flip downstream `needs:` deps to ready. Omit to
-   * accept every success (legacy behavior; the unit tests rely on this default).
+   * really landed (non-empty git delta on `refactor/integration`, unless it's a
+   * `noop_ok` audit/check task) and didn't regress the integration build. A
+   * `revert` verdict parks the task `on_hold` with a disposition + note INSTEAD of
+   * completing it — so a false-done can never silently flip downstream `needs:`
+   * deps to ready. Omit to accept every success (legacy behavior; the unit tests
+   * rely on this default).
    */
   verifyDone?: DoneGuard;
   /** Heartbeat cadence while a task runs (default 60s). */

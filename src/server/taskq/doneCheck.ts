@@ -80,6 +80,11 @@ const NOT_ENFORCED: GuardSnapshot = { enforced: false };
  * (they reschedule or park on_hold) — so they can't trigger the `needs:` cascade
  * the gate guards against, and flagging them would just wrongly break their
  * schedule. So the gate skips them.
+ *
+ * A one-shot AUDIT/CHECK task that may legitimately land nothing is NOT skipped
+ * here — it stays enforced so the regression check still runs — but its
+ * `noop_ok` flag (threaded into the evidence in {@link makeDoneGuard}'s `verify`)
+ * makes the pure {@link decideDone} accept its zero-commit completion.
  */
 function isOneShotWork(task: TaskRow): boolean {
   return !task.is_saved && !task.is_template && task.recur_interval_ms == null && task.recur_n == null;
@@ -140,6 +145,10 @@ export function makeDoneGuard(config: TaskqConfig, deps: Partial<DoneCheckDeps> 
 
     const evidence: DoneEvidence = {
       enforced: true,
+      // A one-shot audit/check/review task flagged noop_ok may correctly land no
+      // commits — decideDone then skips the empty-done requirement (the regression
+      // check below still applies). Ordinary code-change tasks (noop_ok=0) keep it.
+      noopOk: task.noop_ok === 1,
       landedCommits,
       buildChecked,
       buildGreen,

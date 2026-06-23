@@ -285,7 +285,7 @@ describe('runDrain false-done gate', () => {
     title === 'fake'
       ? {
           accept: false,
-          status: 'needs_input',
+          status: 'on_hold',
           reason: 'empty-done',
           disposition: 'needs_owner',
           note: 'landed ZERO commits',
@@ -306,7 +306,7 @@ describe('runDrain false-done gate', () => {
     expect(summary.completed).toBe(0);
     expect(summary.falseDone).toBe(1);
     const t = getTask(db, id);
-    expect(t?.status).toBe('needs_input'); // reverted, NOT done
+    expect(t?.status).toBe('on_hold'); // reverted to a hold, NOT done (and never a bare needs_input)
     expect(t?.note).toBe('landed ZERO commits');
     // rfc-31j: the revert is a PARK that declares WHO unblocks it — never a bare hold.
     expect(t?.hold_disposition).toBe('needs_owner');

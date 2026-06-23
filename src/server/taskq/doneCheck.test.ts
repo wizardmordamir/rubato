@@ -97,14 +97,18 @@ function fakeDeps(w: World, alerts: FalseDoneAlert[], buildCalls: { count: numbe
 
 const CTX = { index: 0, workerId: 'w0', worktree: '_w0', filters: {} };
 
-async function run(w: World, opts: { cfg?: Partial<TaskqConfig>; landAfter?: string } = {}) {
+async function run(
+  w: World,
+  opts: { cfg?: Partial<TaskqConfig>; landAfter?: string; taskOver?: Partial<TaskRow> } = {},
+) {
   const alerts: FalseDoneAlert[] = [];
   const buildCalls = { count: 0 };
   const guard = makeDoneGuard(config(opts.cfg), fakeDeps(w, alerts, buildCalls));
-  const snap = await guard.snapshot(task(), CTX);
+  const t = task(opts.taskOver);
+  const snap = await guard.snapshot(t, CTX);
   // Simulate the task's run window: the integration tip may advance before verify.
   if (opts.landAfter !== undefined) w.head = opts.landAfter;
-  const verdict = await guard.verify(task(), SUCCESS, snap, CTX);
+  const verdict = await guard.verify(t, SUCCESS, snap, CTX);
   return { verdict, alerts, buildCalls };
 }
 
@@ -113,7 +117,7 @@ describe('makeDoneGuard', () => {
     expect(integrationWorktree('/repos/rubato')).toBe('/repos/rubato-integration');
   });
 
-  test('EMPTY-DONE: integration tip never moved → reverted to needs_input + alerted', async () => {
+  test('EMPTY-DONE: integration tip never moved → reverted to on_hold (never bare needs_input) + alerted', async () => {
     const w: World = {
       head: 'sha0',
       landed: 0,
@@ -126,10 +130,50 @@ describe('makeDoneGuard', () => {
     expect(verdict.accept).toBe(false);
     if (verdict.accept) throw new Error('unreachable');
     expect(verdict.reason).toBe('empty-done');
-    expect(verdict.status).toBe('needs_input');
+    // A false-done is a PARK with a disposition — never the question-bearing needs_input.
+    expect(verdict.status).toBe('on_hold');
+    expect(verdict.status).not.toBe('needs_input');
+    expect(verdict.disposition).toBe('needs_owner');
     expect(buildCalls.count).toBe(0); // nothing landed → no build
     expect(alerts).toHaveLength(1);
-    expect(alerts[0]).toMatchObject({ taskId: 31, slug: 'rfc-31', repo: 'ru', reason: 'empty-done' });
+    expect(alerts[0]).toMatchObject({ taskId: 31, slug: 'rfc-31', repo: 'ru', reason: 'empty-done', status: 'on_hold' });
+  });
+
+  test('NO-OP OK: a noop_ok audit/check task completing with 0 commits is DONE, not reverted', async () => {
+    // #267 audit-orchestration-hygiene case: a one-shot audit ran, found nothing to fix,
+    // landed 0 commits. It IS enforced (passes isOneShotWork) but noop_ok accepts the no-op.
+    const w: World = {
+      head: 'sha0',
+      landed: 0,
+      buildGreen: true,
+      knownGreen: true,
+      hasIntegBranch: true,
+      worktreeExists: true,
+    };
+    const { verdict, alerts, buildCalls } = await run(w, { taskOver: { noop_ok: 1 } }); // no landing
+    expect(verdict.accept).toBe(true); // accepted with zero landed commits
+    expect(buildCalls.count).toBe(0); // nothing landed → no build
+    expect(alerts).toHaveLength(0);
+  });
+
+  test('NO-OP OK is NOT a regression bypass: a noop_ok task that lands code + regresses is still CAUGHT', async () => {
+    // noop_ok only waives the empty-done requirement; the regression check still applies.
+    const w: World = {
+      head: 'sha0',
+      landed: 2,
+      buildGreen: false,
+      knownGreen: true,
+      hasIntegBranch: true,
+      worktreeExists: true,
+    };
+    const { verdict, alerts, buildCalls } = await run(w, { taskOver: { noop_ok: 1 }, landAfter: 'sha1' });
+    expect(verdict.accept).toBe(false);
+    if (verdict.accept) throw new Error('unreachable');
+    expect(verdict.reason).toBe('regression');
+    expect(verdict.status).toBe('on_hold');
+    expect(buildCalls.count).toBe(1);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.reason).toBe('regression');
   });
 
   test('REGRESSING-DONE: landed code but a known-green integration went red → on_hold + alerted', async () => {
@@ -279,7 +323,7 @@ describe('makeDoneGuard', () => {
     expect(verdict.accept).toBe(false);
     if (verdict.accept) throw new Error('unreachable');
     expect(verdict.reason).toBe('empty-done');
-    expect(verdict.status).toBe('needs_input');
+    expect(verdict.status).toBe('on_hold'); // parked with a disposition, not a bare needs_input
     expect(buildCalls.count).toBe(0); // attribution resolves to 0 → no build
     expect(alerts).toHaveLength(1);
     expect(alerts[0]).toMatchObject({ taskId: 31, slug: 'rfc-31', repo: 'ru', reason: 'empty-done' });
