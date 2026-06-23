@@ -139,13 +139,22 @@ export default defineConfig(({ mode }) => {
       conditions: ["source", "import", "module", "browser", "default"],
     },
     server: {
-      port: env.PORT ? Number(env.VITE_PORT) : 5175,
+      port: env.VITE_PORT ? Number(env.VITE_PORT) : 5175,
+      // Bind IPv4 loopback explicitly. Under `bun --bun vite`, Vite's default
+      // `localhost` host resolves to IPv6 `[::1]` ONLY, but the rest of the stack
+      // (rubato-serve binds 127.0.0.1; the promotion gate's site-smoke harness polls
+      // + navigates 127.0.0.1) is IPv4 — a mismatch that made the dev server look
+      // "never ready" to any 127.0.0.1 client. Pinning 127.0.0.1 keeps the whole
+      // loopback stack consistent; browsers reaching `localhost` still happy-eyeball in.
+      host: "127.0.0.1",
       fs: { allow: [resolve(here, ".."), here] },
       // Only /api is proxied. The live socket (/ws) is NOT — the client opens it
       // straight against the API in dev (see ui/src/useLive.ts), because Vite 8's
-      // WS proxy hangs the upgrade and live streaming never starts.
+      // WS proxy hangs the upgrade and live streaming never starts. Target 127.0.0.1
+      // (not `localhost`) so the proxy hits rubato-serve's IPv4 bind without an IPv6
+      // first-try/fallback round-trip.
       proxy: {
-        "/api": `http://localhost:${apiPort}`,
+        "/api": `http://127.0.0.1:${apiPort}`,
       },
     },
     build: { outDir: "dist", emptyOutDir: true },
