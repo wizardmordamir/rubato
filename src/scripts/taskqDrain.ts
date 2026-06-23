@@ -154,15 +154,23 @@ async function main(): Promise<void> {
   // When throttle is off (MAXIMIZE) the pool isn't shrunk, so don't advertise a
   // "prefer light" throttle even if capacity is scarce — the full pool is running.
   const throttledNow = plan0.throttle && plan0.decision.preferLight;
+  // Mirror the capacity panel: in maximize mode the scheduleDecision's throttle
+  // recommendation is NOT applied, so report the full pool that actually runs rather
+  // than the raw "throttle to 1 worker + light models" estimate (the Watchdog drain
+  // history reads this `reason`).
+  const reason =
+    !plan0.throttle && plan0.decision.preferLight
+      ? `maximize — running all ${plan0.maxJobs} workers at configured models (estimate: ${plan0.decision.reason})`
+      : plan0.decision.reason;
   process.stdout.write(
-    `${ts()} taskq drain: ${plan0.jobs}/${plan0.maxJobs} worker(s)${dryRun ? ' [DRY RUN]' : ''} — ${plan0.decision.reason}${throttledNow ? ' (prefer light)' : plan0.throttle ? '' : ' (maximize)'}, db=${taskqHome()}\n`,
+    `${ts()} taskq drain: ${plan0.jobs}/${plan0.maxJobs} worker(s)${dryRun ? ' [DRY RUN]' : ''} — ${reason}${throttledNow ? ' (prefer light)' : plan0.throttle ? '' : ' (maximize)'}, db=${taskqHome()}\n`,
   );
 
   const drainDecision = throttledNow ? 'throttled' : plan0.decision.burnExpiring ? 'burning' : 'normal';
   const drainRunId = insertDrainRun(db, {
     startedAt: Date.now(),
     decision: drainDecision,
-    reason: plan0.decision.reason,
+    reason,
     jobs: plan0.jobs,
     maxJobs: plan0.maxJobs,
   });
