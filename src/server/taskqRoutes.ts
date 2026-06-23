@@ -14,6 +14,8 @@
  *   POST   /api/taskq/tasks/:id/status              → { status, note? } → { board }
  *   POST   /api/taskq/tasks/:id/move                → { position } → { board }
  *   POST   /api/taskq/tasks/:id/enqueue             → clone a template into a ready one-shot → { board, id }
+ *   GET    /api/taskq/findings                      → { findings, summary } (?status= ?type= ?severity= ?open=1)
+ *   POST   /api/taskq/findings/:id/status           → { status, note? } → { findings, summary }
  */
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -23,9 +25,13 @@ import {
   allBucketStates,
   calibrateBucket,
   deleteTask,
+  type FindingSeverity,
+  findingsSummary,
   getNeeds,
   getTask,
+  isFindingStatus,
   listDrainRuns,
+  listFindings,
   listSerialGroups,
   listTasks,
   modelAliasFromId,
@@ -35,6 +41,7 @@ import {
   type Position,
   recordRun,
   releaseLease,
+  setFindingStatus,
   setSerialGroup,
   setStatus,
   TASK_STATUSES,
@@ -553,6 +560,44 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       return json({ board: board() });
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'taskq write failed', 400);
+    }
+  }
+
+  // Continuous-improvement findings ledger: list + summary (read), and owner triage
+  // (accept/wontfix/reopen/start/fix) by setting a finding's status.
+  if (pathname === '/api/taskq/findings') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    try {
+      const url = new URL(req.url);
+      const status = url.searchParams.get('status') ?? undefined;
+      const type = url.searchParams.get('type') ?? undefined;
+      const severity = url.searchParams.get('severity') ?? undefined;
+      const db = getTaskqDb();
+      const findings = listFindings(db, {
+        openOnly: url.searchParams.get('open') === '1',
+        status: status && isFindingStatus(status) ? status : undefined,
+        type: type || undefined,
+        severity: (severity as FindingSeverity) || undefined,
+      });
+      return json({ findings, summary: findingsSummary(db) });
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'failed to read findings', 500);
+    }
+  }
+  const fst = pathname.match(/^\/api\/taskq\/findings\/(\d+)\/status$/);
+  if (fst) {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    const id = Number(fst[1]);
+    const body = await readJsonBody<{ status?: string; note?: string | null }>(req);
+    if (!body?.status || !isFindingStatus(body.status)) {
+      return jsonError('status must be one of open, in_progress, fixed, accepted, wontfix', 400);
+    }
+    try {
+      const db = getTaskqDb();
+      setFindingStatus(db, id, body.status, body.note ?? undefined);
+      return json({ findings: listFindings(db), summary: findingsSummary(db) });
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'findings write failed', 400);
     }
   }
 

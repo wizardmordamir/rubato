@@ -2,8 +2,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { TaskqBoard } from '../shared/taskq';
-import { __resetTaskqDbForTests } from './taskqDb';
+import { recordFinding } from 'cwip/taskq';
+import type { FindingRow, FindingsSummary, TaskqBoard } from '../shared/taskq';
+import { __resetTaskqDbForTests, getTaskqDb } from './taskqDb';
 import { handleTaskqApi } from './taskqRoutes';
 
 let dir: string;
@@ -12,7 +13,9 @@ const prevHome = process.env.TASKQ_HOME;
 
 const call = (method: string, path: string, body?: unknown) =>
   handleTaskqApi(
-    path,
+    // Mirror the router: it passes the URL's pathname (query stripped); the handler
+    // reads the query off req.url. Passing `path` verbatim would break a `?…` match.
+    new URL(`http://x${path}`).pathname,
     new Request(`http://x${path}`, {
       method,
       headers: body ? { 'content-type': 'application/json' } : {},
@@ -70,9 +73,7 @@ describe('taskq routes', () => {
   });
 
   test('accepts the draft status (owner pre-queue, not auto-claimed)', async () => {
-    const board = await boardOf(
-      await call('POST', '/api/taskq/tasks', { draft: { title: 'idea', status: 'draft' } }),
-    );
+    const board = await boardOf(await call('POST', '/api/taskq/tasks', { draft: { title: 'idea', status: 'draft' } }));
     expect(board.counts.draft).toBe(1);
     expect(board.tasks[0].status).toBe('draft');
   });
@@ -198,5 +199,40 @@ describe('taskq routes', () => {
     // logs endpoint returns a shape even with no log file
     const logs = (await (await call('GET', '/api/taskq/logs')).json()) as { lines: string[] };
     expect(Array.isArray(logs.lines)).toBe(true);
+  });
+
+  test('findings: GET list + summary, ?open filter, and owner triage via /status', async () => {
+    // Seed two findings via the engine (the detector path); one stays open.
+    const db = getTaskqDb();
+    const drift = recordFinding(db, { type: 'drift', location: 'a.ts', description: 'one', severity: 'high' });
+    recordFinding(db, { type: 'cve', location: 'b.ts', description: 'two', severity: 'critical' }, { fixTask: false });
+
+    const listed = (await (await call('GET', '/api/taskq/findings')).json()) as {
+      findings: FindingRow[];
+      summary: FindingsSummary;
+    };
+    expect(listed.findings.length).toBe(2);
+    expect(listed.summary.total).toBe(2);
+    expect(listed.summary.open).toBe(2);
+    // The drift finding auto-filed a fix task; the cve one did not.
+    expect(listed.findings.find((f) => f.type === 'drift')?.fix_task).toBe(drift.fixTaskId);
+    expect(listed.findings.find((f) => f.type === 'cve')?.fix_task).toBeNull();
+
+    // Accept the drift finding → terminal, never re-flagged.
+    const accepted = (await (
+      await call('POST', `/api/taskq/findings/${drift.finding.id}/status`, { status: 'accepted', note: 'optimal' })
+    ).json()) as { findings: FindingRow[]; summary: FindingsSummary };
+    expect(accepted.summary.byStatus.accepted).toBe(1);
+    expect(accepted.findings.find((f) => f.id === drift.finding.id)?.note).toBe('optimal');
+
+    // ?open=1 now excludes the accepted one.
+    const open = (await (await call('GET', '/api/taskq/findings?open=1')).json()) as { findings: FindingRow[] };
+    expect(open.findings.length).toBe(1);
+    expect(open.findings[0].type).toBe('cve');
+
+    // A bad status is rejected.
+    expect((await call('POST', `/api/taskq/findings/${drift.finding.id}/status`, { status: 'bogus' })).status).toBe(
+      400,
+    );
   });
 });

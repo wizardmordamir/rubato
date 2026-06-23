@@ -65,11 +65,13 @@ import { useConfirm } from "../confirm";
 import { useToast } from "../toast";
 import { ForgePage } from "./ForgePage";
 import { OllamaPage } from "./OllamaPage";
+import { FindingsLedgerPage } from "./FindingsLedgerPage";
 import { OrchestrationProcessingPage } from "./OrchestrationProcessingPage";
 
-type TaskqTab = "board" | "forge" | "ollama" | "workers" | "settings" | "usage" | "processing";
+type TaskqTab = "board" | "forge" | "ollama" | "workers" | "settings" | "usage" | "processing" | "findings";
 const TASKQ_TABS: readonly { key: TaskqTab; label: string }[] = [
   { key: "board", label: "Board" },
+  { key: "findings", label: "Findings" },
   { key: "forge", label: "Forge" },
   { key: "ollama", label: "Ollama" },
   { key: "workers", label: "Workers" },
@@ -79,6 +81,7 @@ const TASKQ_TABS: readonly { key: TaskqTab; label: string }[] = [
 ];
 const VALID_TABS = new Set<string>([
   "board",
+  "findings",
   "forge",
   "ollama",
   "workers",
@@ -478,6 +481,7 @@ export function TaskqPage() {
         {tab === "forge" && <ForgePage embedded />}
         {tab === "ollama" && <OllamaPage embedded />}
         {tab === "processing" && <OrchestrationProcessingPage embedded />}
+        {tab === "findings" && <FindingsLedgerPage embedded />}
       </div>
 
       {builder && (

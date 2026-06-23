@@ -1763,6 +1763,11 @@ export type {
   CcusageReport as TaskqCcusageReport,
   OpenClarification as TaskqClarification,
   ComprehensiveClaudeReport as TaskqClaudeTelemetry,
+  FindingRow as TaskqFinding,
+  FindingSeverity as TaskqFindingSeverity,
+  FindingStatus as TaskqFindingStatus,
+  FindingsSummary as TaskqFindingsSummary,
+  TaskqFindingsResult,
   NewTask as TaskqNewTask,
   Position as TaskqPosition,
   TaskPatch as TaskqPatch,
@@ -1781,11 +1786,14 @@ export {
 } from "@shared/taskq";
 import type {
   BucketState,
+  FindingSeverity,
+  FindingStatus,
   NewTask,
   OpenClarification,
   Position,
   TaskPatch,
   TaskqBoard,
+  TaskqFindingsResult,
   TaskqUsageSnapshot,
   TaskStatus,
 } from "@shared/taskq";
@@ -1846,6 +1854,28 @@ export const answerTaskqClarification = (taskId: number, answer: string) =>
     `/api/taskq/clarifications/${taskId}/answer`,
     { answer },
   );
+
+/**
+ * Continuous-improvement findings ledger: list (newest first) + the summary rollup.
+ * Optional filters narrow the list server-side (`open` = open + in_progress only).
+ */
+export const fetchTaskqFindings = (filters?: {
+  status?: FindingStatus;
+  type?: string;
+  severity?: FindingSeverity;
+  open?: boolean;
+}) => {
+  const q = new URLSearchParams();
+  if (filters?.status) q.set("status", filters.status);
+  if (filters?.type) q.set("type", filters.type);
+  if (filters?.severity) q.set("severity", filters.severity);
+  if (filters?.open) q.set("open", "1");
+  const qs = q.toString();
+  return getJson<TaskqFindingsResult>(`/api/taskq/findings${qs ? `?${qs}` : ""}`);
+};
+/** Owner triage: set a finding's status (accept/wontfix/reopen/start/fix), optional note. */
+export const setTaskqFindingStatus = (id: number, status: FindingStatus, note?: string) =>
+  postJson<TaskqFindingsResult>(`/api/taskq/findings/${id}/status`, { status, note });
 
 export interface TaskqDrainerStatus {
   watchdogLoaded: boolean;

@@ -4,7 +4,14 @@
  * into the browser bundle) plus the board shape the server returns.
  */
 
-import type { CcusageReport, ComprehensiveClaudeReport, TaskRow, TaskStatus } from 'cwip/taskq';
+import type {
+  CcusageReport,
+  ComprehensiveClaudeReport,
+  FindingRow,
+  FindingsSummary,
+  TaskRow,
+  TaskStatus,
+} from 'cwip/taskq';
 
 export type {
   BucketState,
@@ -12,7 +19,13 @@ export type {
   CcusageModelBreakdown,
   CcusageReport,
   ComprehensiveClaudeReport,
+  FindingRow,
+  FindingSeverity,
+  FindingStatus,
+  FindingsSummary,
+  FindingType,
   MetricTier,
+  NewFinding,
   NewTask,
   OpenClarification,
   PeriodMetrics,
@@ -22,6 +35,16 @@ export type {
   TaskStatus,
   ThinkLevel,
 } from 'cwip/taskq';
+
+/**
+ * Wire shape of the continuous-improvement findings ledger served by
+ * `/api/taskq/findings`: the matching findings (newest first) plus the rollup the
+ * panel renders (totals + counts by status/severity/type).
+ */
+export interface TaskqFindingsResult {
+  findings: FindingRow[];
+  summary: FindingsSummary;
+}
 
 /** Where the last reading from a live-usage source stands. */
 export type UsageSourceStatus = 'live' | 'fallback' | 'never';
