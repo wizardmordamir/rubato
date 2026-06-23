@@ -104,6 +104,31 @@ export function capacitySnapshot(db: TaskqDb, config?: TaskqConfig): CapacitySna
   // usage estimator reduce the pool toward the schedule's recommendation.
   const effectiveJobs = cfg.throttle ? Math.min(maxJobs, decision.recommendedJobs) : maxJobs;
 
+  // `scheduleDecision` is throttle-agnostic — it always returns the adaptive
+  // recommendation (shrink to `recommendedJobs`, prefer light models) from the usage
+  // estimate. In MAXIMIZE mode that recommendation is NOT applied: the full pool runs
+  // at its configured models. Report a decision that matches what actually happens, so
+  // the Workers tab doesn't read "throttle to 1 worker + light models" (a `preferLight`
+  // amber "Throttled" badge) while every worker is in fact running. `recommendedJobs`
+  // stays the raw estimate so the panel can still note what the estimate *would* do.
+  const reportedDecision: CapacityScheduleDecision = cfg.throttle
+    ? {
+        paused: decision.paused,
+        recommendedJobs: decision.recommendedJobs,
+        preferLight: decision.preferLight,
+        burnExpiring: decision.burnExpiring,
+        reason: decision.reason,
+      }
+    : {
+        paused: false,
+        recommendedJobs: decision.recommendedJobs,
+        preferLight: false,
+        burnExpiring: decision.burnExpiring,
+        reason: decision.preferLight
+          ? `maximize — running all ${maxJobs} workers at configured models; per-task limit-backoff absorbs lockouts (the estimate alone would ${decision.reason})`
+          : `maximize — running all ${maxJobs} workers; ${decision.reason}`,
+      };
+
   const workerSlots: CapacityWorkerSlot[] = Array.from({ length: maxJobs }, (_, i) => ({
     index: i,
     models: perWorkerFilters[i]?.models ?? null,
