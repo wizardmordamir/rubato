@@ -57,7 +57,11 @@ export interface CapacitySnapshot {
   decision: CapacityScheduleDecision;
   /** Total worker slots (fleet total or config.jobs). */
   maxJobs: number;
-  /** min(maxJobs, decision.recommendedJobs) — how many workers the next drain will spawn. */
+  /**
+   * How many workers the next drain will spawn. MAXIMIZE (config.throttle=false,
+   * the default) ⇒ `maxJobs` (full pool, no adaptive shrink). Throttle on ⇒
+   * `min(maxJobs, decision.recommendedJobs)` (the adaptive estimator shrinks it).
+   */
   effectiveJobs: number;
   /** One entry per worker slot with its model filter. */
   workerSlots: CapacityWorkerSlot[];
@@ -95,7 +99,10 @@ export function capacitySnapshot(db: TaskqDb, config?: TaskqConfig): CapacitySna
   const fleetMode = (cfg.fleet?.length ?? 0) > 0;
 
   const decision = scheduleDecision(buckets, { maxJobs, baseJobs: cfg.jobs, pauseOnExhausted: false });
-  const effectiveJobs = Math.min(maxJobs, decision.recommendedJobs);
+  // MAXIMIZE by default: run the full pool and let the per-task limit-backoff (not a
+  // shrinking pool) handle lockouts. Only when `throttle` is on does the adaptive
+  // usage estimator reduce the pool toward the schedule's recommendation.
+  const effectiveJobs = cfg.throttle ? Math.min(maxJobs, decision.recommendedJobs) : maxJobs;
 
   const workerSlots: CapacityWorkerSlot[] = Array.from({ length: maxJobs }, (_, i) => ({
     index: i,

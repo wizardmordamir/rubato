@@ -1892,6 +1892,8 @@ export interface TaskqConfig {
   think?: string;
   fast?: boolean;
   fleet?: TaskqFleetTier[];
+  /** Adaptive pool-shrink toggle. Default false = MAXIMIZE (run the full pool, no shrink). */
+  throttle: boolean;
   leaseTtlMs: number;
   /** Hard ceiling (ms) on one worker's agent run — kills a hung agent so it can't wedge the drain. */
   taskTimeoutMs: number;
@@ -1908,6 +1910,7 @@ export interface TaskqConfigPatch {
   think?: string;
   fast?: boolean;
   fleet?: TaskqFleetTier[] | null;
+  throttle?: boolean;
   leaseTtlMs?: number;
   taskTimeoutMs?: number;
   triageEnabled?: boolean;

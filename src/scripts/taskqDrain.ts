@@ -121,10 +121,16 @@ async function main(): Promise<void> {
   const stopFile = join(taskqHome(), '.stop');
   const lastFireFile = join(taskqHome(), '.last-fire');
 
-  // Recompute the drain plan (per-worker tier filters + capacity-throttled job
-  // count) from the CURRENT config + token buckets. Called live on every
-  // supervisor tick so a mid-run change — the user bumps JOBS, edits fleet
-  // tiers, or capacity frees up — takes effect WITHOUT restarting the drain.
+  // Recompute the drain plan (per-worker tier filters + job count) from the
+  // CURRENT config + token buckets. Called live on every supervisor tick so a
+  // mid-run change — the user bumps JOBS, edits fleet tiers, toggles throttle, or
+  // capacity frees up — takes effect WITHOUT restarting the drain.
+  //
+  // MAXIMIZE by default (cfg.throttle=false): run the full jobs/fleet pool, no
+  // adaptive shrink — a lockout rejects calls without charging, so the full pool
+  // costs nothing extra and the per-task limit-backoff (not a shrinking pool)
+  // absorbs limits. With throttle on, the usage estimator reduces the pool toward
+  // the schedule's recommendation as limits approach.
   const planDrain = () => {
     const cfg = loadTaskqConfig();
     const perWorker: ClaimFilters[] = [];
@@ -137,18 +143,22 @@ async function main(): Promise<void> {
       baseJobs: cfg.jobs,
       pauseOnExhausted: false,
     });
-    return { perWorker, maxJobs, decision, jobs: Math.min(maxJobs, decision.recommendedJobs) };
+    const jobs = cfg.throttle ? Math.min(maxJobs, decision.recommendedJobs) : maxJobs;
+    return { perWorker, maxJobs, decision, jobs, throttle: cfg.throttle };
   };
 
   // Capacity snapshot for the empty-queue self-heal probe (start of run only).
   const wasExhausted: BucketState[] = allBucketStates(db, Date.now()).filter((b) => b.remaining <= 0);
 
   const plan0 = planDrain();
+  // When throttle is off (MAXIMIZE) the pool isn't shrunk, so don't advertise a
+  // "prefer light" throttle even if capacity is scarce — the full pool is running.
+  const throttledNow = plan0.throttle && plan0.decision.preferLight;
   process.stdout.write(
-    `${ts()} taskq drain: ${plan0.jobs}/${plan0.maxJobs} worker(s)${dryRun ? ' [DRY RUN]' : ''} — ${plan0.decision.reason}${plan0.decision.preferLight ? ' (prefer light)' : ''}, db=${taskqHome()}\n`,
+    `${ts()} taskq drain: ${plan0.jobs}/${plan0.maxJobs} worker(s)${dryRun ? ' [DRY RUN]' : ''} — ${plan0.decision.reason}${throttledNow ? ' (prefer light)' : plan0.throttle ? '' : ' (maximize)'}, db=${taskqHome()}\n`,
   );
 
-  const drainDecision = plan0.decision.preferLight ? 'throttled' : plan0.decision.burnExpiring ? 'burning' : 'normal';
+  const drainDecision = throttledNow ? 'throttled' : plan0.decision.burnExpiring ? 'burning' : 'normal';
   const drainRunId = insertDrainRun(db, {
     startedAt: Date.now(),
     decision: drainDecision,

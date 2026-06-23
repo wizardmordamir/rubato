@@ -41,6 +41,7 @@ const task = (over: Partial<TaskRow> = {}): TaskRow => ({
 const config = (over: Partial<TaskqConfig> = {}): TaskqConfig => ({
   jobs: 1,
   model: 'opus',
+  throttle: false,
   leaseTtlMs: 60_000,
   taskTimeoutMs: 60_000,
   maxAttempts: 3,

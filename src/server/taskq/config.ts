@@ -30,6 +30,18 @@ export interface TaskqConfig {
   fast?: boolean;
   /** Optional fleet: distinct per-model worker pools (overrides `jobs`). */
   fleet?: FleetTier[];
+  /**
+   * Adaptive pool-shrink toggle. Default **false = MAXIMIZE**: the drain runs the
+   * full jobs/fleet pool every pass and the usage estimator never shrinks it — a
+   * lockout rejects calls without charging, so running the full pool while limits
+   * are tight costs nothing extra and keeps the queue flowing. When `true`, the
+   * old behavior returns: `effectiveJobs = min(maxJobs, recommendedJobs)`, so the
+   * adaptive estimator throttles the pool toward 1 light worker as limits approach.
+   * Either way the per-task limit-backoff still applies (a worker that hits a usage
+   * limit releases + retries its task with backoff); throttle only governs the POOL
+   * SIZE. Owner throttles by lowering `jobs` or setting `throttle: true`.
+   */
+  throttle: boolean;
   /** Lease TTL ms (worker must heartbeat within this). */
   leaseTtlMs: number;
   /**
@@ -81,6 +93,7 @@ export type TaskqConfigPatch = Partial<
     | 'think'
     | 'fast'
     | 'fleet'
+    | 'throttle'
     | 'leaseTtlMs'
     | 'taskTimeoutMs'
     | 'maxAttempts'
@@ -98,6 +111,7 @@ function defaults(): TaskqConfig {
   return {
     jobs: 2,
     model: 'opus',
+    throttle: false,
     leaseTtlMs: 15 * 60_000,
     taskTimeoutMs: 2 * 60 * 60_000,
     maxAttempts: DEFAULT_MAX_ATTEMPTS,
@@ -156,6 +170,10 @@ export function validateConfigPatch(patch: TaskqConfigPatch): TaskqConfigPatch {
   if (patch.fast !== undefined) {
     if (typeof patch.fast !== 'boolean') throw new Error('fast must be boolean');
     out.fast = patch.fast;
+  }
+  if (patch.throttle !== undefined) {
+    if (typeof patch.throttle !== 'boolean') throw new Error('throttle must be boolean');
+    out.throttle = patch.throttle;
   }
   if (patch.leaseTtlMs !== undefined) {
     if (!Number.isInteger(patch.leaseTtlMs) || patch.leaseTtlMs < 60_000) throw new Error('leaseTtlMs must be ≥ 60000');
@@ -249,6 +267,7 @@ export function saveTaskqConfig(patch: TaskqConfigPatch): TaskqConfig {
   if (clean.model !== undefined) raw.model = clean.model;
   if ('think' in clean) raw.think = clean.think;
   if (clean.fast !== undefined) raw.fast = clean.fast;
+  if (clean.throttle !== undefined) raw.throttle = clean.throttle;
   if (clean.leaseTtlMs !== undefined) raw.leaseTtlMs = clean.leaseTtlMs;
   if (clean.taskTimeoutMs !== undefined) raw.taskTimeoutMs = clean.taskTimeoutMs;
   if (clean.maxAttempts !== undefined) raw.maxAttempts = clean.maxAttempts;

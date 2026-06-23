@@ -2748,6 +2748,7 @@ function ConfigForm({ config, interval, watchdogLoaded }: { config: TaskqConfig;
   const [model, setModel] = useState(config.model);
   const [think, setThink] = useState(config.think ?? "");
   const [fast, setFast] = useState(!!config.fast);
+  const [throttle, setThrottle] = useState(!!config.throttle);
   const [ttlMin, setTtlMin] = useState(Math.round(config.leaseTtlMs / 60000));
   const [timeoutMin, setTimeoutMin] = useState(Math.round(config.taskTimeoutMs / 60000));
   const [triage, setTriage] = useState(!!config.triage?.enabled);
@@ -2761,6 +2762,7 @@ function ConfigForm({ config, interval, watchdogLoaded }: { config: TaskqConfig;
         model,
         think,
         fast,
+        throttle,
         leaseTtlMs: ttlMin * 60000,
         taskTimeoutMs: timeoutMin * 60000,
         triageEnabled: triage,
@@ -2830,6 +2832,12 @@ function ConfigForm({ config, interval, watchdogLoaded }: { config: TaskqConfig;
             <label className="flex cursor-help items-center gap-2 text-sm">
               <input type="checkbox" checked={triage} onChange={(e) => setTriage(e.target.checked)} className="h-4 w-4" />
               Auto-triage (grade blank tasks + decompose epics)
+            </label>
+          </Tooltip>
+          <Tooltip multiline content="Throttle: shrink the worker pool toward 1 light-model worker as token limits approach (the old adaptive behavior). OFF (default) = MAXIMIZE: always run the full jobs/fleet pool — a lockout rejects calls without charging, so the full pool costs nothing extra and the per-task limit-backoff (not a shrinking pool) absorbs limits. Throttle by lowering Jobs, or turn this on.">
+            <label className="flex cursor-help items-center gap-2 text-sm">
+              <input type="checkbox" checked={throttle} onChange={(e) => setThrottle(e.target.checked)} className="h-4 w-4" />
+              Throttle pool on low capacity {throttle ? "" : "(off → maximize)"}
             </label>
           </Tooltip>
         </div>
