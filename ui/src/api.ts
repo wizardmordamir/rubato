@@ -1810,6 +1810,9 @@ export const moveTaskqTask = (id: number, position: Position) =>
 /** Enqueue a copy of a template task as a ready one-shot. */
 export const enqueueTaskqTemplate = (id: number) =>
   postJson<{ board: TaskqBoard; id: number }>(`/api/taskq/tasks/${id}/enqueue`, {});
+/** Duplicate a task into a new owner draft (never auto-claimed until queued). */
+export const duplicateTaskqTask = (id: number) =>
+  postJson<{ board: TaskqBoard; id: number }>(`/api/taskq/tasks/${id}/duplicate`, {});
 /** Current token-usage bucket capacities. */
 export const fetchTaskqUsage = () => getJson<{ buckets: BucketState[] }>("/api/taskq/usage");
 /** Live real-usage snapshot: `/usage` telemetry + ccusage cost, each with status. */

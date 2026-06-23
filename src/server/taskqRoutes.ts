@@ -480,6 +480,37 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
     }
   }
 
+  // Duplicate: clone any task into a fresh owner DRAFT (never auto-claimed until
+  // the owner queues it). The copy carries the authoring content but not the
+  // unique slug or the saved/template/recurrence wiring — it's a clean editable
+  // draft, placed right after the original.
+  const dupm = pathname.match(/^\/api\/taskq\/tasks\/(\d+)\/duplicate$/);
+  if (dupm) {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    const id = Number(dupm[1]);
+    try {
+      const db = getTaskqDb();
+      const src = getTask(db, id);
+      if (!src) return jsonError(`task ${id} not found`, 404);
+      const copy: NewTask = {
+        title: src.title,
+        status: 'draft',
+        body: src.body ?? undefined,
+        model: src.model ?? undefined,
+        think: src.think ?? undefined,
+        repo: src.repo ?? undefined,
+        group_key: src.group_key ?? undefined,
+        serial_group: src.serial_group ?? undefined,
+        noop_ok: src.noop_ok === 1,
+        needs: getNeeds(db, id),
+      };
+      const newId = addTask(db, copy, { at: 'after', anchorId: id });
+      return json({ board: board(), id: newId });
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'duplicate failed', 400);
+    }
+  }
+
   // /api/taskq/tasks/:id  (+ /status, /move)
   const m = pathname.match(/^\/api\/taskq\/tasks\/(\d+)(\/status|\/move)?$/);
   if (m) {

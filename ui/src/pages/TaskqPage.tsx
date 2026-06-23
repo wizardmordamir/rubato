@@ -10,6 +10,7 @@ import {
   probeTaskqCapacity,
   createTaskqTask,
   deleteTaskqTask,
+  duplicateTaskqTask,
   enqueueTaskqTemplate,
   fetchTaskqBoard,
   fetchTaskqCapacity,
@@ -96,7 +97,7 @@ const VALID_TABS = new Set<string>([
  */
 
 /** Statuses where drag-reorder changes claim priority (running/done are not). */
-const REORDERABLE = new Set<TaskqStatus>(["ready", "on_hold", "not_ready", "blocked", "pending_triage"]);
+const REORDERABLE = new Set<TaskqStatus>(["draft", "ready", "on_hold", "not_ready", "blocked", "pending_triage"]);
 
 /** 8 distinct color palettes for serial group color-coding. */
 const SERIAL_GROUP_COLORS = [
@@ -129,6 +130,7 @@ function findMovedId(oldIds: number[], newIds: number[]): number | null {
 }
 
 const STATUS_TONE: Record<TaskqStatus, "neutral" | "accent" | "success" | "error" | "warn"> = {
+  draft: "neutral",
   pending_triage: "warn",
   ready: "accent",
   claimed: "neutral",
@@ -195,6 +197,14 @@ export function TaskqPage() {
       notify("Template enqueued as a new task", "success");
     },
     onError: (e) => notify(e instanceof Error ? e.message : "enqueue failed", "error"),
+  });
+  const duplicate = useMutation({
+    mutationFn: (id: number) => duplicateTaskqTask(id),
+    onSuccess: (r) => {
+      apply(r.board);
+      notify("Duplicated as a new draft", "success");
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "duplicate failed", "error"),
   });
 
   const [selectMode, setSelectMode] = useState(false);
@@ -326,6 +336,7 @@ export function TaskqPage() {
                       }
                       onRequeue={(t) => status.mutate({ id: t.id, status: "ready" })}
                       onEnqueue={(t) => enqueue.mutate(t.id)}
+                      onDuplicate={(t) => duplicate.mutate(t.id)}
                       {...selectProps}
                     />,
                   ];
@@ -344,6 +355,7 @@ export function TaskqPage() {
                   onHold: (t: TaskqTaskView) => status.mutate({ id: t.id, status: "ready" }),
                   onRequeue: (t: TaskqTaskView) => status.mutate({ id: t.id, status: "ready" }),
                   onEnqueue: (t: TaskqTaskView) => enqueue.mutate(t.id),
+                  onDuplicate: (t: TaskqTaskView) => duplicate.mutate(t.id),
                   ...selectProps,
                 };
                 return [
@@ -472,6 +484,7 @@ function TaskCard({
   onHold,
   onRequeue,
   onEnqueue,
+  onDuplicate,
   dragHandle,
   selectMode,
   isSelected,
@@ -483,6 +496,7 @@ function TaskCard({
   onHold: () => void;
   onRequeue: () => void;
   onEnqueue: () => void;
+  onDuplicate: () => void;
   /** A drag-grip element (from the section's useDragReorder), when reorderable. */
   dragHandle?: React.ReactNode;
   selectMode?: boolean;
@@ -493,6 +507,10 @@ function TaskCard({
   const editable = task.status !== "claimed" && task.status !== "done";
   const isTemplate = task.is_template === 1;
   const isSaved = task.is_saved === 1;
+  // Owner pre-queue draft: never auto-claimed; the owner queues it (→ ready) or
+  // duplicates it. Holding a draft makes no sense (it's the owner's space, not a
+  // worker park), so the Hold toggle is suppressed for drafts.
+  const isDraft = task.status === "draft";
   const sgColor = task.serial_group ? serialGroupColor(task.serial_group) : null;
   const markers = [
     task.model && `model:${task.model}`,
@@ -624,6 +642,11 @@ function TaskCard({
                 Enqueue
               </button>
             )}
+            {isDraft && (
+              <button type="button" onClick={onRequeue} className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
+                Queue
+              </button>
+            )}
             {(task.status === "failed" || task.status === "on_hold") && (
               <button type="button" onClick={onRequeue} className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
                 {isSaved && task.status === "on_hold" ? "Queue now" : "Re-queue"}
@@ -634,9 +657,16 @@ function TaskCard({
                 <button type="button" onClick={onEdit} className="text-xs text-accent hover:underline">
                   Edit
                 </button>
-                <button type="button" onClick={onHold} className="text-xs text-amber-600 hover:underline dark:text-amber-400">
-                  {task.status === "on_hold" ? "Unhold" : "Hold"}
-                </button>
+                {isDraft && (
+                  <button type="button" onClick={onDuplicate} className="text-xs text-gray-600 hover:underline dark:text-gray-400">
+                    Duplicate
+                  </button>
+                )}
+                {!isDraft && (
+                  <button type="button" onClick={onHold} className="text-xs text-amber-600 hover:underline dark:text-amber-400">
+                    {task.status === "on_hold" ? "Unhold" : "Hold"}
+                  </button>
+                )}
                 <button type="button" onClick={onDelete} className="text-xs text-red-600 hover:underline dark:text-red-400">
                   Delete
                 </button>
@@ -686,6 +716,7 @@ function BoardSection({
   onHold,
   onRequeue,
   onEnqueue,
+  onDuplicate,
   selectMode,
   selectedIds,
   onToggleSelect,
@@ -704,6 +735,7 @@ function BoardSection({
   onHold: (t: TaskqTaskView) => void;
   onRequeue: (t: TaskqTaskView) => void;
   onEnqueue: (t: TaskqTaskView) => void;
+  onDuplicate: (t: TaskqTaskView) => void;
   selectMode?: boolean;
   selectedIds?: Set<number>;
   onToggleSelect?: (id: number) => void;
@@ -746,6 +778,7 @@ function BoardSection({
                       onHold={() => onHold(t)}
                       onRequeue={() => onRequeue(t)}
                       onEnqueue={() => onEnqueue(t)}
+                      onDuplicate={() => onDuplicate(t)}
                       selectMode={selectMode}
                       isSelected={selectedIds?.has(t.id)}
                       onToggleSelect={() => onToggleSelect?.(t.id)}
@@ -1053,7 +1086,9 @@ function TaskqBuilderModal({
     return "minutes";
   }
 
-  const [statusV, setStatusV] = useState<TaskqStatus>(task?.status ?? "ready");
+  // New owner-created tasks default to draft — they land in the owner's pre-queue
+  // Drafts section (never auto-claimed) until the owner promotes them → ready.
+  const [statusV, setStatusV] = useState<TaskqStatus>(task?.status ?? (mode === "create" ? "draft" : "ready"));
   const [title, setTitle] = useState(task?.title ?? "");
   const [body, setBody] = useState(task?.body ?? "");
   const derivedTitle = useMemo(() => deriveTaskTitle(body), [body]);

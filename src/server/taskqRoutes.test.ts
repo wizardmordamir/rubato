@@ -69,6 +69,33 @@ describe('taskq routes', () => {
     expect(res.status).toBe(400);
   });
 
+  test('accepts the draft status (owner pre-queue, not auto-claimed)', async () => {
+    const board = await boardOf(
+      await call('POST', '/api/taskq/tasks', { draft: { title: 'idea', status: 'draft' } }),
+    );
+    expect(board.counts.draft).toBe(1);
+    expect(board.tasks[0].status).toBe('draft');
+  });
+
+  test('duplicate clones a task into a new draft, placed after the original', async () => {
+    const { id } = (await (
+      await call('POST', '/api/taskq/tasks', { draft: { title: 'orig', status: 'ready', model: 'sonnet', body: 'b' } })
+    ).json()) as { id: number };
+
+    const dupRes = await call('POST', `/api/taskq/tasks/${id}/duplicate`, {});
+    expect(dupRes.status).toBe(200);
+    const { board, id: newId } = (await dupRes.json()) as { board: TaskqBoard; id: number };
+    expect(newId).not.toBe(id);
+    const copy = board.tasks.find((t) => t.id === newId)!;
+    expect(copy.status).toBe('draft'); // a duplicate is always a fresh owner draft
+    expect(copy.title).toBe('orig');
+    expect(copy.model).toBe('sonnet');
+    expect(board.total).toBe(2);
+
+    // 404 for a missing source.
+    expect((await call('POST', '/api/taskq/tasks/99999/duplicate', {})).status).toBe(404);
+  });
+
   test('rejects an unknown status (400)', async () => {
     const { id } = (await (await call('POST', '/api/taskq/tasks', { draft: { title: 't' } })).json()) as { id: number };
     const res = await call('POST', `/api/taskq/tasks/${id}/status`, { status: 'bogus' });

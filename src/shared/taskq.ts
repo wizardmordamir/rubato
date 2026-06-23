@@ -77,7 +77,12 @@ export interface TaskqBoard {
 // `node:os` (via paths.ts), which can't enter the browser bundle — only its
 // *types* are imported above (erased at build). Keep in sync with the engine.
 
+// Board section order. `draft` leads: it's the owner's pre-queue authoring inbox
+// (new tasks default here), kept distinct from the worker parks below it — in
+// particular separate from `on_hold`, where workers park false-done reverts,
+// manual holds, etc.
 export const TASKQ_STATUSES: TaskStatus[] = [
+  'draft',
   'pending_triage',
   'ready',
   'claimed',
@@ -89,10 +94,21 @@ export const TASKQ_STATUSES: TaskStatus[] = [
   'done',
 ];
 
-/** Statuses the builder may set directly (runtime states are engine-owned). */
-export const TASKQ_AUTHORABLE_STATUSES: TaskStatus[] = ['ready', 'on_hold', 'not_ready', 'pending_triage', 'failed'];
+/**
+ * Statuses the builder may set directly (runtime states are engine-owned).
+ * `draft` leads — the owner authors a draft, then promotes it → ready to queue.
+ */
+export const TASKQ_AUTHORABLE_STATUSES: TaskStatus[] = [
+  'draft',
+  'ready',
+  'on_hold',
+  'not_ready',
+  'pending_triage',
+  'failed',
+];
 
 export const TASKQ_STATUS_LABELS: Record<TaskStatus, string> = {
+  draft: 'Drafts',
   pending_triage: 'Pending triage',
   ready: 'Ready',
   claimed: 'In progress',
