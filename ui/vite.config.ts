@@ -140,6 +140,11 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: env.VITE_PORT ? Number(env.VITE_PORT) : 5175,
+      // Fail LOUD if 5175 is already taken rather than silently hopping to 5176 (which
+      // would leave `localhost:5175` dead or — worse — answered by something else). This
+      // is the orch dashboard the owner depends on at a fixed port, so a collision should
+      // surface immediately instead of the dev server quietly moving.
+      strictPort: true,
       // Bind IPv4 loopback explicitly. Under `bun --bun vite`, Vite's default
       // `localhost` host resolves to IPv6 `[::1]` ONLY, but the rest of the stack
       // (rubato-serve binds 127.0.0.1; the promotion gate's site-smoke harness polls
