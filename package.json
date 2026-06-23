@@ -88,6 +88,7 @@
     "test": "bun test",
     "test:report": "bun run scripts/testReport.ts",
     "done": "bun run scripts/done.ts",
+    "loadcheck": "bun run scripts/loadcheck.ts",
     "e2e": "bun x playwright test -c e2e/playwright.config.ts",
     "e2e:grep": "bun x playwright test -c e2e/playwright.config.ts -g",
     "setup": "bun run scripts/setup.ts",
