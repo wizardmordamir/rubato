@@ -125,7 +125,7 @@ export function capacitySnapshot(db: TaskqDb, config?: TaskqConfig): CapacitySna
         preferLight: false,
         burnExpiring: decision.burnExpiring,
         reason: decision.preferLight
-          ? `maximize — running all ${maxJobs} workers at configured models; per-task limit-backoff absorbs lockouts (the estimate alone would ${decision.reason})`
+          ? `maximize — running all ${maxJobs} workers at configured models; per-task limit-backoff absorbs lockouts (estimate: ${decision.reason})`
           : `maximize — running all ${maxJobs} workers; ${decision.reason}`,
       };
 
@@ -164,13 +164,7 @@ export function capacitySnapshot(db: TaskqDb, config?: TaskqConfig): CapacitySna
     defaultModel: cfg.model,
     configuredJobs: cfg.jobs,
     fleetMode,
-    decision: {
-      paused: decision.paused,
-      recommendedJobs: decision.recommendedJobs,
-      preferLight: decision.preferLight,
-      burnExpiring: decision.burnExpiring,
-      reason: decision.reason,
-    },
+    decision: reportedDecision,
     maxJobs,
     effectiveJobs,
     workerSlots,
