@@ -26,16 +26,20 @@
  * exercised in-process against temp repos by `gate.int.test.ts`.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 // Both are zero-import pure cores — keeps the gate loadable when the rest of rubato/cwip
 // is mid-broken (the whole point of a health watchdog).
 import { buildIsGreen } from './buildOutputGate';
 import {
   type Ancestry,
   ancestryFrom,
+  type CycleDecision,
+  decideCycle,
   decideSystem,
   healReason,
+  isActionSafeWhileBusy,
   type PromoteAction,
+  promoteShaStillVerified,
   type RepoState,
   repoGreen,
 } from './promote';
@@ -50,6 +54,14 @@ export interface GateRepo {
   integ: string;
   /** providers (cwip, cursedbelt) are consumed by ca/ru — build them first. */
   role: 'provider' | 'consumer';
+  /**
+   * Run the HEADLESS RENDER smoke too (anti-white-screen): after a green build + boot, load
+   * the served UI in a real browser and assert the React root mounts cleanly. OPT-IN per repo
+   * (config-driven — NOT hardcoded by name) so an unverified UI (or a repo with no real UI)
+   * never trips it. `ru` is on; `ca` follows once its build+render are verified clean in-repo
+   * (the heal-ca-charts precondition). The injected `runRender` keys off this flag.
+   */
+  renderSmoke?: boolean;
 }
 
 /** A taskq task as the gate needs to see it (for the claimed-skip + heal dedup). */
@@ -115,6 +127,14 @@ export interface GateOptions {
   taskqHome: string;
   /** Decide-and-log only; mutate nothing (no ff/promote/task creation/kick). */
   dry: boolean;
+  /**
+   * STARVATION backstop: force a FULL cycle (the unsafe-while-busy catch-up included) once
+   * this many consecutive cycles have run in `promote-safe` mode (worker active → unsafe
+   * mutations deferred). A continuously-busy queue must still re-sync integration eventually.
+   * `<= 0` disables the backstop (stay promote-safe for as long as workers are active).
+   * Defaults to {@link DEFAULT_FORCE_FULL_EVERY}.
+   */
+  forceFullEvery?: number;
   /** Where heal tasks are read/written. */
   board: GateBoard;
   /** Fire the launchd drainer kick when a heal task is (re)armed. No-op under dry. */
@@ -165,6 +185,12 @@ export interface GateRepoResult {
   rendered: boolean;
   /** The render-smoke result (undefined = not run/inconclusive; true/false = clean/white-screen). */
   renderGreen?: boolean;
+  /**
+   * Was this repo's git mutation DEFERRED this cycle because it's unsafe while a worker may
+   * be mid-land on integration (a `catch-up` ff held back in a `promote-safe` cycle, or a
+   * `promote` whose verified SHA was overtaken)? It re-runs next cycle.
+   */
+  deferred?: boolean;
 }
 
 export type GateOutcome = 'ran' | 'skipped-worker-active' | 'skipped-locked';
@@ -173,8 +199,17 @@ export type GateOutcome = 'ran' | 'skipped-worker-active' | 'skipped-locked';
 export interface GateSummary {
   checkedAt: string;
   outcome: GateOutcome;
+  /**
+   * How much of the cycle ran: `full` (no workers, or the starvation backstop fired) vs
+   * `promote-safe` (a worker was active → verified + promoted, deferring the unsafe catch-up).
+   */
+  cycleMode: CycleDecision['mode'];
+  /** The cycle-gating decision's reason (for logs/status). */
+  cycleReason: string;
   systemGreen: boolean;
   promoted: string[];
+  /** Repos whose git mutation was deferred this cycle (catch-up/promote held; runs next cycle). */
+  deferred: string[];
   kicked: boolean;
   repos: Record<string, GateRepoResult>;
   /** Legacy per-repo main status (kept so existing UI/readers don't break). */
@@ -182,6 +217,9 @@ export interface GateSummary {
 }
 
 const LOCK_STALE_MS = 25 * 60 * 1000;
+
+/** Default starvation backstop: force a full cycle after this many consecutive deferrals. */
+export const DEFAULT_FORCE_FULL_EVERY = 5;
 
 /** Build the enriched PATH so launchd's minimal env can still reach bun/node/git. */
 export function enrichedPath(home: string, current = process.env.PATH ?? ''): string {
@@ -203,8 +241,12 @@ export function defaultGateRepos(gh: string): GateRepo[] {
   return [
     { name: 'cwip', main: `${gh}/cwip`, integ: `${gh}/cwip-integration`, role: 'provider' },
     { name: 'cursedbelt', main: `${gh}/cursedbelt`, integ: `${gh}/cursedbelt-integration`, role: 'provider' },
+    // ca render-smoke stays OFF until heal-ca-charts makes ca's build+render verifiably clean
+    // (ca-integration build is still red on a cursedbelt export gap); flip `renderSmoke: true`
+    // here once verified, so a ca white screen blocks promotion just like ru's.
     { name: 'ca', main: `${gh}/cursedalchemy`, integ: `${gh}/cursedalchemy-integration`, role: 'consumer' },
-    { name: 'ru', main: `${gh}/rubato`, integ: `${gh}/rubato-integration`, role: 'consumer' },
+    // ru carries a real React UI verified in-repo → render-smoke it (anti-white-screen).
+    { name: 'ru', main: `${gh}/rubato`, integ: `${gh}/rubato-integration`, role: 'consumer', renderSmoke: true },
   ];
 }
 
@@ -265,6 +307,8 @@ interface RepoFacts extends RepoState {
   rendered: boolean;
   /** Render-smoke detail + recent output (the gold when a render fails). */
   renderTail?: string;
+  /** This cycle deferred this repo's git mutation (unsafe while a worker is mid-land). */
+  deferred: boolean;
 }
 
 /**
@@ -297,18 +341,49 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
   const emptySummary = (outcome: GateOutcome): GateSummary => ({
     checkedAt: ts(),
     outcome,
+    cycleMode: 'full',
+    cycleReason: outcome,
     systemGreen: false,
     promoted: [],
+    deferred: [],
     kicked: false,
     repos: {},
     mainStatus: {},
   });
 
-  // ── 0. skip if a worker is active (a real ff/promote must never race a landing).
-  // --dry mutates nothing, so it may run alongside workers for inspection.
-  if (!dry && board.list().some((t) => t.status === 'claimed')) {
-    log('skip: task(s) claimed (worker active)');
-    return emptySummary('skipped-worker-active');
+  // ── 0. CYCLE GATING — keep VERIFYING + PROMOTING even while workers are active.
+  // The OLD gate skipped its ENTIRE cycle whenever ANY task was claimed ("don't race a
+  // worker's landing"), which STARVED it on a continuously-busy queue: main was never
+  // re-verified or re-promoted and sat stale + broken. Now a worker-active cycle runs in
+  // `promote-safe` mode — it still classifies, builds, smokes/renders, does the ATOMIC
+  // promote (a ff of MAIN, the promotion-only branch workers never touch, to a SPECIFIC
+  // gate-verified integration SHA) and queues heals, but DEFERS the one unsafe-while-busy
+  // mutation: `catch-up` (a ff of the INTEGRATION branch a worker may be landing on). A
+  // starvation backstop forces a `full` cycle after N consecutive deferrals. The pure
+  // decision is `decideCycle`; the persisted counter lives next to the lock/status files.
+  // --dry mutates nothing, so it computes + reports the would-be cycle without persisting.
+  const workersActive = board.list().some((t) => t.status === 'claimed');
+  const deferralsPath = `${opts.taskqHome}/.mainhealth-deferrals`;
+  const readDeferrals = (): number => {
+    try {
+      const n = Number.parseInt(readFileSync(deferralsPath, 'utf8').trim(), 10);
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    } catch {
+      return 0;
+    }
+  };
+  const cyc = decideCycle({
+    workersActive,
+    consecutiveDeferrals: readDeferrals(),
+    forceFullEvery: opts.forceFullEvery ?? DEFAULT_FORCE_FULL_EVERY,
+  });
+  if (workersActive || cyc.mode !== 'full') log(`cycle ${cyc.mode}: ${cyc.reason}`);
+  if (!dry) {
+    try {
+      writeFileSync(deferralsPath, String(cyc.nextConsecutiveDeferrals));
+    } catch {
+      /* best-effort — the counter is an optimization, never a correctness gate */
+    }
   }
 
   // lock so a slow build check never overlaps a prior run (stale-recovers after 25m)
@@ -322,7 +397,7 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
   }
 
   try {
-    return await cycle();
+    return await cycle(cyc);
   } finally {
     if (!dry) {
       try {
@@ -333,7 +408,7 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
     }
   }
 
-  async function cycle(): Promise<GateSummary> {
+  async function cycle(cyc: CycleDecision): Promise<GateSummary> {
     // ── 1. self-heal: cwip dist freshness + first-party symlink drift (production only).
     if (opts.selfHealCwip && !dry) {
       const rebuildIfStale = (dir: string | undefined, label: string) => {
@@ -387,6 +462,7 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
         built: false,
         smoked: false,
         rendered: false,
+        deferred: false,
       };
     });
     const factOf = (name: string) => facts.find((f) => f.repo === name)!;
@@ -546,6 +622,15 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
     for (const r of repos) {
       const f = factOf(r.name);
       const action: PromoteAction = actions.get(r.name) ?? 'none';
+      // PROMOTE-SAFE gating: while a worker may be landing on integration, DEFER the one
+      // unsafe mutation (catch-up — a ff of the integration branch). Everything else
+      // (promote, hold-red, diverged, none) is safe and still runs. The starvation backstop
+      // (`cyc.runUnsafeMutations`) lets it through after N consecutive deferrals.
+      if (!cyc.runUnsafeMutations && !isActionSafeWhileBusy(action)) {
+        f.deferred = true;
+        log(`${r.name}: ${action} DEFERRED — promote-safe cycle (a worker may be landing on integration); runs next full cycle`);
+        continue;
+      }
       switch (action) {
         case 'none':
           break;
@@ -566,6 +651,19 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
           if (dry) {
             log(`${r.name}: [dry] would PROMOTE main → refactor/integration (${f.intSha.slice(0, 8)}) [system green]`);
             promoted.push(r.name);
+            break;
+          }
+          // ATOMIC-PROMOTE invariant: a worker may have landed on integration since we
+          // classified + built it, moving the tip past the SHA we verified. Re-read the tip;
+          // only ff main to the SAME sha whose build/smoke/render we just vouched for —
+          // otherwise defer to next cycle (which re-classifies + rebuilds the new tip). Safe
+          // to run concurrently with workers precisely because it's pinned to a verified SHA.
+          const nowInt = rev('refactor/integration', r.main);
+          if (!promoteShaStillVerified(f.intSha, nowInt)) {
+            f.deferred = true;
+            log(
+              `${r.name}: promote DEFERRED — integration advanced ${f.intSha.slice(0, 8)}→${nowInt.slice(0, 8)} since we verified it (worker landed mid-cycle); re-verify next cycle`,
+            );
             break;
           }
           const res = git(['merge', '--ff-only', f.intSha], r.main);
@@ -645,13 +743,19 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
     // ── kick the drainer if a heal task was (re)armed ──
     if (!dry && kicked) opts.kick();
 
-    log(`cycle done: systemGreen=${systemGreen} promoted=[${promoted.join(',')}] ${JSON.stringify(mainStatus)}`);
+    const deferred = facts.filter((f) => f.deferred).map((f) => f.repo);
+    log(
+      `cycle done [${cyc.mode}]: systemGreen=${systemGreen} promoted=[${promoted.join(',')}] deferred=[${deferred.join(',')}] ${JSON.stringify(mainStatus)}`,
+    );
 
     return {
       checkedAt: ts(),
       outcome: 'ran',
+      cycleMode: cyc.mode,
+      cycleReason: cyc.reason,
       systemGreen,
       promoted,
+      deferred,
       kicked,
       repos: Object.fromEntries(
         facts.map((f) => [
@@ -665,6 +769,7 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
             smokeGreen: f.smokeGreen,
             rendered: f.rendered,
             renderGreen: f.renderGreen,
+            deferred: f.deferred,
           },
         ]),
       ),

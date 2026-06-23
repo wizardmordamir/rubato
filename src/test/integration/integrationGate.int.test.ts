@@ -23,7 +23,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -275,5 +275,109 @@ describe('promotion gate — runGate against temp repos', () => {
     expect(rev('main', app.main)).toBe(appInt); // inconclusive render → does NOT hold promotion
     expect(summary.repos.app.renderGreen).toBeUndefined();
     expect(summary.promoted).toContain('app');
+  });
+});
+
+/**
+ * Anti-starvation cycle gating: the gate must keep VERIFYING + PROMOTING while a worker is
+ * active, deferring ONLY the unsafe-while-busy mutation (catch-up — a ff of the integration
+ * branch a worker may be landing on), and force a full cycle after N consecutive deferrals.
+ * Self-contained git state (its own temp root + board) so it doesn't perturb the A–J flow.
+ */
+describe('promotion gate — anti-starvation cycle gating (verify + promote while workers active)', () => {
+  let ROOT2: string;
+  let TQ2: string;
+  let fp2: { main: string; integ: string };
+  let app2: { main: string; integ: string };
+  let repos2: GateRepo[];
+
+  const makeRepo2 = (name: string): { main: string; integ: string } => {
+    const main = join(ROOT2, name);
+    const integ = join(ROOT2, `${name}-integration`);
+    mkdirSync(main, { recursive: true });
+    git(['init', '-q', '-b', 'main'], main);
+    git(['config', 'user.email', 't@t'], main);
+    git(['config', 'user.name', 'test'], main);
+    git(['config', 'commit.gpgsign', 'false'], main);
+    writeFileSync(`${main}/package.json`, JSON.stringify({ name, scripts: { build: 'test ! -f BROKEN' } }, null, 2));
+    writeFileSync(`${main}/file.txt`, 'v1\n');
+    git(['add', '-A'], main);
+    git(['commit', '-qm', 'init'], main);
+    git(['branch', 'refactor/integration'], main);
+    git(['worktree', 'add', '-q', integ, 'refactor/integration'], main);
+    return { main, integ };
+  };
+
+  // A board with one CLAIMED task → workersActive=true (a worker possibly mid-land).
+  const busyBoard = (): GateBoard => ({
+    list: () => [{ id: 1, slug: 'some-task', status: 'claimed' }],
+    add: () => {},
+    update: () => {},
+    setStatus: () => {},
+  });
+
+  const driveBusy = (forceFullEvery: number) =>
+    runGate({
+      repos: repos2,
+      taskqHome: TQ2,
+      dry: false,
+      board: busyBoard(),
+      kick: () => {},
+      selfHealCwip: false,
+      forceFullEvery,
+      bun: process.execPath,
+      path: process.env.PATH ?? '',
+    });
+
+  beforeAll(() => {
+    ROOT2 = mkdtempSync(join(tmpdir(), 'intgate-starve-'));
+    TQ2 = join(ROOT2, '.taskq');
+    mkdirSync(TQ2, { recursive: true });
+    fp2 = makeRepo2('fp2');
+    app2 = makeRepo2('app2');
+    repos2 = [
+      { name: 'fp2', main: fp2.main, integ: fp2.integ, role: 'provider' },
+      { name: 'app2', main: app2.main, integ: app2.integ, role: 'consumer' },
+    ];
+  });
+
+  afterAll(() => {
+    rmSync(ROOT2, { recursive: true, force: true });
+  });
+
+  test('K. PROMOTE-SAFE: worker active → green integration still PROMOTED, but catch-up is DEFERRED', async () => {
+    // app2 integration ahead + green → a promote candidate.
+    commitOn(app2.integ, 'file.txt', 'v2\n', 'feat: green change on integration');
+    // fp2 main ahead of its integration → a catch-up candidate (the UNSAFE-while-busy mutation).
+    commitOn(fp2.main, 'file.txt', 'v2-main\n', 'chore: a commit straight on fp2 main');
+    const app2Int = rev('refactor/integration', app2.main);
+    const fp2IntBefore = rev('refactor/integration', fp2.main);
+
+    const summary = await driveBusy(5); // consecutiveDeferrals starts at 0 < 5 → promote-safe
+    expect(summary.cycleMode).toBe('promote-safe');
+    // The ATOMIC promote still ran (main ffs to its verified integration SHA) despite the worker.
+    expect(rev('main', app2.main)).toBe(app2Int);
+    expect(summary.promoted).toContain('app2');
+    // ...but the integration-branch ff (catch-up) was DEFERRED — fp2 integration stayed put.
+    expect(rev('refactor/integration', fp2.main)).toBe(fp2IntBefore);
+    expect(summary.repos.fp2.action).toBe('catch-up');
+    expect(summary.repos.fp2.deferred).toBe(true);
+    expect(summary.deferred).toContain('fp2');
+  });
+
+  test('L. STARVATION BACKSTOP: after N consecutive deferrals a FULL cycle runs catch-up anyway', async () => {
+    // Simulate having already deferred twice; forceFullEvery=2 → this cycle is forced FULL.
+    writeFileSync(join(TQ2, '.mainhealth-deferrals'), '2');
+    const fp2Main = rev('main', fp2.main);
+
+    const summary = await driveBusy(2); // consecutiveDeferrals (2) >= forceFullEvery (2) → full
+    expect(summary.cycleMode).toBe('full');
+    // The deferred catch-up finally runs: fp2 integration fast-forwards up to main.
+    expect(rev('refactor/integration', fp2.main)).toBe(fp2Main);
+    expect(summary.repos.fp2.action).toBe('catch-up');
+    expect(summary.repos.fp2.deferred).toBeFalsy();
+    expect(summary.deferred).not.toContain('fp2');
+    // The counter resets after a full cycle.
+    expect(readFileSync(join(TQ2, '.mainhealth-deferrals'), 'utf8').trim()).toBe('0');
   });
 });

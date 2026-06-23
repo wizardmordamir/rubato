@@ -79,8 +79,10 @@ function makeRunSmoke(onLog: (line: string) => void) {
  * Build the per-repo HEADLESS RENDER smoke (anti-white-screen). `renderSmoke` (→
  * cwip/testing + a Node Playwright host) is imported LAZILY + guarded + memoized, exactly
  * like `makeRunSmoke`: a mid-broken helper / absent browser degrades to the build+boot gate
- * (returns an INCONCLUSIVE `ran:false`) rather than crashing or wrongly blocking. Only `ru`
- * renders today; `ca` is a follow-up (`fu-intgate-render-ca`); providers have no UI (null).
+ * (returns an INCONCLUSIVE `ran:false`) rather than crashing or wrongly blocking. Which repos
+ * render is CONFIG-DRIVEN now (`GateRepo.renderSmoke`), not hardcoded by name: `ru` is on; `ca`
+ * flips on in `defaultGateRepos` once heal-ca-charts verifies its build+render clean (the
+ * `caRenderSmokeSpec` is ready). Providers / un-flagged consumers return `null` (build+boot only).
  */
 function makeRunRender(onLog: (line: string) => void) {
   let mod: typeof import('../server/taskq/renderSmoke') | null | undefined;
@@ -95,12 +97,18 @@ function makeRunRender(onLog: (line: string) => void) {
     return mod;
   };
   return async (repo: GateRepo): Promise<GateRenderResult | null> => {
-    if (repo.name !== 'ru') return null;
+    if (!repo.renderSmoke) return null; // opt-in per repo (config-driven), not by name
     const m = await load();
     if (!m) return null;
     const port = await m.pickFreePort();
     const homeDir = m.renderSmokeHomeDir(repo.name, `${process.pid}-${port}`);
-    const res = await m.runRenderSmoke(m.rubatoRenderSmokeSpec({ cwd: repo.integ, port, homeDir, timeoutMs: 45_000 }));
+    // Per-repo render recipe: ca boots its `server/` workspace against CA_DATA_DIR/PORT
+    // (caRenderSmokeSpec), ru serves the built bundle from the worktree root.
+    const spec =
+      repo.name === 'ca'
+        ? m.caRenderSmokeSpec({ cwd: join(repo.integ, 'server'), port, homeDir, timeoutMs: 60_000 })
+        : m.rubatoRenderSmokeSpec({ cwd: repo.integ, port, homeDir, timeoutMs: 45_000 });
+    const res = await m.runRenderSmoke(spec);
     return { ran: res.ran, ok: res.ok, detail: res.detail, logTail: res.logTail };
   };
 }
