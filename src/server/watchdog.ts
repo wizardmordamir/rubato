@@ -17,7 +17,7 @@
  * `RUBATO_WATCHDOG_PLIST` overrides it (used by tests).
  */
 
-import { readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { taskqHome } from 'cwip/taskq';
@@ -371,7 +371,7 @@ async function listFileLocations(p: WatchdogPaths): Promise<FileLocation[]> {
 export async function getWatchdog(): Promise<WatchdogSnapshot> {
   const p = await watchdogPaths();
   const nowMs = Date.now();
-  const [config, statusText, launchd, runner, activeRun, boardText, workers, workerErrors, logs, files, tick] =
+  const [config, statusText, launchd, runner, activeRun, boardText, workers, workerErrors, logs, files, tick, devServerEnabled] =
     await Promise.all([
       loadConfig(p.config),
       readMaybe(p.status),
@@ -384,6 +384,7 @@ export async function getWatchdog(): Promise<WatchdogSnapshot> {
       listLogs(p),
       listFileLocations(p),
       loadTick(p.tick),
+      getDevServerEnabled(),
     ]);
 
   const board = boardText === null ? emptyTaskBoard() : parseTaskBoard(boardText);
@@ -474,6 +475,7 @@ export async function getWatchdog(): Promise<WatchdogSnapshot> {
       watchdogStatus: p.status,
       lock: p.lock,
     }),
+    devServerEnabled,
     now: new Date(nowMs).toISOString(),
   };
 }
@@ -1188,4 +1190,46 @@ export async function getFalseDoneAlerts(): Promise<FalseDoneAlertsResult> {
   } catch {
     return { alerts: [] };
   }
+}
+
+// ── Dev server toggle (localhost orch UI on :5175) ────────────────────────────
+
+const DEV_SERVER_KILL_SWITCH = '.rubato-dev.disabled';
+
+/** The kill-switch file path: present → dev server disabled; absent → enabled. */
+function devServerKillSwitchPath(): string {
+  return join(taskqHome(), DEV_SERVER_KILL_SWITCH);
+}
+
+/** Returns true when the orch dev server (:5175) is enabled (kill-switch absent). */
+export async function getDevServerEnabled(): Promise<boolean> {
+  try {
+    await stat(devServerKillSwitchPath());
+    return false; // file exists → disabled
+  } catch {
+    return true; // file absent → enabled
+  }
+}
+
+/**
+ * Enable or disable the orch dev server (:5175) by creating/deleting the
+ * launchd PathState kill-switch file (`~/.taskq/.rubato-dev.disabled`).
+ * Returns the new enabled state.
+ */
+export async function setDevServerEnabled(enabled: boolean): Promise<boolean> {
+  const p = devServerKillSwitchPath();
+  if (enabled) {
+    try {
+      await unlink(p);
+    } catch {
+      // already absent — that's the goal
+    }
+  } else {
+    await mkdir(taskqHome(), { recursive: true });
+    await writeFile(p, '', { flag: 'wx' }).catch(async () => {
+      // Already exists — ensure it's still there (race between two toggler calls).
+      await stat(p);
+    });
+  }
+  return enabled;
 }

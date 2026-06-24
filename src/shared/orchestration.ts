@@ -1150,6 +1150,13 @@ export interface WatchdogSnapshot {
   files: FileLocation[];
   /** Shell-command catalogue (real paths). */
   commands: WatchdogCommand[];
+  /**
+   * Whether the localhost orch dev server (:5175) is enabled.
+   * Controlled by the kill-switch file `~/.taskq/.rubato-dev.disabled`:
+   * absent → enabled (launchd KeepAlive keeps the server up);
+   * present → disabled (launchd stops it and won't relaunch).
+   */
+  devServerEnabled: boolean;
   /** Server's "now" (ISO) so the UI computes live elapsed against a consistent base. */
   now: string;
 }

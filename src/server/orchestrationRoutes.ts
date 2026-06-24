@@ -15,6 +15,7 @@
  *   POST /api/orchestration/watchdog/restart      → restart the drainer { mode: 'graceful' | 'force' } → RestartResult
  *   POST /api/orchestration/watchdog/stop         → stop the drainer + its workers
  *   POST /api/orchestration/watchdog/instance/stop→ stop one worker { pid }
+ *   POST /api/orchestration/watchdog/dev-server   → toggle orch dev server (:5175) { enabled } → { devServerEnabled }
  *   GET  /api/orchestration/logs/:key?lines=N     → LogTail (tail a watchdog/run log)
  *   GET  /api/orchestration/false-done            → FalseDoneAlertsResult (deduped auto-reverted tasks)
  *
@@ -50,6 +51,7 @@ import {
   reconcileFleet,
   restartDrainer,
   saveFleetPreset,
+  setDevServerEnabled,
   setWatchdogInterval,
   startDrainer,
   stopDrainer,
@@ -385,6 +387,18 @@ async function handleWatchdog(pathname: string, req: Request): Promise<Response>
       return json(await stopInstance(pid));
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'failed to stop instance', 500);
+    }
+  }
+
+  // POST /api/orchestration/watchdog/dev-server → toggle localhost orch dev server (:5175)
+  if (pathname === '/api/orchestration/watchdog/dev-server') {
+    const body = await readJsonBody<{ enabled?: boolean }>(req);
+    if (typeof body?.enabled !== 'boolean') return jsonError('enabled (boolean) is required', 400);
+    try {
+      const enabled = await setDevServerEnabled(body.enabled);
+      return json({ devServerEnabled: enabled });
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'failed to set dev server state', 500);
     }
   }
 

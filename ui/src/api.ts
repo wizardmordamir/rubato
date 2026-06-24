@@ -2143,6 +2143,12 @@ export const stopDrainer = () =>
 /** Stop one worker by pid (only a known live worker). */
 export const stopInstance = (pid: number) =>
   postJson<{ stopped: boolean; pid: number; error?: string }>("/api/orchestration/watchdog/instance/stop", { pid });
+/**
+ * Enable or disable the localhost orch dev server (:5175) by toggling the
+ * launchd PathState kill-switch (`~/.taskq/.rubato-dev.disabled`).
+ */
+export const setDevServerEnabled = (enabled: boolean) =>
+  postJson<{ devServerEnabled: boolean }>("/api/orchestration/watchdog/dev-server", { enabled });
 /** Tail an allowlisted log file (watchdog logs or a runs-dir file). */
 export const fetchLogTail = (key: string, lines = 200) =>
   getJson<LogTail>(`/api/orchestration/logs/${encodeURIComponent(key)}?lines=${lines}`);

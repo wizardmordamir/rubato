@@ -29,6 +29,7 @@ import {
   reconcileFleet,
   restartDrainer,
   saveFleetPreset,
+  setDevServerEnabled,
   setWatchdogInterval,
   startDrainer,
   stopDrainer,
@@ -212,6 +213,14 @@ function ControlBar({
     },
     onError: (e) => notify(e instanceof Error ? e.message : "action failed", "error"),
   });
+  const toggleDevServer = useMutation({
+    mutationFn: (enabled: boolean) => setDevServerEnabled(enabled),
+    onSuccess: (r) => {
+      notify(r.devServerEnabled ? "Orch dev server enabled" : "Orch dev server disabled", "success");
+      onChange();
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "action failed", "error"),
+  });
 
   // There's something to stop when the runner is up OR any worker is still alive.
   const canStop = snap.running || snap.workers.some((w) => w.alive);
@@ -267,6 +276,18 @@ function ControlBar({
             label="Auto-restart"
           />
           Auto-restart
+        </span>
+      </Tooltip>
+
+      <Tooltip multiline content="Orch dev server (:5175): controls the launchd-managed rubato dev stack that keeps the orch board alive while you're away. Off creates ~/.taskq/.rubato-dev.disabled (PathState kill-switch); On removes it so launchd restarts the server.">
+        <span className="inline-flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300">
+          <Switch
+            on={snap.devServerEnabled}
+            disabled={toggleDevServer.isPending}
+            onChange={(v) => toggleDevServer.mutate(v)}
+            label="Orch dev server"
+          />
+          Dev server
         </span>
       </Tooltip>
 
