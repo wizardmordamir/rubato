@@ -90,11 +90,18 @@ if [ -f "$WATCHDOG_OUT" ]; then
   AGE_MIN=$(( (NOW_SEC - LAST_MOD) / 60 ))
 
   if [ "$AGE_MIN" -gt 5 ]; then
-    # Check if there are active leases (drain should be ticking)
+    # Only restart if leases exist AND none have a fresh heartbeat.
+    # Fresh heartbeat = worker is alive; stale watchdog.out just means no NEW tasks
+    # were dispatched this cycle (all slots were busy). Restarting a healthy drain
+    # creates a duplicate worker — much worse than leaving it alone.
     LEASE_COUNT=$(sqlite3 "$HOME/.taskq/taskq.sqlite" "SELECT count(*) FROM leases" 2>/dev/null || echo 0)
-    if [ "$LEASE_COUNT" -gt 0 ] || [ "$AGE_MIN" -gt 15 ]; then
+    FRESH_HB=$(sqlite3 "$HOME/.taskq/taskq.sqlite" \
+      "SELECT count(*) FROM leases WHERE heartbeat_at > (unixepoch()*1000 - 180000)" 2>/dev/null || echo 0)
+    if [ "$FRESH_HB" -gt 0 ]; then
+      log "OK: drain output stale but $FRESH_HB lease(s) have fresh heartbeats — workers alive, no restart needed"
+    elif [ "$LEASE_COUNT" -gt 0 ] || [ "$AGE_MIN" -gt 15 ]; then
       ISSUES=$((ISSUES+1))
-      log "ISSUE: drain output stale (${AGE_MIN}min old, ${LEASE_COUNT} active leases) — restarting drain"
+      log "ISSUE: drain output stale (${AGE_MIN}min old, ${LEASE_COUNT} leases, 0 fresh heartbeats) — restarting drain"
       launchctl kickstart "gui/$(id -u)/com.taskq.drain" >> "$LOG" 2>&1 || \
         launchctl start com.taskq.drain >> "$LOG" 2>&1
       log "FIX: requested drain restart"
