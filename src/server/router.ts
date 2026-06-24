@@ -111,6 +111,7 @@ import { handleDbQueryApi } from './dbQueryRoutes';
 import { handleDebugCaptureApi } from './debugCaptureRoutes';
 import { handleEnvDiscoveryApi } from './envDiscovery';
 import { listAppEnvFiles, readAppEnvFile, writeAppEnvFile } from './envFiles';
+import { captureServerErrorTask } from './errorCapture';
 import { handleExcelAutomationApi } from './excelAutomationRoutes';
 import { listOutputFiles, readOutputFile, resolveOutputFile } from './files';
 import { handleForgeApi } from './forgeRoutes';
@@ -1467,11 +1468,15 @@ async function routeRequest(req: Request, opts: RouteOptions = {}): Promise<Resp
 
   if (pathname.startsWith('/api/')) {
     // Central error boundary: any unhandled throw from a handler becomes the
-    // canonical error envelope (a thrown AppError keeps its own status).
+    // canonical error envelope (a thrown AppError keeps its own status). This is
+    // also the one place that sees every uncaught 5xx, so it's where an uncaught
+    // crash becomes a deduped taskq debug task (OFF unless ERROR_AUTO_TASK is set;
+    // capture never throws).
     try {
       return await handleApi(pathname, req, opts);
     } catch (err) {
       const status = isAppError(err) ? (err.status ?? 500) : 500;
+      captureServerErrorTask({ method: req.method, url: pathname, status, error: err });
       return jsonError(err instanceof Error ? err.message : String(err), status);
     }
   }
