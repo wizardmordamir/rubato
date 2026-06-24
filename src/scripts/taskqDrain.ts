@@ -15,6 +15,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   allBucketStates,
+  autoTierEligibleAsync,
   type BucketState,
   type ClaimFilters,
   finishDrainRun,
@@ -31,6 +32,7 @@ import { currentInterval } from '../server/taskq/control';
 import { makeDoneGuard } from '../server/taskq/doneCheck';
 import { taskqLaunchdPlist } from '../server/taskq/launchd';
 import { runDrain } from '../server/taskq/orchestrator';
+import { makeLlmTierClassifier } from '../server/taskq/tierClassifier';
 import { runEpicDecomposition, runTriage } from '../server/taskq/triage';
 import { makePlanner, makeTriageAgent } from '../server/taskq/triageAgents';
 import { reconcileUsageObservation } from '../server/taskq/usageReconcile';
@@ -116,6 +118,19 @@ async function main(): Promise<void> {
     process.stdout.write(
       `${ts()} taskq triage: ${t.graded} graded (${t.toReady} ready, ${t.toEpic} epic), ${e.decomposed} decomposed\n`,
     );
+  }
+
+  // Opt-in LLM tier pre-sweep: refine AMBIGUOUS tasks (no heuristic keyword signal)
+  // with one cheap Haiku call before workers claim them. Skipped in dry-run and when
+  // ANTHROPIC_API_KEY is absent (makeLlmTierClassifier returns null in both cases).
+  if (!dryRun) {
+    const classifier = makeLlmTierClassifier();
+    if (classifier) {
+      const preSwept = await autoTierEligibleAsync(db, Date.now(), { classify: classifier });
+      if (preSwept > 0) {
+        process.stdout.write(`${ts()} taskq tier pre-sweep: ${preSwept} task(s) LLM-refined\n`);
+      }
+    }
   }
 
   const stopFile = join(taskqHome(), '.stop');
