@@ -131,6 +131,18 @@ export function makeDoneGuard(config: TaskqConfig, deps: Partial<DoneCheckDeps> 
     const landedCommits =
       rawLanded > 0 ? resolveAttributed(d, snap.repoRoot, snap.beforeSha, afterSha, task.id, task.slug, rawLanded) : 0;
 
+    // 1b. Outcome-based done (avoid the re-run-of-already-complete-work false-done): when
+    //     nothing landed in THIS run's window, the deliverable may have been landed by an
+    //     EARLIER attempt of the SAME task (a re-claim after the first run committed but the
+    //     task wasn't marked done). If a commit attributed to this task (`#<id>` or its slug)
+    //     exists ANYWHERE on refactor/integration, the work genuinely lives there — accept it
+    //     as a no-op completion instead of reverting to on_hold and freezing the whole `needs:`
+    //     chain (which forced manual owner unblocks). A task that has NEVER landed an attributed
+    //     commit is still rejected, so the lying-worker guard is preserved.
+    if (landedCommits === 0 && task.noop_ok !== 1 && priorAttributedLanding(d, snap.repoRoot, task.id, task.slug)) {
+      return { accept: true };
+    }
+
     // 2. Regression check (only meaningful once code landed): build the integration
     //    worktree. Skipped when disabled, nothing landed, or the worktree is absent.
     let buildChecked = false;
@@ -217,6 +229,20 @@ function getCommitSubjects(d: DoneCheckDeps, cwd: string, before: string, after:
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/**
+ * Outcome-based "is it actually done": was a commit attributed to this task (`#<id>` or its
+ * slug) ever landed on refactor/integration — at ANY time, not just this run's window? Lets a
+ * re-run of already-complete work be accepted as a no-op instead of false-done-blocked. Bounded
+ * to the last 4000 subjects for speed; a git error reads as "no prior landing" (stay strict).
+ */
+function priorAttributedLanding(d: DoneCheckDeps, cwd: string, taskId: number, slug: string | null): boolean {
+  const r = d.git(['log', '--format=%s', '-n', '4000', 'refactor/integration'], cwd);
+  if (r.code !== 0 || !r.out.trim()) return false;
+  return r.out
+    .split('\n')
+    .some((s) => isAttributedToTask(s.trim(), taskId, slug));
 }
 
 /** True when a commit subject references this task: contains `#<taskId>` or the slug. */
