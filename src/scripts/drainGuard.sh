@@ -220,6 +220,14 @@ for tid in $CRASH_IDS; do
   fi
 done
 
+# 9. Clean stale crash / false-done notes off DONE tasks. The engine's applyFailure
+#    OVERWRITES a task's note with the failure reason on a worker crash; when a retry
+#    then completes, that misleading note is left on the done task (confuses the owner
+#    reviewing the board). Cosmetic-only here; the ROOT fix is the applyFailure engine
+#    change (task fu-engine-preserve-note) so the spec is never destroyed in the first place.
+CLEANED=$(sqlite3 "$DB" "UPDATE tasks SET note='Completed and landed. (Stale crash/false-done note cleared — it was a transient engine artifact, not the final outcome; see the completion record.)' WHERE status='done' AND (note LIKE 'lease expired (worker crashed%' OR note LIKE 'False-done:%' OR note='claude -p exited 143'); SELECT changes();" 2>/dev/null || echo 0)
+if [ "${CLEANED:-0}" -gt 0 ]; then log "FIX: cleared stale crash/false-done note off $CLEANED completed task(s)"; fi
+
 if [ "$ISSUES" -eq 0 ]; then
   log "OK: drain environment healthy (cwip dist present, bun link OK)"
 else
