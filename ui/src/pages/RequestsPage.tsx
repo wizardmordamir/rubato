@@ -13,6 +13,7 @@ import { parseCurl } from "@shared/request/parseCurl";
 import { buildCurl, buildFetch, interpolate, parseRequestFile, toRequestFile } from "@shared/request/transforms";
 import { formatJson } from "@shared/tools/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { DisclosureButton } from "cursedbelt/react";
 import { useMemo, useRef, useState } from "react";
 import {
   deleteEnvironment,
@@ -331,9 +332,9 @@ export function RequestsPage() {
 
         {/* curl/fetch export */}
         <div className="mt-2">
-          <button type="button" className="text-xs text-gray-400 hover:text-accent" onClick={() => setShowCode((s) => !s)}>
-            {showCode ? "▾" : "▸"} View as curl / fetch
-          </button>
+          <DisclosureButton open={showCode} onToggle={() => setShowCode((s) => !s)} className="text-xs text-gray-400 hover:text-accent">
+            View as curl / fetch
+          </DisclosureButton>
           {showCode && (
             <div className="mt-2 grid gap-2 lg:grid-cols-2">
               <OutputBox title="curl" text={curl} />
@@ -633,9 +634,9 @@ function EnvManager({
   const active = envs.find((e) => e.id === activeEnvId);
   return (
     <div className="mt-1">
-      <button type="button" className="text-xs text-gray-400 hover:text-accent" onClick={() => setOpen((o) => !o)}>
-        {open ? "▾" : "▸"} manage
-      </button>
+      <DisclosureButton open={open} onToggle={() => setOpen((o) => !o)} className="text-xs text-gray-400 hover:text-accent">
+        manage
+      </DisclosureButton>
       {open && (
         <div className={`${CARD_CLASS} mt-1 space-y-2 p-2`}>
           <Tooltip multiline content="Creates a new environment — a named set of {{variable}} values (e.g. baseUrl, token) you can switch between so the same request runs against dev, staging, or prod without editing it.">

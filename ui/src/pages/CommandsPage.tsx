@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { DisclosureButton } from "cursedbelt/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -230,13 +231,13 @@ function SavedCommandCard({ cmd, onEdit }: { cmd: SavedCommand; onEdit: (c: Save
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={() => setShowHistory((v) => !v)}
+      <DisclosureButton
+        open={showHistory}
+        onToggle={() => setShowHistory((v) => !v)}
         className="mt-2 text-xs text-gray-500 hover:text-accent"
       >
-        {showHistory ? "▾ Hide history" : "▸ History"}
-      </button>
+        History
+      </DisclosureButton>
       {showHistory && (
         <div className="mt-2">
           <RunHistory command={cmd.name} />

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCopyToClipboard } from "cursedbelt/react";
+import { DisclosureButton, useCopyToClipboard } from "cursedbelt/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useRegisterBreadcrumbLabel } from "../breadcrumbs";
@@ -559,10 +559,10 @@ export function BuilderPage({ headerActions }: { headerActions?: ReactNode } = {
         {captureId && (captureManifest.data?.records.length ?? 0) > 0 && (
           <div className="mt-3 rounded-xl border border-gray-200 dark:border-gray-800">
             <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 p-2 dark:border-gray-800">
-              <button type="button" onClick={() => setTimelineOpen((o) => !o)} className="text-sm font-medium text-gray-600 hover:text-accent dark:text-gray-300">
-                {timelineOpen ? "▾" : "▸"} Captured timeline · {captureManifest.data?.records.length ?? captureCount} screen
+              <DisclosureButton open={timelineOpen} onToggle={() => setTimelineOpen((o) => !o)} className="text-sm font-medium text-gray-600 hover:text-accent dark:text-gray-300">
+                Captured timeline · {captureManifest.data?.records.length ?? captureCount} screen
                 {(captureManifest.data?.records.length ?? captureCount) === 1 ? "" : "s"}
-              </button>
+              </DisclosureButton>
               <span className="ml-auto flex items-center gap-2">
                 <button
                   type="button"

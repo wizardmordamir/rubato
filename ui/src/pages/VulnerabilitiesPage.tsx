@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { DisclosureButton } from "cursedbelt/react";
 import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -414,10 +415,9 @@ function RecordRow({
         <td className="px-3 py-2 font-medium">
           <div className="flex flex-wrap items-center gap-2">
             {hasDetail ? (
-              <button type="button" className="flex items-center gap-1 hover:text-accent" onClick={onToggle} aria-expanded={open}>
-                <span className={`inline-block transition-transform ${open ? "rotate-90" : ""}`}>▸</span>
+              <DisclosureButton open={open} onToggle={onToggle} className="gap-1 hover:text-accent">
                 {r.app}
-              </button>
+              </DisclosureButton>
             ) : (
               <span className="pl-4">{r.app}</span>
             )}

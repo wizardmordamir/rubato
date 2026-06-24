@@ -9,7 +9,7 @@
  * through the same row — one source of truth for "view/open a run's file".
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCopyToClipboard } from "cursedbelt/react";
+import { DisclosureButton, useCopyToClipboard } from "cursedbelt/react";
 import { useState } from "react";
 import { fetchFileContent, fileDownloadUrl } from "./api";
 import { OpenPathButton, Tooltip } from "./components";
@@ -41,15 +41,13 @@ export function OutputFileRow({ path, onCopy }: { path: string; onCopy?: (text: 
     <div className="mt-1.5 text-xs text-gray-500">
       <div className="flex items-center gap-2">
         <Tooltip content={open ? "Hide file" : "View full file"}>
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-label={open ? "Hide file" : "View full file"}
-          className="truncate text-left font-mono hover:text-accent"
-        >
-          {open ? "▾ " : "▸ "}
-          {path}
-        </button>
+          <DisclosureButton
+            open={open}
+            onToggle={() => setOpen((v) => !v)}
+            className="truncate font-mono hover:text-accent"
+          >
+            <span className="min-w-0 truncate">{path}</span>
+          </DisclosureButton>
         </Tooltip>
         <button
           type="button"

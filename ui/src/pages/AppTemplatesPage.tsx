@@ -1,6 +1,6 @@
 import { normalizeHomedir, parseTemplateEntries } from "@shared/appsTemplate";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AddItemsMenu, DismissButton, JsonEditor, useDismissibleItems } from "cursedbelt/react";
+import { AddItemsMenu, DisclosureButton, DismissButton, JsonEditor, useDismissibleItems } from "cursedbelt/react";
 import { useMemo, useState } from "react";
 import {
   addAppsToTemplate,
@@ -718,9 +718,9 @@ function AddToTemplatePanel({
 
   return (
     <div className="mt-6 border-t border-gray-200 pt-4 dark:border-gray-800">
-      <button type="button" className={BTN_GHOST_CLASS} onClick={() => setOpen((v) => !v)}>
-        {open ? "▾ Add apps to template" : "▸ Add apps to template"}
-      </button>
+      <DisclosureButton open={open} onToggle={() => setOpen((v) => !v)} className={BTN_GHOST_CLASS}>
+        Add apps to template
+      </DisclosureButton>
       {open && (
         <div className="mt-2">
           <p className="mb-2 text-xs text-gray-400">
