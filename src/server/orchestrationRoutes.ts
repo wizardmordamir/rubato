@@ -16,6 +16,7 @@
  *   POST /api/orchestration/watchdog/stop         → stop the drainer + its workers
  *   POST /api/orchestration/watchdog/instance/stop→ stop one worker { pid }
  *   POST /api/orchestration/watchdog/dev-server   → toggle orch dev server (:5175) { enabled } → { devServerEnabled }
+ *   POST /api/orchestration/watchdog/heal         → re-open stalled [~] tasks → HealStalledResult
  *   GET  /api/orchestration/logs/:key?lines=N     → LogTail (tail a watchdog/run log)
  *   GET  /api/orchestration/false-done            → FalseDoneAlertsResult (deduped auto-reverted tasks)
  *
@@ -38,7 +39,16 @@ import { DRAIN_MODEL_IDS, THINKING_LEVELS } from '../shared/orchestration';
 import { getClaudeRateLimits } from './claudeUsage';
 import type { TimingQuery } from './db';
 import { json, jsonError, readJsonBody } from './http';
-import { createTask, deleteTask, getOverview, listFiles, readFileDoc, updateTask, writeFileDoc } from './orchestration';
+import {
+  createTask,
+  deleteTask,
+  getOverview,
+  healStalledTasks,
+  listFiles,
+  readFileDoc,
+  updateTask,
+  writeFileDoc,
+} from './orchestration';
 import { clearStoredTimings, getEntryCategoryStats, getTimingOverview, ingestTimings } from './orchestrationTimings';
 import {
   applyDrainConfigPatch,
@@ -399,6 +409,16 @@ async function handleWatchdog(pathname: string, req: Request): Promise<Response>
       return json({ devServerEnabled: enabled });
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'failed to set dev server state', 500);
+    }
+  }
+
+  // POST /api/orchestration/watchdog/heal → re-open stalled [~] tasks in TASKS.md.
+  // Safe to call at any time; only heals tasks older than STALE_INSTANCE_SECONDS (1h).
+  if (pathname === '/api/orchestration/watchdog/heal') {
+    try {
+      return json(await healStalledTasks());
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'heal failed', 500);
     }
   }
 

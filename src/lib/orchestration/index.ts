@@ -127,6 +127,7 @@ export {
   serializeDrainConfig,
   serializeFleetPresets,
   setPlistInterval,
+  STALE_INSTANCE_SECONDS,
   tiersToCoverUnservable,
   upsertFleetPreset,
   type WakeAction,

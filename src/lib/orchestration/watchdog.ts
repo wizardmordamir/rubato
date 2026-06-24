@@ -857,7 +857,7 @@ export function deriveInstances(board: WorkflowBoard, nowMs: number): WorkerInst
 }
 
 /** A claim older than this (with no live runner) is flagged as possibly stale. */
-const STALE_INSTANCE_SECONDS = 60 * 60; // 1h
+export const STALE_INSTANCE_SECONDS = 60 * 60; // 1h
 
 /** Inputs the problem-deriver needs (all already read by the server). */
 export interface ProblemInput {
@@ -981,14 +981,14 @@ export function deriveProblems(input: ProblemInput): Problem[] {
         problems.push({
           kind: 'stale-instance',
           title: `Claimed >1h ago, no live runner: ${inst.title}`,
-          detail: 'The instance that claimed this may have died — review the task and re-open it ([~]→[ ]) if so.',
+          detail: 'The worker that claimed this task appears to have died. Re-opening it ([~]→[ ]) puts it back in the ready queue so the next worker can pick it up.',
           severity: 'warn',
           category: 'Stale',
           fields: [
             { label: 'Task', value: inst.title },
             { label: 'Age', value: '>1h' },
           ],
-          fix: { action: 'none', label: 'Review task' },
+          fix: { action: 'reopen', label: 'Re-open task' },
         });
       }
     }

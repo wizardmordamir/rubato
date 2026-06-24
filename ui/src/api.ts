@@ -2149,6 +2149,13 @@ export const stopInstance = (pid: number) =>
  */
 export const setDevServerEnabled = (enabled: boolean) =>
   postJson<{ devServerEnabled: boolean }>("/api/orchestration/watchdog/dev-server", { enabled });
+/** Re-open all stalled [~] tasks in TASKS.md (heals tasks older than 1h with no live runner). */
+export interface HealStalledResult {
+  healed: number;
+  tasks: string[];
+}
+export const healStalledTasks = () =>
+  postJson<HealStalledResult>("/api/orchestration/watchdog/heal", {});
 /** Tail an allowlisted log file (watchdog logs or a runs-dir file). */
 export const fetchLogTail = (key: string, lines = 200) =>
   getJson<LogTail>(`/api/orchestration/logs/${encodeURIComponent(key)}?lines=${lines}`);

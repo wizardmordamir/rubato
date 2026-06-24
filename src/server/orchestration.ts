@@ -28,10 +28,12 @@ import {
   parseTaskBoard,
   replaceTaskBlock,
   serializeTaskBlock,
+  STALE_INSTANCE_SECONDS,
   TaskConflictError,
   validateTaskDraft,
 } from '../lib/orchestration';
 import type {
+  HealStalledResult,
   HistoryEntry,
   OrchestrationFileDoc,
   OrchestrationFileInfo,
@@ -478,4 +480,55 @@ export async function updateTask(anchorHeading: string, draft: TaskDraft): Promi
 export async function deleteTask(anchorHeading: string): Promise<WorkflowBoard> {
   if (!anchorHeading?.trim()) throw new Error('anchorHeading is required');
   return mutateTasks((current) => deleteTaskBlock(current, anchorHeading));
+}
+
+// ── Self-healer: re-open stalled `[~]` tasks ─────────────────────────────────
+
+/**
+ * Convert a `[~]` claimed heading back to `[ ]` ready by stripping the
+ * worktree/resume stamps while preserving any id/needs/group/model/think markers
+ * that were already in the heading.
+ */
+function reopenHeading(rawHeading: string): string {
+  return rawHeading
+    .replace('[~]', '[ ]')
+    .replace(/\s*\(worktree:[^)]*\)/gi, '')
+    .replace(/\s*\(resume:[^)]*\)/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trimEnd();
+}
+
+/** Elapsed whole-seconds between an ISO string and a timestamp (or `undefined`). */
+function secondsSince(startIso: string | undefined, nowMs: number): number | undefined {
+  if (!startIso) return undefined;
+  const t = Date.parse(startIso);
+  if (Number.isNaN(t)) return undefined;
+  return Math.max(0, Math.round((nowMs - t) / 1000));
+}
+
+/**
+ * Re-open every `[~]` (claimed) task that has been stalled for longer than
+ * {@link STALE_INSTANCE_SECONDS} by changing its heading back to `[ ]` and
+ * stripping the worktree/resume stamp.
+ *
+ * Uses the same cross-process lock as all other TASKS.md mutations so it is
+ * safe to call while workers may also be editing the file. Returns the count
+ * and titles of re-opened tasks so the UI can show a meaningful success toast.
+ */
+export async function healStalledTasks(nowMs = Date.now()): Promise<HealStalledResult> {
+  const healed: string[] = [];
+  await mutateTasks((current) => {
+    const board = parseTaskBoard(current);
+    let text = current;
+    for (const task of board.groups.claimed) {
+      if ((secondsSince(task.meta.start, nowMs) ?? 0) < STALE_INSTANCE_SECONDS) continue;
+      const newHeading = reopenHeading(task.rawHeading);
+      if (newHeading === task.rawHeading) continue; // no change (shouldn't happen)
+      // Replace the first occurrence of the exact raw heading line.
+      text = text.replace(task.rawHeading, newHeading);
+      healed.push(task.title);
+    }
+    return text;
+  });
+  return { healed: healed.length, tasks: healed };
 }

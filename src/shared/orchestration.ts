@@ -896,7 +896,7 @@ export interface WorkerInstance {
 /** A one-click remediation the dashboard can offer for a {@link Problem}. */
 export interface ProblemFix {
   /** Which action resolves it (maps to a watchdog endpoint / config change). */
-  action: 'wake' | 'enable' | 'start' | 'restart' | 'add-tier' | 'none';
+  action: 'wake' | 'enable' | 'start' | 'restart' | 'add-tier' | 'reopen' | 'none';
   /** Button label, e.g. "Wake workers". */
   label: string;
   /**
@@ -905,6 +905,14 @@ export interface ProblemFix {
    * than a manual button.
    */
   auto?: boolean;
+}
+
+/** Result of re-opening stalled `[~]` tasks in TASKS.md. */
+export interface HealStalledResult {
+  /** Number of tasks re-opened (`[~]` → `[ ]`). */
+  healed: number;
+  /** Titles of the re-opened tasks (for the success toast). */
+  tasks: string[];
 }
 
 /**

@@ -24,6 +24,8 @@ import {
   fetchLogTail,
   fetchWatchdog,
   type FleetPreset,
+  healStalledTasks,
+  type HealStalledResult,
   patchDrainConfig,
   type PendingChange,
   reconcileFleet,
@@ -1648,12 +1650,24 @@ function ProblemRow({ problem: p, unservable, onChange }: { problem: Problem; un
           return restartDrainer("graceful");
         case "add-tier":
           return reconcileFleet();
+        case "reopen":
+          return healStalledTasks();
         default:
           return null;
       }
     },
-    onSuccess: () => {
-      notify("Fix applied", "success");
+    onSuccess: (result) => {
+      if (result && typeof (result as HealStalledResult).healed === "number") {
+        const r = result as HealStalledResult;
+        notify(
+          r.healed > 0
+            ? `Re-opened ${r.healed} stalled task${r.healed === 1 ? "" : "s"}`
+            : "No stale tasks found",
+          r.healed > 0 ? "success" : "info",
+        );
+      } else {
+        notify("Fix applied", "success");
+      }
       onChange();
     },
     onError: (e) => notify(e instanceof Error ? e.message : "fix failed", "error"),
