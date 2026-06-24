@@ -16,6 +16,7 @@
  *   POST   /api/taskq/tasks/:id/enqueue             → clone a template into a ready one-shot → { board, id }
  *   GET    /api/taskq/findings                      → { findings, summary } (?status= ?type= ?severity= ?open=1)
  *   POST   /api/taskq/findings/:id/status           → { status, note? } → { findings, summary }
+ *   POST   /api/taskq/healer                        → HealerResult (detect + fix stalled states)
  */
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -69,6 +70,7 @@ import {
   tailWatchdogLog,
   taskqHistory,
 } from './taskq/control';
+import { logHealerResult, makeHealerDeps, runHealer } from './taskq/drainHealer';
 import { resolveGateway } from './taskq/triage';
 import { applyUsagePollConfig, getUsageSnapshot, refreshUsageNow } from './taskq/usagePoller';
 import { reconcileUsageObservation } from './taskq/usageReconcile';
@@ -160,9 +162,11 @@ function board(): TaskqBoard {
   backfillNumericSlugs(db);
 
   // Lease data for claimed tasks (claimed_at + heartbeat_at keyed by task_id).
-  const leases = db
-    .query(`SELECT task_id, claimed_at, heartbeat_at FROM leases`)
-    .all() as { task_id: number; claimed_at: number; heartbeat_at: number }[];
+  const leases = db.query(`SELECT task_id, claimed_at, heartbeat_at FROM leases`).all() as {
+    task_id: number;
+    claimed_at: number;
+    heartbeat_at: number;
+  }[];
   const leaseByTaskId = new Map(leases.map((l) => [l.task_id, l]));
 
   // Most-recent completion row per done task.
@@ -211,8 +215,7 @@ function board(): TaskqBoard {
   // Sort on_hold tasks newest-first so a freshly-parked task surfaces at the top,
   // not buried below older on_hold items ordered by id.
   const sorted = tasks.slice().sort((a, b) => {
-    if (a.status === 'on_hold' && b.status === 'on_hold')
-      return (b.updated_at ?? '').localeCompare(a.updated_at ?? '');
+    if (a.status === 'on_hold' && b.status === 'on_hold') return (b.updated_at ?? '').localeCompare(a.updated_at ?? '');
     return 0;
   });
 
@@ -351,6 +354,25 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       return json({ ok: r.ok, out: r.out, interval: currentInterval() });
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'failed to set interval', 400);
+    }
+  }
+
+  // Self-healer: detect + fix stalled drain states (cwip dist, symlinks, drain stall, expired leases).
+  if (pathname === '/api/taskq/healer') {
+    if (req.method !== 'POST') return jsonError('use POST', 405);
+    try {
+      const db = (() => {
+        try {
+          return getTaskqDb();
+        } catch {
+          return undefined;
+        }
+      })();
+      const result = runHealer(makeHealerDeps(db));
+      logHealerResult(result);
+      return json(result);
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'healer failed', 500);
     }
   }
 

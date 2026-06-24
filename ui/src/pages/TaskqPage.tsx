@@ -25,6 +25,8 @@ import {
   moveTaskqTask,
   resumeTaskqDrainer,
   runTaskqDrainer,
+  runTaskqHealer,
+  type HealerResult,
   setTaskqSectionCollapsed,
   setTaskqStatus,
   stopTaskqDrainer,
@@ -2347,6 +2349,24 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
     },
     onError: (e) => notify(e instanceof Error ? e.message : "failed", "error"),
   });
+  const [lastHeal, setLastHeal] = useState<HealerResult | null>(null);
+  const heal = useMutation({
+    mutationFn: runTaskqHealer,
+    onSuccess: (r) => {
+      setLastHeal(r);
+      if (r.issuesFound === 0) {
+        notify("Environment healthy — no stall issues detected", "success");
+      } else if (r.issuesFixed === r.issuesFound) {
+        notify(`Healed ${r.issuesFixed} stall issue${r.issuesFixed === 1 ? "" : "s"}`, "success");
+      } else {
+        notify(
+          `Found ${r.issuesFound} issue${r.issuesFound === 1 ? "" : "s"}, fixed ${r.issuesFixed}`,
+          "warning",
+        );
+      }
+    },
+    onError: (e) => notify(e instanceof Error ? e.message : "healer failed", "error"),
+  });
 
   const s = data;
   const interval = configQ.data?.interval ?? null;
@@ -2574,6 +2594,24 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
           )}
         </div>
 
+        {/* Self-healer: detect + fix stalled drain states */}
+        <div className="ml-1 border-l border-gray-200 pl-3 dark:border-gray-700">
+          <Tooltip
+            multiline
+            content="Detect and fix stalled orchestration states: rebuild cwip dist if missing, relink first-party symlinks, restart a stalled drain, and reap expired leases. Safe to run any time."
+          >
+            <button
+              type="button"
+              className={BTN_GHOST_CLASS}
+              onClick={() => heal.mutate()}
+              disabled={heal.isPending}
+            >
+              {heal.isPending && <Spinner />}
+              Self-heal
+            </button>
+          </Tooltip>
+        </div>
+
         <button
           type="button"
           className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
@@ -2582,6 +2620,52 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
           Configure in Settings ↗
         </button>
       </div>
+
+      {/* Healer result — shown after a manual run */}
+      {lastHeal && (
+        <HealerResultPanel result={lastHeal} onDismiss={() => setLastHeal(null)} />
+      )}
+    </div>
+  );
+}
+
+/** Compact display of the last self-healer run result. */
+function HealerResultPanel({ result, onDismiss }: { result: HealerResult; onDismiss: () => void }) {
+  const tone = result.issuesFound === 0 ? "success" : result.issuesFixed === result.issuesFound ? "success" : "warning";
+  return (
+    <div className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-700">
+      <div className="mb-1 flex items-center gap-2">
+        <span className={`text-xs font-semibold ${tone === "success" ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+          {result.issuesFound === 0
+            ? "Environment healthy"
+            : `${result.issuesFound} issue${result.issuesFound === 1 ? "" : "s"} found, ${result.issuesFixed} fixed`}
+        </span>
+        {result.inconclusive && (
+          <span className="text-xs text-gray-400">(some checks inconclusive)</span>
+        )}
+        <button
+          type="button"
+          className="ml-auto text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+          onClick={onDismiss}
+        >
+          ✕
+        </button>
+      </div>
+      {result.issues.length > 0 && (
+        <ul className="space-y-1">
+          {result.issues.map((issue, i) => (
+            <li key={i} className="flex items-start gap-2 text-xs">
+              <span className={issue.fixed ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                {issue.fixed ? "✓" : "!"}
+              </span>
+              <span className="text-gray-600 dark:text-gray-300">{issue.description}</span>
+              {issue.detail && (
+                <span className="text-gray-400">{issue.detail}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

@@ -256,12 +256,25 @@ export function isIgnoredConsole(message: string, ignore: string[]): boolean {
  *  - mounted but a fatal console / page error fired → RED.
  *  - mounted, clean                       → GREEN.
  */
-export function decideRender(probe: RenderProbe, spec: Pick<RenderSmokeSpec, 'rootSelector' | 'ignoreConsole'>): RenderVerdict {
+export function decideRender(
+  probe: RenderProbe,
+  spec: Pick<RenderSmokeSpec, 'rootSelector' | 'ignoreConsole'>,
+): RenderVerdict {
   if (!probe.launched) {
-    return { ran: false, ok: false, detail: `render check could not run: ${probe.error ?? 'browser did not launch'}`, fatalConsole: [] };
+    return {
+      ran: false,
+      ok: false,
+      detail: `render check could not run: ${probe.error ?? 'browser did not launch'}`,
+      fatalConsole: [],
+    };
   }
   if (!probe.navigated) {
-    return { ran: true, ok: false, detail: `page never loaded${probe.error ? `: ${probe.error}` : ''}`, fatalConsole: [] };
+    return {
+      ran: true,
+      ok: false,
+      detail: `page never loaded${probe.error ? `: ${probe.error}` : ''}`,
+      fatalConsole: [],
+    };
   }
   if (!probe.rootFound || probe.rootHtmlLength <= 0) {
     return {
@@ -338,7 +351,13 @@ export async function runRenderSmoke(spec: RenderSmokeSpec, deps: RenderSmokeDep
     await ensureDir(spec.homeDir);
   } catch (e) {
     // Can't prep the isolation dir → inconclusive (don't block the gate on an fs hiccup).
-    return { repo: spec.repo, ran: false, ok: false, detail: `failed to create isolated home: ${errMsg(e)}`, durationMs: elapsed() };
+    return {
+      repo: spec.repo,
+      ran: false,
+      ok: false,
+      detail: `failed to create isolated home: ${errMsg(e)}`,
+      durationMs: elapsed(),
+    };
   }
 
   // Build the SPA first (the gate's `bun run build` only builds the lib dist, so without
@@ -361,7 +380,13 @@ export async function runRenderSmoke(spec: RenderSmokeSpec, deps: RenderSmokeDep
     } catch (e) {
       // Couldn't even spawn the build → inconclusive (tooling, not a proven UI failure).
       await removeDir(spec.homeDir).catch(() => {});
-      return { repo: spec.repo, ran: false, ok: false, detail: `could not run UI build: ${errMsg(e)}`, durationMs: elapsed() };
+      return {
+        repo: spec.repo,
+        ran: false,
+        ok: false,
+        detail: `could not run UI build: ${errMsg(e)}`,
+        durationMs: elapsed(),
+      };
     }
   }
 
@@ -487,7 +512,15 @@ async function defaultRunProbe(url: string, spec: RenderSmokeSpec): Promise<Rend
     await proc.exited;
     return parseProbe(out, err);
   } catch (e) {
-    return { launched: false, navigated: false, rootFound: false, rootHtmlLength: 0, consoleErrors: [], pageErrors: [], error: errMsg(e) };
+    return {
+      launched: false,
+      navigated: false,
+      rootFound: false,
+      rootHtmlLength: 0,
+      consoleErrors: [],
+      pageErrors: [],
+      error: errMsg(e),
+    };
   }
 }
 

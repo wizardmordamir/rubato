@@ -1,22 +1,31 @@
 import { describe, expect, it } from 'bun:test';
 import {
-  DEFAULT_IGNORE_CONSOLE,
-  type RenderProbe,
-  RENDER_PROBE_SENTINEL,
-  type RenderSmokeSpec,
   caRenderSmokeSpec,
+  DEFAULT_IGNORE_CONSOLE,
   decideRender,
   isIgnoredConsole,
   parseProbe,
   planRenderSmoke,
+  RENDER_PROBE_SENTINEL,
+  type RenderProbe,
+  type RenderSmokeSpec,
   renderSmokeEnv,
   renderSmokeHomeDir,
-  runRenderSmoke,
   rubatoRenderSmokeSpec,
+  runRenderSmoke,
 } from './renderSmoke';
 
 const baseSpec = (over: Partial<RenderSmokeSpec> = {}): RenderSmokeSpec =>
-  planRenderSmoke({ repo: 'ru', cmd: ['bun', 'x'], cwd: '/wt', port: 9999, homeDir: '/tmp/h', homeEnvVar: 'RUBATO_HOME', portEnvVar: 'RUBATO_PORT', ...over });
+  planRenderSmoke({
+    repo: 'ru',
+    cmd: ['bun', 'x'],
+    cwd: '/wt',
+    port: 9999,
+    homeDir: '/tmp/h',
+    homeEnvVar: 'RUBATO_HOME',
+    portEnvVar: 'RUBATO_PORT',
+    ...over,
+  });
 
 const probe = (over: Partial<RenderProbe> = {}): RenderProbe => ({
   launched: true,
@@ -67,7 +76,13 @@ describe('presets', () => {
     const s = caRenderSmokeSpec({ cwd: '/ca-int', port: 4802, homeDir: '/tmp/ca' });
     expect(s.repo).toBe('ca');
     expect(s.homeEnvVar).toBe('CA_DATA_DIR');
-    const o = caRenderSmokeSpec({ cwd: '/ca-int', port: 4802, homeDir: '/tmp/ca', homeEnvVar: 'CA_HOME', cmd: ['node', 'server.mjs'] });
+    const o = caRenderSmokeSpec({
+      cwd: '/ca-int',
+      port: 4802,
+      homeDir: '/tmp/ca',
+      homeEnvVar: 'CA_HOME',
+      cmd: ['node', 'server.mjs'],
+    });
     expect(o.homeEnvVar).toBe('CA_HOME');
     expect(o.cmd).toEqual(['node', 'server.mjs']);
   });
@@ -186,7 +201,10 @@ describe('runRenderSmoke (injected deps — no real browser/server)', () => {
   });
 
   it('INCONCLUSIVE when no browser is available (probe launched:false)', async () => {
-    const r = await runRenderSmoke(baseSpec(), deps({ runProbe: async () => probe({ launched: false, error: 'no chrome' }) }));
+    const r = await runRenderSmoke(
+      baseSpec(),
+      deps({ runProbe: async () => probe({ launched: false, error: 'no chrome' }) }),
+    );
     expect(r).toMatchObject({ ran: false, ok: false });
   });
 
@@ -196,9 +214,18 @@ describe('runRenderSmoke (injected deps — no real browser/server)', () => {
     const r = await runRenderSmoke(
       baseSpec(),
       deps({
-        startServer: async () => ({ logs: () => [], stop: async () => { stopped = true; } }),
-        removeDir: async () => { removed = true; },
-        runProbe: async () => { throw new Error('probe blew up'); },
+        startServer: async () => ({
+          logs: () => [],
+          stop: async () => {
+            stopped = true;
+          },
+        }),
+        removeDir: async () => {
+          removed = true;
+        },
+        runProbe: async () => {
+          throw new Error('probe blew up');
+        },
       }),
     );
     expect(stopped).toBe(true);
@@ -213,7 +240,13 @@ describe('runRenderSmoke (injected deps — no real browser/server)', () => {
     let builtIn: string | undefined;
     const r = await runRenderSmoke(
       buildSpec(),
-      deps({ runBuild: async (_cmd, cwd) => { builtIn = cwd; return { code: 0, output: 'built' }; }, runProbe: async () => probe() }),
+      deps({
+        runBuild: async (_cmd, cwd) => {
+          builtIn = cwd;
+          return { code: 0, output: 'built' };
+        },
+        runProbe: async () => probe(),
+      }),
     );
     expect(builtIn).toBe('/wt'); // built in the integration worktree dir
     expect(r).toMatchObject({ ran: true, ok: true });
@@ -225,7 +258,10 @@ describe('runRenderSmoke (injected deps — no real browser/server)', () => {
       buildSpec(),
       deps({
         runBuild: async () => ({ code: 1, output: 'TS2304: Cannot find name X' }),
-        runProbe: async () => { probed = true; return probe(); },
+        runProbe: async () => {
+          probed = true;
+          return probe();
+        },
       }),
     );
     expect(r).toMatchObject({ ran: true, ok: false });
@@ -237,7 +273,12 @@ describe('runRenderSmoke (injected deps — no real browser/server)', () => {
   it('a build that cannot be SPAWNED is INCONCLUSIVE (ran:false), never a false white screen', async () => {
     const r = await runRenderSmoke(
       buildSpec(),
-      deps({ runBuild: async () => { throw new Error('ENOENT bun'); }, runProbe: async () => probe() }),
+      deps({
+        runBuild: async () => {
+          throw new Error('ENOENT bun');
+        },
+        runProbe: async () => probe(),
+      }),
     );
     expect(r).toMatchObject({ ran: false, ok: false });
     expect(r.detail).toContain('could not run UI build');

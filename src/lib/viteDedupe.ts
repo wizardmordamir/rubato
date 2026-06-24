@@ -95,7 +95,8 @@ export function checkDedupeSource(
 export function formatDedupeCheck(label: string, check: DedupeCheck): string {
   if (check.ok && check.missingRecommended.length === 0) return `✓ ${label}: dedupe complete`;
   const parts: string[] = [];
-  if (check.missingRequired.length > 0) parts.push(`MISSING REQUIRED (white-screen risk): ${check.missingRequired.join(', ')}`);
+  if (check.missingRequired.length > 0)
+    parts.push(`MISSING REQUIRED (white-screen risk): ${check.missingRequired.join(', ')}`);
   if (check.missingRecommended.length > 0) parts.push(`missing recommended: ${check.missingRecommended.join(', ')}`);
   return `${check.ok ? '⚠' : '✗'} ${label}: ${parts.join(' · ')}`;
 }

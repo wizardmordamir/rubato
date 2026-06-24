@@ -2,11 +2,11 @@ import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  REQUIRED_REACT_DEDUPE,
   checkDedupeSource,
   checkReactDedupe,
   extractDedupeFromSource,
   formatDedupeCheck,
+  REQUIRED_REACT_DEDUPE,
 } from './viteDedupe';
 
 describe('checkReactDedupe', () => {
@@ -84,7 +84,9 @@ describe('formatDedupeCheck', () => {
   it('summarizes pass/warn/fail distinctly', () => {
     expect(formatDedupeCheck('ru', { ok: true, missingRequired: [], missingRecommended: [] })).toContain('✓');
     expect(formatDedupeCheck('ru', { ok: true, missingRequired: [], missingRecommended: ['zustand'] })).toContain('⚠');
-    expect(formatDedupeCheck('ru', { ok: false, missingRequired: ['react/jsx-dev-runtime'], missingRecommended: [] })).toContain('✗');
+    expect(
+      formatDedupeCheck('ru', { ok: false, missingRequired: ['react/jsx-dev-runtime'], missingRecommended: [] }),
+    ).toContain('✗');
   });
 });
 

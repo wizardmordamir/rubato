@@ -123,7 +123,11 @@ const bootSmokeFake = async (repo: GateRepo): Promise<GateSmokeResult | null> =>
 const renderSmokeFake = async (repo: GateRepo): Promise<GateRenderResult | null> => {
   if (repo.role !== 'consumer') return null;
   const ok = !existsSync(join(repo.integ, 'RENDER_BROKEN'));
-  return { ran: true, ok, detail: ok ? 'React root mounted; no fatal errors' : 'WHITE SCREEN — React root never mounted' };
+  return {
+    ran: true,
+    ok,
+    detail: ok ? 'React root mounted; no fatal errors' : 'WHITE SCREEN — React root never mounted',
+  };
 };
 
 beforeAll(() => {

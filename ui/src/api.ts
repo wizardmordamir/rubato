@@ -2002,6 +2002,24 @@ export const setTaskqWatchdog = (action: "load" | "unload") =>
 /** Set the watchdog tick interval (seconds). */
 export const setTaskqInterval = (seconds: number) =>
   postJson<{ ok: boolean; out: string; interval: number }>("/api/taskq/drainer/interval", { seconds });
+
+/** One detected stall issue from the self-healer. */
+export interface HealerIssue {
+  code: 'cwip-dist-missing' | 'symlink-broken' | 'drain-stalled' | 'leases-expired';
+  description: string;
+  fixed: boolean;
+  detail?: string;
+}
+/** Result of one self-healer run. */
+export interface HealerResult {
+  ranAt: string;
+  issuesFound: number;
+  issuesFixed: number;
+  issues: HealerIssue[];
+  inconclusive: boolean;
+}
+/** Run the drain self-healer: detect + fix stalled orchestration states. */
+export const runTaskqHealer = () => postJson<HealerResult>("/api/taskq/healer", {});
 /** Get persisted board section collapse state. */
 export const fetchTaskqSectionPrefs = () =>
   getJson<{ prefs: Record<string, boolean> }>("/api/taskq/section-prefs");
