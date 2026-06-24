@@ -38,10 +38,10 @@
 import type { DoneVerdict, FalseDoneReason, TaskRow } from 'cwip/taskq';
 import type { TaskResult, WorkerContext } from './orchestrator';
 
+export type { DoneEvidence, DoneVerdict, FalseDoneDisposition, FalseDoneReason } from 'cwip/taskq';
 // Re-export the pure core from its single cwip home so `./falseDone` consumers
 // (doneCheck, orchestrator, tests) import from one stable point.
 export { decideDone } from 'cwip/taskq';
-export type { DoneEvidence, DoneVerdict, FalseDoneDisposition, FalseDoneReason } from 'cwip/taskq';
 
 /**
  * Opaque pre-run state captured at claim time and handed back to {@link DoneGuard.verify}

@@ -175,7 +175,10 @@ describe('render smoke gate (anti white-screen)', () => {
   });
   test('decideRepo: main-behind + build+boot green but render RED → hold-red', () => {
     expect(
-      decideRepo({ repo: 'ru', ancestry: 'main-behind', integrationGreen: true, smokeGreen: true, renderGreen: false }, true),
+      decideRepo(
+        { repo: 'ru', ancestry: 'main-behind', integrationGreen: true, smokeGreen: true, renderGreen: false },
+        true,
+      ),
     ).toBe('hold-red');
   });
   test('decideSystem: a repo that BUILDS+BOOTS green but WHITE-SCREENS holds back ALL promotions', () => {
@@ -207,7 +210,9 @@ describe('decideCycle (anti-starvation: keep verifying + promoting while workers
   });
 
   test('the counter keeps climbing across consecutive busy cycles', () => {
-    expect(decideCycle({ workersActive: true, consecutiveDeferrals: 3, forceFullEvery: 6 }).nextConsecutiveDeferrals).toBe(4);
+    expect(
+      decideCycle({ workersActive: true, consecutiveDeferrals: 3, forceFullEvery: 6 }).nextConsecutiveDeferrals,
+    ).toBe(4);
   });
 
   test('starvation backstop: once deferrals reach the threshold, force a full cycle (and reset)', () => {
@@ -230,7 +235,7 @@ describe('decideCycle (anti-starvation: keep verifying + promoting while workers
 });
 
 describe('isActionSafeWhileBusy (only catch-up races a worker landing on integration)', () => {
-  test('promote is always safe — it ff\'s the promotion-only main branch to a verified SHA', () => {
+  test("promote is always safe — it ff's the promotion-only main branch to a verified SHA", () => {
     expect(isActionSafeWhileBusy('promote')).toBe(true);
   });
   test('none / hold-red / diverged perform no integration-branch mutation → safe', () => {
@@ -238,7 +243,7 @@ describe('isActionSafeWhileBusy (only catch-up races a worker landing on integra
     expect(isActionSafeWhileBusy('hold-red')).toBe(true);
     expect(isActionSafeWhileBusy('diverged')).toBe(true);
   });
-  test('catch-up ff\'s the INTEGRATION branch a worker may be landing on → NOT safe while busy', () => {
+  test("catch-up ff's the INTEGRATION branch a worker may be landing on → NOT safe while busy", () => {
     expect(isActionSafeWhileBusy('catch-up')).toBe(false);
   });
 });

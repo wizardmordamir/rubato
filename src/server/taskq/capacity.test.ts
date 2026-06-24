@@ -62,7 +62,13 @@ describe('capacitySnapshot — throttle (adaptive shrink) vs maximize (default)'
     exhaust(db);
     const snap = capacitySnapshot(
       db,
-      cfg({ throttle: false, fleet: [{ models: ['opus'], jobs: 2 }, { models: ['sonnet'], jobs: 3 }] }),
+      cfg({
+        throttle: false,
+        fleet: [
+          { models: ['opus'], jobs: 2 },
+          { models: ['sonnet'], jobs: 3 },
+        ],
+      }),
     );
     expect(snap.maxJobs).toBe(5); // 2 + 3 fleet slots
     expect(snap.effectiveJobs).toBe(5);

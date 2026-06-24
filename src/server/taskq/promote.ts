@@ -226,7 +226,12 @@ export interface CycleDecision {
  */
 export function decideCycle(input: CycleInput): CycleDecision {
   if (!input.workersActive) {
-    return { mode: 'full', runUnsafeMutations: true, nextConsecutiveDeferrals: 0, reason: 'no workers active — full cycle' };
+    return {
+      mode: 'full',
+      runUnsafeMutations: true,
+      nextConsecutiveDeferrals: 0,
+      reason: 'no workers active — full cycle',
+    };
   }
   if (input.forceFullEvery > 0 && input.consecutiveDeferrals >= input.forceFullEvery) {
     return {

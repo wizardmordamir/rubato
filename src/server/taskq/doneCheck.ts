@@ -240,9 +240,7 @@ function getCommitSubjects(d: DoneCheckDeps, cwd: string, before: string, after:
 function priorAttributedLanding(d: DoneCheckDeps, cwd: string, taskId: number, slug: string | null): boolean {
   const r = d.git(['log', '--format=%s', '-n', '4000', 'refactor/integration'], cwd);
   if (r.code !== 0 || !r.out.trim()) return false;
-  return r.out
-    .split('\n')
-    .some((s) => isAttributedToTask(s.trim(), taskId, slug));
+  return r.out.split('\n').some((s) => isAttributedToTask(s.trim(), taskId, slug));
 }
 
 /** True when a commit subject references this task: contains `#<taskId>` or the slug. */

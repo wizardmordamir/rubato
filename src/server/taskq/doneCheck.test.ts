@@ -137,7 +137,13 @@ describe('makeDoneGuard', () => {
     expect(verdict.disposition).toBe('needs_owner');
     expect(buildCalls.count).toBe(0); // nothing landed → no build
     expect(alerts).toHaveLength(1);
-    expect(alerts[0]).toMatchObject({ taskId: 31, slug: 'rfc-31', repo: 'ru', reason: 'empty-done', status: 'on_hold' });
+    expect(alerts[0]).toMatchObject({
+      taskId: 31,
+      slug: 'rfc-31',
+      repo: 'ru',
+      reason: 'empty-done',
+      status: 'on_hold',
+    });
   });
 
   test('NO-OP OK: a noop_ok audit/check task completing with 0 commits is DONE, not reverted', async () => {

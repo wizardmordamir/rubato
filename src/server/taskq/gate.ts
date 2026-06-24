@@ -628,7 +628,9 @@ export async function runGate(opts: GateOptions): Promise<GateSummary> {
       // (`cyc.runUnsafeMutations`) lets it through after N consecutive deferrals.
       if (!cyc.runUnsafeMutations && !isActionSafeWhileBusy(action)) {
         f.deferred = true;
-        log(`${r.name}: ${action} DEFERRED — promote-safe cycle (a worker may be landing on integration); runs next full cycle`);
+        log(
+          `${r.name}: ${action} DEFERRED — promote-safe cycle (a worker may be landing on integration); runs next full cycle`,
+        );
         continue;
       }
       switch (action) {
