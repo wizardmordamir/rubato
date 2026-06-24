@@ -2005,7 +2005,7 @@ export const setTaskqInterval = (seconds: number) =>
 
 /** One detected stall issue from the self-healer. */
 export interface HealerIssue {
-  code: 'cwip-dist-missing' | 'symlink-broken' | 'drain-stalled' | 'leases-expired';
+  code: 'cwip-dist-missing' | 'symlink-broken' | 'drain-stalled' | 'leases-expired' | 'needs-owner-cleared' | 'primary-dirty';
   description: string;
   fixed: boolean;
   detail?: string;
