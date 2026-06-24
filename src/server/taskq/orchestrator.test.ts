@@ -37,7 +37,7 @@ describe('runDrain', () => {
     expect(summary.failed).toBe(1);
     expect(summary.retried).toBe(0);
     const failed = listTasks(db, { status: 'failed' });
-    expect(failed[0]?.note).toBe('kaboom');
+    expect(failed[0]?.last_error).toBe('kaboom');
   });
 
   test('a transient failure is RETRIED with a backoff (not burned); independents still drain', async () => {
@@ -57,7 +57,7 @@ describe('runDrain', () => {
     expect(listTasks(db, { status: 'failed' }).length).toBe(0);
     const boom = listTasks(db, { status: 'ready' }).find((t) => t.title === 'boom');
     expect(boom?.attempts).toBe(1);
-    expect(boom?.note).toBe('kaboom');
+    expect(boom?.last_error).toBe('kaboom');
     expect(boom?.recur_next_at).toBeGreaterThan(Date.now()); // waiting out the backoff
   });
 
@@ -71,7 +71,7 @@ describe('runDrain', () => {
     });
     expect(summary.failed).toBe(1);
     expect(summary.retried).toBe(0);
-    expect(listTasks(db, { status: 'failed' })[0]?.note).toBe('impossible');
+    expect(listTasks(db, { status: 'failed' })[0]?.last_error).toBe('impossible');
   });
 
   test('retries up to the ceiling within a pass, then parks terminal failed', async () => {
@@ -159,7 +159,7 @@ describe('runDrain', () => {
       retry: { maxAttempts: 1 },
     });
     expect(summary.failed).toBe(1);
-    expect(listTasks(db, { status: 'failed' })[0]?.note).toContain('executor threw');
+    expect(listTasks(db, { status: 'failed' })[0]?.last_error).toContain('executor threw');
   });
 
   test('an executor throw is retried by default (transient), not immediately terminal', async () => {
@@ -176,7 +176,7 @@ describe('runDrain', () => {
     expect(summary.failed).toBe(0);
     const t = listTasks(db, { status: 'ready' })[0];
     expect(t?.attempts).toBe(1);
-    expect(t?.note).toContain('executor threw');
+    expect(t?.last_error).toContain('executor threw');
   });
 
   test('grows the pool to a raised desiredJobs mid-run (no restart)', async () => {

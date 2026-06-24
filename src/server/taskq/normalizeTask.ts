@@ -29,6 +29,7 @@ export const TASK_TEXT_FIELDS = [
   'note',
   'hold_disposition',
   'resolver_ref',
+  'last_error',
   'triage_state',
   'complexity',
   'created_at',

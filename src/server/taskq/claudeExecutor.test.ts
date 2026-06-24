@@ -40,6 +40,7 @@ const task = (over: Partial<TaskRow> = {}): TaskRow => ({
   resolver_ref: null,
   triage_state: null,
   complexity: null,
+  last_error: null,
   created_at: '',
   updated_at: '',
   ...over,

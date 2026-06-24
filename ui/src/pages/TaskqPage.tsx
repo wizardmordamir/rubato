@@ -750,6 +750,7 @@ function TaskCard({
             )}
             <div className="mt-1 text-xs text-gray-400">{timeMeta}</div>
             {task.note && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">note: {task.note}</p>}
+            {task.last_error && <p className="mt-1 text-xs text-red-500 dark:text-red-400">last error: {task.last_error}</p>}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {isTemplate && (
