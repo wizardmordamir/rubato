@@ -169,18 +169,33 @@ fi
 #    A green HTTP 200 on /taskq is NOT enough (a white-screen still returns 200), so we
 #    assert the BOARD API returns real task data. (White-screen render detection is the
 #    self-healer's deeper job; here we catch a dead server / dead API / empty board fast.)
-UI_BODY=$(curl -s --max-time 6 "$TASKQ_UI/api/taskq" 2>/dev/null)
-if ! printf '%s' "$UI_BODY" | grep -q '"tasks"'; then
-  ISSUES=$((ISSUES+1))
-  # Is the port even up?
-  if ! curl -s -o /dev/null --max-time 5 "$TASKQ_UI/" 2>/dev/null; then
-    log "ISSUE: orch UI ($TASKQ_UI) is DOWN — the rubato dev server isn't responding"
-    ensure_heal_task "heal-taskq-ui-down" "Orch UI down: rubato dev server on :5175 not responding" "ru" \
-      "localhost:5175 is not responding, so the owner cannot see orch status. The rubato dev server (bun run dev) is not running. Restart it; if it keeps dying, make it resilient (launchd-managed or auto-restart). Until then the orch board is invisible to the owner."
-  else
-    log "ISSUE: orch UI ($TASKQ_UI) up but /api/taskq returned no board data — API/DB path broken"
-    ensure_heal_task "heal-taskq-ui-api" "Orch UI API broken: /api/taskq returns no board data" "ru" \
-      "localhost:5175 responds but GET /api/taskq does not return a tasks board. The taskq API/DB read path is broken (the owner sees no orch data). Diagnose taskqRoutes + the ~/.taskq DB read and fix."
+RUBATO_DEV_PLIST="$HOME/Library/LaunchAgents/com.taskq.rubato-dev.plist"
+if [ -f "$HOME/.taskq/.rubato-dev.disabled" ]; then
+  log "NOTE: orch UI intentionally OFF (kill-switch .rubato-dev.disabled set) — skipping UI check"
+else
+  UI_BODY=$(curl -s --max-time 6 "$TASKQ_UI/api/taskq" 2>/dev/null)
+  if ! printf '%s' "$UI_BODY" | grep -q '"tasks"'; then
+    ISSUES=$((ISSUES+1))
+    if ! curl -s -o /dev/null --max-time 5 "$TASKQ_UI/" 2>/dev/null; then
+      # Server DOWN. launchd KeepAlive should auto-restart it; this is the backstop.
+      if launchctl list com.taskq.rubato-dev >/dev/null 2>&1; then
+        log "ISSUE: orch UI ($TASKQ_UI) DOWN — kickstarting com.taskq.rubato-dev"
+        launchctl kickstart -k "gui/$(id -u)/com.taskq.rubato-dev" >> "$LOG" 2>&1 \
+          && { log "FIX: restarted rubato dev server"; FIXED=$((FIXED+1)); }
+      elif [ -f "$RUBATO_DEV_PLIST" ]; then
+        log "ISSUE: orch UI DOWN + agent unloaded — loading com.taskq.rubato-dev"
+        launchctl load "$RUBATO_DEV_PLIST" >> "$LOG" 2>&1 \
+          && { log "FIX: loaded rubato dev agent"; FIXED=$((FIXED+1)); }
+      else
+        log "ISSUE: orch UI DOWN and no rubato-dev agent installed"
+        ensure_heal_task "heal-taskq-ui-down" "Orch UI down: rubato dev server on :5175 not responding" "ru" \
+          "localhost:5175 is not responding and no com.taskq.rubato-dev launchd agent exists to restart it. The owner cannot see orch status. Install/repair the auto-restart agent (~/.taskq/rubatoDev.sh + com.taskq.rubato-dev.plist)."
+      fi
+    else
+      log "ISSUE: orch UI ($TASKQ_UI) up but /api/taskq returned no board data — API/DB path broken"
+      ensure_heal_task "heal-taskq-ui-api" "Orch UI API broken: /api/taskq returns no board data" "ru" \
+        "localhost:5175 responds but GET /api/taskq does not return a tasks board. The taskq API/DB read path is broken (the owner sees no orch data). Diagnose taskqRoutes + the ~/.taskq DB read and fix."
+    fi
   fi
 fi
 
