@@ -27,8 +27,8 @@ import {
   parseRunsJsonl,
   parseTaskBoard,
   replaceTaskBlock,
-  serializeTaskBlock,
   STALE_INSTANCE_SECONDS,
+  serializeTaskBlock,
   TaskConflictError,
   validateTaskDraft,
 } from '../lib/orchestration';

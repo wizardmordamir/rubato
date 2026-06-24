@@ -981,7 +981,8 @@ export function deriveProblems(input: ProblemInput): Problem[] {
         problems.push({
           kind: 'stale-instance',
           title: `Claimed >1h ago, no live runner: ${inst.title}`,
-          detail: 'The worker that claimed this task appears to have died. Re-opening it ([~]→[ ]) puts it back in the ready queue so the next worker can pick it up.',
+          detail:
+            'The worker that claimed this task appears to have died. Re-opening it ([~]→[ ]) puts it back in the ready queue so the next worker can pick it up.',
           severity: 'warn',
           category: 'Stale',
           fields: [

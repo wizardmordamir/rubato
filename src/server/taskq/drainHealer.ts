@@ -470,7 +470,9 @@ export function makeHealerDeps(db?: TaskqDb): HealerDeps {
       if (!db) return 'unavailable';
       try {
         const row = db
-          .query(`SELECT COUNT(*) AS c FROM tasks WHERE hold_disposition='needs_owner' AND status NOT IN ('done','claimed')`)
+          .query(
+            `SELECT COUNT(*) AS c FROM tasks WHERE hold_disposition='needs_owner' AND status NOT IN ('done','claimed')`,
+          )
           .get() as { c: number } | null;
         const count = row?.c ?? 0;
         if (count > 0) {

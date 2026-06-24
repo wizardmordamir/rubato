@@ -371,21 +371,33 @@ async function listFileLocations(p: WatchdogPaths): Promise<FileLocation[]> {
 export async function getWatchdog(): Promise<WatchdogSnapshot> {
   const p = await watchdogPaths();
   const nowMs = Date.now();
-  const [config, statusText, launchd, runner, activeRun, boardText, workers, workerErrors, logs, files, tick, devServerEnabled] =
-    await Promise.all([
-      loadConfig(p.config),
-      readMaybe(p.status),
-      loadLaunchd(p.plist),
-      loadRunner(p.lock),
-      loadActiveRun(p.activeRun),
-      readMaybe(p.queue),
-      listWorkers(p.runsDir, nowMs),
-      loadWorkerErrors(p.runsDir),
-      listLogs(p),
-      listFileLocations(p),
-      loadTick(p.tick),
-      getDevServerEnabled(),
-    ]);
+  const [
+    config,
+    statusText,
+    launchd,
+    runner,
+    activeRun,
+    boardText,
+    workers,
+    workerErrors,
+    logs,
+    files,
+    tick,
+    devServerEnabled,
+  ] = await Promise.all([
+    loadConfig(p.config),
+    readMaybe(p.status),
+    loadLaunchd(p.plist),
+    loadRunner(p.lock),
+    loadActiveRun(p.activeRun),
+    readMaybe(p.queue),
+    listWorkers(p.runsDir, nowMs),
+    loadWorkerErrors(p.runsDir),
+    listLogs(p),
+    listFileLocations(p),
+    loadTick(p.tick),
+    getDevServerEnabled(),
+  ]);
 
   const board = boardText === null ? emptyTaskBoard() : parseTaskBoard(boardText);
   const instances = deriveInstances(board, nowMs);
