@@ -88,4 +88,20 @@ describe('captureServerErrorTask (rubato)', () => {
     expect(t[0].body).not.toContain('hunter2');
     expect(t[0].body).toContain('***redacted***');
   });
+
+  test('omits payload section when no payload is provided (GET or non-JSON body path)', () => {
+    process.env.ERROR_AUTO_TASK = 'true';
+    captureServerErrorTask({ method: 'GET', url: '/api/apps', status: 500, error: new Error('boom') });
+    const t = tasks();
+    expect(t).toHaveLength(1);
+    expect(t[0].body).not.toContain('Request payload');
+  });
+
+  test('omits payload section when payload is an empty object', () => {
+    process.env.ERROR_AUTO_TASK = 'true';
+    captureServerErrorTask({ method: 'POST', url: '/api/run', status: 500, error: new Error('boom'), payload: {} });
+    const t = tasks();
+    expect(t).toHaveLength(1);
+    expect(t[0].body).not.toContain('Request payload');
+  });
 });
