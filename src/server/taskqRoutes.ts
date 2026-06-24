@@ -17,6 +17,7 @@
  *   GET    /api/taskq/findings                      → { findings, summary } (?status= ?type= ?severity= ?open=1)
  *   POST   /api/taskq/findings/:id/status           → { status, note? } → { findings, summary }
  *   POST   /api/taskq/healer                        → HealerResult (detect + fix stalled states)
+ *   GET    /api/taskq/stalled                        → StalledStateSnapshot (read-only detection)
  */
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -71,6 +72,7 @@ import {
   taskqHistory,
 } from './taskq/control';
 import { logHealerResult, makeHealerDeps, runHealer } from './taskq/drainHealer';
+import { detectStalledStates } from './taskq/selfHealer';
 import { resolveGateway } from './taskq/triage';
 import { applyUsagePollConfig, getUsageSnapshot, refreshUsageNow } from './taskq/usagePoller';
 import { reconcileUsageObservation } from './taskq/usageReconcile';
@@ -373,6 +375,20 @@ export async function handleTaskqApi(pathname: string, req: Request): Promise<Re
       return json(result);
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : 'healer failed', 500);
+    }
+  }
+
+  // Stalled-state detection: read-only snapshot of expired leases + long-running tasks.
+  // Use before POST /api/taskq/healer to see what would be fixed (no mutations).
+  if (pathname === '/api/taskq/stalled') {
+    if (req.method !== 'GET') return jsonError('use GET', 405);
+    try {
+      const url = new URL(req.url);
+      const taskTimeoutMs = Number(url.searchParams.get('taskTimeoutMs') ?? '0') || undefined;
+      const db = getTaskqDb();
+      return json(detectStalledStates(db, Date.now(), { taskTimeoutMs }));
+    } catch (e) {
+      return jsonError(e instanceof Error ? e.message : 'stalled detection failed', 500);
     }
   }
 
