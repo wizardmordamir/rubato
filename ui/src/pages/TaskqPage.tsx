@@ -358,6 +358,57 @@ export function TaskqPage() {
                 const allTasks = board.tasks.filter((t) => t.status === s);
                 if (allTasks.length === 0) return [];
                 const selectProps = { selectMode, selectedIds, onToggleSelect: toggleSelect };
+                if (s === "claimed") {
+                  // Split claimed tasks: "In Progress" (worker has been heartbeating) vs
+                  // "Group: Queued" (bulk-claimed as a group member but no worker started yet —
+                  // heartbeat_at == claimed_at because the lease was never renewed).
+                  const HEARTBEAT_GRACE_MS = 30_000;
+                  const activeTasks = allTasks.filter(
+                    (t) => t.heartbeat_at != null && t.claimed_at != null && t.heartbeat_at > t.claimed_at + HEARTBEAT_GRACE_MS,
+                  );
+                  const queuedTasks = allTasks.filter(
+                    (t) => t.heartbeat_at == null || t.claimed_at == null || t.heartbeat_at <= t.claimed_at + HEARTBEAT_GRACE_MS,
+                  );
+                  const sharedClaimedProps = {
+                    status: "claimed" as TaskqStatus,
+                    reorderable: false,
+                    onEdit: (t: TaskqTaskView) => setBuilder({ mode: "edit", task: t }),
+                    onDelete: async (t: TaskqTaskView) => {
+                      if (await confirm({ prompt: `Delete "${t.title}"?`, confirmText: "Delete" })) del.mutate(t.id);
+                    },
+                    onHold: (t: TaskqTaskView) => status.mutate({ id: t.id, status: "on_hold" }),
+                    onRequeue: (t: TaskqTaskView) => status.mutate({ id: t.id, status: "ready" }),
+                    onEnqueue: (t: TaskqTaskView) => enqueue.mutate(t.id),
+                    onDuplicate: (t: TaskqTaskView) => duplicate.mutate(t.id),
+                    ...selectProps,
+                  };
+                  return [
+                    activeTasks.length > 0 && (
+                      <BoardSection
+                        key="claimed-active"
+                        {...sharedClaimedProps}
+                        tasks={activeTasks}
+                        count={activeTasks.length}
+                        label="In Progress"
+                        collapsed={!!sectionPrefs["claimed"]}
+                        onToggleCollapse={() => toggleCollapse.mutate({ status: "claimed", collapsed: !sectionPrefs["claimed"] })}
+                        onReorder={(ids) => onReorder(board, "claimed", ids)}
+                      />
+                    ),
+                    queuedTasks.length > 0 && (
+                      <BoardSection
+                        key="claimed-queued"
+                        {...sharedClaimedProps}
+                        tasks={queuedTasks}
+                        count={queuedTasks.length}
+                        label="Group: Queued"
+                        collapsed={!!sectionPrefs["claimed"]}
+                        onToggleCollapse={() => toggleCollapse.mutate({ status: "claimed", collapsed: !sectionPrefs["claimed"] })}
+                        onReorder={(ids) => onReorder(board, "claimed", ids)}
+                      />
+                    ),
+                  ].filter(Boolean);
+                }
                 if (s !== "on_hold") {
                   const section = (
                     <BoardSection

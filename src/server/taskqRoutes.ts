@@ -159,9 +159,11 @@ function board(): TaskqBoard {
   const db = getTaskqDb();
   backfillNumericSlugs(db);
 
-  // Lease data for claimed tasks (claimed_at keyed by task_id).
-  const leases = db.query(`SELECT task_id, claimed_at FROM leases`).all() as { task_id: number; claimed_at: number }[];
-  const leaseByTaskId = new Map(leases.map((l) => [l.task_id, l.claimed_at]));
+  // Lease data for claimed tasks (claimed_at + heartbeat_at keyed by task_id).
+  const leases = db
+    .query(`SELECT task_id, claimed_at, heartbeat_at FROM leases`)
+    .all() as { task_id: number; claimed_at: number; heartbeat_at: number }[];
+  const leaseByTaskId = new Map(leases.map((l) => [l.task_id, l]));
 
   // Most-recent completion row per done task.
   type CompRow = {
@@ -185,7 +187,8 @@ function board(): TaskqBoard {
   const tasks = listTasks(db).map((t) => {
     const base = { ...t, needs: getNeeds(db, t.id) };
     if (t.status === 'claimed') {
-      return { ...base, claimed_at: leaseByTaskId.get(t.id) ?? null };
+      const lease = leaseByTaskId.get(t.id);
+      return { ...base, claimed_at: lease?.claimed_at ?? null, heartbeat_at: lease?.heartbeat_at ?? null };
     }
     // Include last-completion data for done tasks AND for saved tasks sitting in
     // on_hold after a successful run — so the UI can show "last run Jun 15" and

@@ -70,6 +70,8 @@ export interface TaskqTaskView extends TaskRow {
   needs: string[];
   /** For claimed tasks: epoch-ms when the lease was taken. */
   claimed_at?: number | null;
+  /** For claimed tasks: epoch-ms of last heartbeat (== claimed_at if worker hasn't started yet). */
+  heartbeat_at?: number | null;
   /** For done tasks: epoch-ms when the run started. */
   started_at?: number | null;
   /** For done tasks: epoch-ms when the run ended. */
