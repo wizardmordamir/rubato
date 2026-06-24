@@ -8,14 +8,11 @@
  * the false-done regression check in `doneCheck.ts`) must apply the SAME scan so NO
  * checkpoint trusts the exit code alone.
  *
- * Keep {@link BUILD_OUTPUT_FAILED} in sync with the watchdog's regex.
+ * The marker set + green decision are the ONE canonical primitive in `cwip/build`,
+ * shared by every checkpoint (an app's build orchestrator, this executor gate, and the
+ * promotion watchdog) so they can never drift. This module re-exports them under the
+ * local names its consumers already use — `BUILD_OUTPUT_FAILED` aliases the canonical
+ * `BUILD_FAILURE_MARKERS`. (It used to be a hand-copied regex kept aligned only by a
+ * comment.)
  */
-
-/** Known build/bundler failure markers that can appear even on an exit-0 build. */
-export const BUILD_OUTPUT_FAILED =
-  /error during build|Build failed|✗ Build|RollupError|Could not resolve|is not exported by|Transform failed|esbuild.*error/i;
-
-/** A build counts as GREEN only when it exits 0 AND prints no known failure marker. */
-export function buildIsGreen(res: { code: number; out: string }): boolean {
-  return res.code === 0 && !BUILD_OUTPUT_FAILED.test(res.out);
-}
+export { BUILD_FAILURE_MARKERS as BUILD_OUTPUT_FAILED, buildIsGreen } from 'cwip/build';
