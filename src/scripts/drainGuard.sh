@@ -184,6 +184,27 @@ if ! printf '%s' "$UI_BODY" | grep -q '"tasks"'; then
   fi
 fi
 
+# 8. CRASH-FAILURE RECOVERY — a crashed / timed-out / token-exhausted worker must NEVER
+#    permanently park a task at needs_owner: that stalls the whole dep-chain and needs the
+#    owner. Re-queue tasks that failed for a TRANSIENT reason, BOUNDED so a task that
+#    repeatedly kills workers escalates to an investigate task instead of looping forever.
+CRASH_IDS=$(sqlite3 "$DB" "SELECT id FROM tasks WHERE status IN ('failed') AND (hold_disposition='needs_owner' OR hold_disposition IS NULL) AND (note LIKE '%lease expired%' OR note LIKE '%worker crashed%' OR note LIKE '%stopped heartbeating%' OR note LIKE '%exited 143%')" 2>/dev/null)
+for tid in $CRASH_IDS; do
+  [ -z "$tid" ] && continue
+  # count prior auto-requeues by this guard (marker is 14 chars: '[auto-requeued')
+  RQ=$(sqlite3 "$DB" "SELECT (length(note)-length(replace(note,'[auto-requeued','')))/14 FROM tasks WHERE id=$tid" 2>/dev/null || echo 0)
+  if [ "${RQ:-0}" -lt 3 ]; then
+    sqlite3 "$DB" "UPDATE tasks SET status='ready', hold_disposition=NULL, attempts=0, recur_next_at=NULL, note=COALESCE(note,'')||char(10)||'[auto-requeued by drain-guard $(ts) — transient worker crash, retry $((RQ+1))]', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=$tid" 2>/dev/null \
+      && { ISSUES=$((ISSUES+1)); FIXED=$((FIXED+1)); log "FIX: re-queued crash-failed task #$tid (transient crash, retry $((RQ+1))/3)"; }
+  else
+    # Repeatedly kills workers — stop looping; file ONE investigate task instead.
+    SLUG=$(sqlite3 "$DB" "SELECT slug FROM tasks WHERE id=$tid" 2>/dev/null)
+    ensure_heal_task "investigate-crasher-$tid" "Task #$tid ($SLUG) keeps crashing workers — investigate/split" "ru" \
+      "Task #$tid ($SLUG) has crash-failed and been auto-requeued 3+ times (worker keeps dying: OOM / too large / token-exhaustion / a hard error). Do NOT just re-run it. Diagnose WHY the worker dies, then either split it into smaller tasks, fix the underlying error, or right-size its model/budget. The original is left failed so it stops consuming retries."
+    log "WARNING: task #$tid crash-failed 3+ times — filed investigate task (no more blind retries)"
+  fi
+done
+
 if [ "$ISSUES" -eq 0 ]; then
   log "OK: drain environment healthy (cwip dist present, bun link OK)"
 else
