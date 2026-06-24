@@ -71,6 +71,7 @@ import {
   taskqHistory,
 } from './taskq/control';
 import { logHealerResult, makeHealerDeps, runHealer } from './taskq/drainHealer';
+import { coerceTaskText } from './taskq/normalizeTask';
 import { resolveGateway } from './taskq/triage';
 import { applyUsagePollConfig, getUsageSnapshot, refreshUsageNow } from './taskq/usagePoller';
 import { reconcileUsageObservation } from './taskq/usageReconcile';
@@ -188,29 +189,34 @@ function board(): TaskqBoard {
     if (!completionByTaskId.has(c.task_id)) completionByTaskId.set(c.task_id, c);
   }
 
-  const tasks = listTasks(db).map((t) => {
-    const base = { ...t, needs: getNeeds(db, t.id) };
-    if (t.status === 'claimed') {
-      const lease = leaseByTaskId.get(t.id);
-      return { ...base, claimed_at: lease?.claimed_at ?? null, heartbeat_at: lease?.heartbeat_at ?? null };
-    }
-    // Include last-completion data for done tasks AND for saved tasks sitting in
-    // on_hold after a successful run — so the UI can show "last run Jun 15" and
-    // the AI summary rather than showing nothing about why the task is parked there.
-    if (t.status === 'done' || (t.status === 'on_hold' && t.is_saved)) {
-      const c = completionByTaskId.get(t.id);
-      if (c)
-        return {
-          ...base,
-          started_at: c.started_at,
-          ended_at: c.ended_at,
-          duration_s: c.duration_s,
-          summary: c.summary,
-          commit: c.commit,
-        };
-    }
-    return base;
-  });
+  const tasks = listTasks(db)
+    .map((t) => {
+      const base = { ...t, needs: getNeeds(db, t.id) };
+      if (t.status === 'claimed') {
+        const lease = leaseByTaskId.get(t.id);
+        return { ...base, claimed_at: lease?.claimed_at ?? null, heartbeat_at: lease?.heartbeat_at ?? null };
+      }
+      // Include last-completion data for done tasks AND for saved tasks sitting in
+      // on_hold after a successful run — so the UI can show "last run Jun 15" and
+      // the AI summary rather than showing nothing about why the task is parked there.
+      if (t.status === 'done' || (t.status === 'on_hold' && t.is_saved)) {
+        const c = completionByTaskId.get(t.id);
+        if (c)
+          return {
+            ...base,
+            started_at: c.started_at,
+            ended_at: c.ended_at,
+            duration_s: c.duration_s,
+            summary: c.summary,
+            commit: c.commit,
+          };
+      }
+      return base;
+    })
+    // Coerce every text column to a string so a malformed row (e.g. a note written as a
+    // spread Buffer → `{0:65,…}`) can never reach the UI as an object and white-screen the
+    // whole board (#304). Pure + unit-tested in taskq/normalizeTask.test.ts.
+    .map(coerceTaskText);
 
   // Sort on_hold tasks newest-first so a freshly-parked task surfaces at the top,
   // not buried below older on_hold items ordered by id.
