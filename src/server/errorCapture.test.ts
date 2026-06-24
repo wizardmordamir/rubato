@@ -71,4 +71,21 @@ describe('captureServerErrorTask (rubato)', () => {
     process.env.ERROR_AUTO_TASK = 'true';
     expect(() => captureServerErrorTask({ method: 'GET', url: '/api/x', status: 500, error: undefined })).not.toThrow();
   });
+
+  test('captures redacted payload in the task body', () => {
+    process.env.ERROR_AUTO_TASK = 'true';
+    captureServerErrorTask({
+      method: 'POST',
+      url: '/api/run',
+      status: 500,
+      error: new Error('fail'),
+      payload: { command: 'scan', password: 'hunter2', args: ['--all'] },
+    });
+    const t = tasks();
+    expect(t).toHaveLength(1);
+    expect(t[0].body).toContain('Request payload (redacted)');
+    expect(t[0].body).toContain('"command"');
+    expect(t[0].body).not.toContain('hunter2');
+    expect(t[0].body).toContain('***redacted***');
+  });
 });

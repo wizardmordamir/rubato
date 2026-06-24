@@ -22,6 +22,8 @@ export interface CaptureContext {
   url: string;
   status: number;
   error: unknown;
+  /** Request body; handed to cwip for redaction before it's persisted. */
+  payload?: unknown;
 }
 
 /** File/bump a deduped taskq debug task for a 5xx. No-op (and never throws) when disabled. */
@@ -39,6 +41,7 @@ export function captureServerErrorTask(ctx: CaptureContext): void {
       message: e?.message ?? (typeof err === 'string' ? err : undefined),
       stack: e?.stack,
       correlationId: currentCorrelationId() ?? null,
+      payload: ctx.payload,
     };
     const result = captureServerError(getTaskqDb(), input);
     const verb = result.created ? 'filed' : result.reopened ? 're-queued (regression)' : 'bumped';

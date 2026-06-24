@@ -1472,11 +1472,22 @@ async function routeRequest(req: Request, opts: RouteOptions = {}): Promise<Resp
     // also the one place that sees every uncaught 5xx, so it's where an uncaught
     // crash becomes a deduped taskq debug task (OFF unless ERROR_AUTO_TASK is set;
     // capture never throws).
+    //
+    // Clone the request before handleApi consumes the body stream, so the error
+    // path can read the (redacted) payload for the debug task even if the handler
+    // already called req.json() before throwing.
+    const bodyClone = req.clone();
     try {
       return await handleApi(pathname, req, opts);
     } catch (err) {
       const status = isAppError(err) ? (err.status ?? 500) : 500;
-      captureServerErrorTask({ method: req.method, url: pathname, status, error: err });
+      let payload: unknown;
+      try {
+        payload = await bodyClone.json();
+      } catch {
+        // non-JSON body or no body — skip payload capture
+      }
+      captureServerErrorTask({ method: req.method, url: pathname, status, error: err, payload });
       return jsonError(err instanceof Error ? err.message : String(err), status);
     }
   }
