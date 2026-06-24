@@ -410,32 +410,49 @@ export function TaskqPage() {
                   ].filter(Boolean);
                 }
                 if (s !== "on_hold") {
-                  const section = (
-                    <BoardSection
-                      key={s}
-                      status={s}
-                      tasks={allTasks}
-                      count={board.counts[s]}
-                      reorderable={REORDERABLE.has(s)}
-                      collapsed={!!sectionPrefs[s]}
-                      onToggleCollapse={() => toggleCollapse.mutate({ status: s, collapsed: !sectionPrefs[s] })}
-                      onReorder={(ids) => onReorder(board, s, ids)}
-                      onEdit={(t) => setBuilder({ mode: "edit", task: t })}
-                      onDelete={async (t) => {
-                        if (await confirm({ prompt: `Delete "${t.title}"?`, confirmText: "Delete" })) del.mutate(t.id);
-                      }}
-                      onHold={(t) =>
-                        status.mutate(t.status === "on_hold" ? { id: t.id, status: "ready" } : { id: t.id, status: "on_hold" })
-                      }
-                      onRequeue={(t) => status.mutate({ id: t.id, status: "ready" })}
-                      onEnqueue={(t) => enqueue.mutate(t.id)}
-                      onDuplicate={(t) => duplicate.mutate(t.id)}
-                      {...selectProps}
-                    />
-                  );
-                  return s === "done"
-                    ? [<DoneHistoryAnnotation key="done-stats" />, section]
-                    : [section];
+                  const sharedDoneProps = {
+                    status: s,
+                    reorderable: REORDERABLE.has(s),
+                    collapsed: !!sectionPrefs[s],
+                    onToggleCollapse: () => toggleCollapse.mutate({ status: s, collapsed: !sectionPrefs[s] }),
+                    onReorder: (ids: number[]) => onReorder(board, s, ids),
+                    onEdit: (t: TaskqTaskView) => setBuilder({ mode: "edit", task: t }),
+                    onDelete: async (t: TaskqTaskView) => {
+                      if (await confirm({ prompt: `Delete "${t.title}"?`, confirmText: "Delete" })) del.mutate(t.id);
+                    },
+                    onHold: (t: TaskqTaskView) =>
+                      status.mutate(t.status === "on_hold" ? { id: t.id, status: "ready" } : { id: t.id, status: "on_hold" }),
+                    onRequeue: (t: TaskqTaskView) => status.mutate({ id: t.id, status: "ready" }),
+                    onEnqueue: (t: TaskqTaskView) => enqueue.mutate(t.id),
+                    onDuplicate: (t: TaskqTaskView) => duplicate.mutate(t.id),
+                    ...selectProps,
+                  };
+                  if (s === "done") {
+                    // Split done into: regular done + "Done Externally" (transferred to ca orch,
+                    // completed there, verified — serial_group='done_externally').
+                    const regularDone = allTasks.filter((t) => t.serial_group !== "done_externally");
+                    const externallyDone = allTasks.filter((t) => t.serial_group === "done_externally");
+                    return [
+                      <DoneHistoryAnnotation key="done-stats" />,
+                      regularDone.length > 0 && (
+                        <BoardSection key="done" {...sharedDoneProps} tasks={regularDone} count={regularDone.length} />
+                      ),
+                      externallyDone.length > 0 && (
+                        <BoardSection
+                          key="done-externally"
+                          {...sharedDoneProps}
+                          tasks={externallyDone}
+                          count={externallyDone.length}
+                          label="Done Externally"
+                          collapsed={!!sectionPrefs["done_externally"]}
+                          onToggleCollapse={() => toggleCollapse.mutate({ status: "done_externally", collapsed: !sectionPrefs["done_externally"] })}
+                        />
+                      ),
+                    ].filter(Boolean);
+                  }
+                  return [
+                    <BoardSection key={s} {...sharedDoneProps} tasks={allTasks} count={board.counts[s]} />,
+                  ];
                 }
                 // Split on_hold: saved tasks and templates (things we store to re-run) get their own
                 // section; everything else stays in On hold (waiting on something).
@@ -2627,8 +2644,16 @@ function InstancesPanel() {
     },
     onError: (e) => notify(e instanceof Error ? e.message : "release failed", "error"),
   });
-  const items = data?.instances ?? [];
+  const allItems = data?.instances ?? [];
   const now = Date.now();
+  // Only show tasks that a worker is ACTIVELY running. Group-claimed tasks have
+  // heartbeat_at == claimed_at until the drain starts working on them; filter those
+  // out so "Live instances (N)" reports actual running workers, not all leases.
+  const HEARTBEAT_GRACE_MS = 30_000;
+  const items = allItems.filter(
+    (i) => i.heartbeat_at == null || i.claimed_at == null || i.heartbeat_at > i.claimed_at + HEARTBEAT_GRACE_MS,
+  );
+  const groupQueued = allItems.length - items.length;
   return (
     <section>
       <button
@@ -2637,10 +2662,15 @@ function InstancesPanel() {
         onClick={() => setOpen((o) => !o)}
       >
         <span className={`text-xs transition-transform ${open ? "rotate-90" : ""}`}>▶</span>
-        Live instances <span className="text-gray-400">({items.length})</span>
+        Active workers <span className="text-gray-400">({items.length})</span>
+        {groupQueued > 0 && (
+          <span className="ml-1 text-xs font-normal text-gray-400">
+            +{groupQueued} group-queued
+          </span>
+        )}
       </button>
       {open && items.length === 0 ? (
-        <p className="text-sm text-gray-400">No workers claimed right now.</p>
+        <p className="text-sm text-gray-400">No workers active right now{groupQueued > 0 ? ` (${groupQueued} group-queued on deck)` : ""}.</p>
       ) : open ? (
         <div className="space-y-3">
           {items.map((i) => {
