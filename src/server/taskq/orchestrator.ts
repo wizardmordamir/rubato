@@ -302,6 +302,10 @@ export async function runDrain(db: TaskqDb, opts: DrainOptions): Promise<DrainSu
       }
 
       const startedAt = now();
+      // Stamp heartbeat immediately so the UI can distinguish "actively being worked"
+      // (heartbeat_at > claimed_at + grace) from "group-queued" (heartbeat_at == claimed_at).
+      // Without this, a group task shows as "Group: Queued" for up to heartbeatMs after starting.
+      heartbeat(db, task.id, now(), opts.leaseTtlMs);
       const hb = setInterval(() => heartbeat(db, task.id, now(), opts.leaseTtlMs), heartbeatMs);
       try {
         const res = await opts.executor(task, ctx);
