@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { EnvEditor } from "cursedbelt/react";
+import { DisclosureButton, EnvEditor } from "cursedbelt/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -417,9 +417,9 @@ function RepoTools() {
         />
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={BTN_GHOST_CLASS} onClick={() => setOpen((v) => !v)}>
-          {open ? "▾ Repo tools" : "▸ Repo tools"}
-        </button>
+        <DisclosureButton open={open} onToggle={() => setOpen((v) => !v)} className={BTN_GHOST_CLASS}>
+          Repo tools
+        </DisclosureButton>
         <Tooltip
           multiline
           content={`Recursively scans all configured scan roots (${codeDirs.length ? codeDirs.join(", ") : "none set"}) for git repos and merges them into the registry. Use "Add scan root…" to configure roots.`}
@@ -996,17 +996,17 @@ function LogSection({ app }: { app: AppConfig }) {
         <ul className={`${CARD_CLASS} divide-y divide-gray-100 dark:divide-gray-900`}>
           {commits.map((c) => (
             <li key={c.sha} className="px-2 py-1.5">
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 text-left text-sm"
-                onClick={() => setOpenSha(openSha === c.sha ? null : c.sha)}
+              <DisclosureButton
+                open={openSha === c.sha}
+                onToggle={() => setOpenSha(openSha === c.sha ? null : c.sha)}
+                className="w-full text-sm"
+                classNames={{ arrow: "text-gray-400" }}
               >
-                <span className="text-gray-400">{openSha === c.sha ? "▾" : "▸"}</span>
                 <span className="font-mono text-xs text-accent">{c.shortSha}</span>
                 <span className="min-w-0 flex-1 truncate">{c.subject}</span>
                 <span className="hidden shrink-0 text-xs text-gray-400 sm:inline">{c.author}</span>
                 <span className="shrink-0 text-xs text-gray-400">{c.relativeDate}</span>
-              </button>
+              </DisclosureButton>
               {openSha === c.sha && (
                 <div className="mt-2">
                   <CommitDiff app={app} sha={c.sha} />
@@ -2148,12 +2148,16 @@ function StashRow({
   return (
     <li className="rounded-lg border border-gray-200 p-2 dark:border-gray-800">
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onToggle}>
-          <span className="text-gray-400">{open ? "▾" : "▸"}</span>
+        <DisclosureButton
+          open={open}
+          onToggle={onToggle}
+          className="min-w-0 flex-1"
+          classNames={{ arrow: "text-gray-400" }}
+        >
           <Badge tone="accent">{stash.ref}</Badge>
           <span className="truncate text-sm">{stash.message}</span>
           {stash.relativeDate && <span className="ml-1 shrink-0 text-xs text-gray-400">{stash.relativeDate}</span>}
-        </button>
+        </DisclosureButton>
         <span className="flex shrink-0 gap-1">
           <button type="button" className={BTN_GHOST_CLASS} disabled={busy} onClick={onApply}>
             Apply
