@@ -23,6 +23,7 @@ function makeDeps(overrides: Partial<HealerDeps> = {}): HealerDeps {
     kickDrain: () => ({ code: 0, out: 'kicked' }),
     freshHeartbeatCount: () => 0,
     leaseCount: () => 0,
+    clearNeedsOwner: () => ({ cleared: 0 }),
     ...overrides,
   };
 }
@@ -201,6 +202,33 @@ describe('expired leases', () => {
     // DB unavailable → no lease issue (not an issue, just skipped)
     expect(result.issues.find((i) => i.code === 'leases-expired')).toBeUndefined();
     expect(result.inconclusive).toBe(false); // 'unavailable' is expected, not an error
+  });
+});
+
+describe('owner-gate sweep', () => {
+  test('reports cleared needs_owner tasks as fixed', () => {
+    const clearNeedsOwner = mock(() => ({ cleared: 2 }));
+    const result = runHealer(makeDeps({ clearNeedsOwner }));
+
+    const issue = result.issues.find((i) => i.code === 'needs-owner-cleared');
+    expect(issue).toBeDefined();
+    expect(issue!.fixed).toBe(true);
+    expect(issue!.description).toContain('2 task');
+    expect(clearNeedsOwner).toHaveBeenCalledTimes(1);
+    expect(result.issuesFixed).toBe(1);
+  });
+
+  test('does not report an issue when no tasks have needs_owner hold', () => {
+    const result = runHealer(makeDeps({ clearNeedsOwner: () => ({ cleared: 0 }) }));
+    expect(result.issues.find((i) => i.code === 'needs-owner-cleared')).toBeUndefined();
+    expect(result.issuesFound).toBe(0);
+  });
+
+  test('silently skips when DB is unavailable (same pattern as reapLeases)', () => {
+    const result = runHealer(makeDeps({ clearNeedsOwner: () => 'unavailable' }));
+    // 'unavailable' is an expected skip, not an error — no inconclusive flag, no issue
+    expect(result.issues.find((i) => i.code === 'needs-owner-cleared')).toBeUndefined();
+    expect(result.inconclusive).toBe(false);
   });
 });
 

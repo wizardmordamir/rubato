@@ -1,8 +1,8 @@
 /**
  * Drain self-healer — detect + fix stalled orchestration states.
  *
- * Covers the four stall classes the `drainGuard.sh` shell script handled, now
- * in testable TypeScript with proper dependency injection:
+ * Covers five stall/policy classes (the first four were in drainGuard.sh; all
+ * are now in testable TypeScript with proper dependency injection):
  *
  *  1. **cwip dist missing**: a worker task's `bun run clean` on the cwip checkout
  *     (or a worktree `bun i`) can wipe `dist/` — the drain's `cwip/taskq` import
@@ -22,7 +22,11 @@
  *     they stay stranded. Fix: call `reapExpired` directly so the tasks become
  *     `ready` again and the next drain pass picks them up.
  *
- * All four run as one `runHealer()` call that returns a structured report.
+ *  5. **needs-owner holds**: tasks parked with `hold_disposition='needs_owner'`
+ *     block their dependency chains and violate the "nothing may block on the owner"
+ *     invariant. Fix: clear the hold so the drain can schedule them normally.
+ *
+ * All five run as one `runHealer()` call that returns a structured report.
  * Each check is independently injectable so tests drive it without real disk/DB.
  */
 
@@ -46,7 +50,12 @@ export interface HealerIssue {
   detail?: string;
 }
 
-export type HealerIssueCode = 'cwip-dist-missing' | 'symlink-broken' | 'drain-stalled' | 'leases-expired';
+export type HealerIssueCode =
+  | 'cwip-dist-missing'
+  | 'symlink-broken'
+  | 'drain-stalled'
+  | 'leases-expired'
+  | 'needs-owner-cleared';
 
 /** Full result of one healer run. */
 export interface HealerResult {
@@ -98,6 +107,13 @@ export interface HealerDeps {
   freshHeartbeatCount(freshHbMs: number): number | 'unavailable';
   /** Total lease count (regardless of freshness). */
   leaseCount(): number | 'unavailable';
+  /**
+   * Clear any tasks whose `hold_disposition` is `'needs_owner'` and status is not
+   * `'done'` or `'claimed'`. Returns how many rows were cleared, or `'unavailable'`
+   * when the DB cannot be reached. A cleared task becomes schedulable on the next
+   * drain pass — the "nothing may block on the owner" invariant.
+   */
+  clearNeedsOwner(): { cleared: number } | 'unavailable';
 }
 
 // How stale watchdog.out must be (ms) before we consider the drain stalled.
@@ -215,6 +231,28 @@ export function runHealer(deps: HealerDeps, opts: HealerOpts = {}): HealerResult
     issues.push({
       code: 'leases-expired',
       description: 'expired lease check failed (inconclusive)',
+      fixed: false,
+      detail: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  // ── 5. Owner-gate sweep ────────────────────────────────────────────────────
+  // "Nothing may block on the owner" invariant: tasks with hold_disposition='needs_owner'
+  // stall their entire dependency chain. Clear them so the drain can schedule normally.
+  try {
+    const result = deps.clearNeedsOwner();
+    if (result !== 'unavailable' && result.cleared > 0) {
+      issues.push({
+        code: 'needs-owner-cleared',
+        description: `${result.cleared} task(s) had 'needs_owner' hold cleared — now schedulable`,
+        fixed: true,
+      });
+    }
+  } catch (e) {
+    inconclusive = true;
+    issues.push({
+      code: 'needs-owner-cleared',
+      description: 'owner-gate check failed (inconclusive)',
       fixed: false,
       detail: e instanceof Error ? e.message : String(e),
     });
@@ -338,6 +376,23 @@ export function makeHealerDeps(db?: TaskqDb): HealerDeps {
       try {
         const row = db.query(`SELECT COUNT(*) AS c FROM leases`).get() as { c: number } | null;
         return row?.c ?? 0;
+      } catch {
+        return 'unavailable';
+      }
+    },
+    clearNeedsOwner: () => {
+      if (!db) return 'unavailable';
+      try {
+        const row = db
+          .query(`SELECT COUNT(*) AS c FROM tasks WHERE hold_disposition='needs_owner' AND status NOT IN ('done','claimed')`)
+          .get() as { c: number } | null;
+        const count = row?.c ?? 0;
+        if (count > 0) {
+          db.run(
+            `UPDATE tasks SET hold_disposition=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE hold_disposition='needs_owner' AND status NOT IN ('done','claimed')`,
+          );
+        }
+        return { cleared: count };
       } catch {
         return 'unavailable';
       }
