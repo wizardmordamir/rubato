@@ -2599,7 +2599,7 @@ function DrainerControl({ onGoToSettings }: { onGoToSettings: () => void }) {
         <div className="ml-1 border-l border-gray-200 pl-3 dark:border-gray-700">
           <Tooltip
             multiline
-            content="Detect and fix stalled orchestration states: rebuild cwip dist if missing, relink first-party symlinks, restart a stalled drain, reap expired leases, clear needs-owner holds, and surface dirty primary checkouts. Safe to run any time."
+            content="Detect and fix stalled orchestration states: rebuild cwip dist if missing, relink first-party symlinks, restart a stalled drain, reap expired leases, clear needs-owner holds, surface dirty primary checkouts, and report depleted budget buckets. Safe to run any time."
           >
             <button
               type="button"

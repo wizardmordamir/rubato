@@ -25,6 +25,7 @@ function makeDeps(overrides: Partial<HealerDeps> = {}): HealerDeps {
     leaseCount: () => 0,
     clearNeedsOwner: () => ({ cleared: 0 }),
     checkPrimaryHygiene: () => [],
+    checkBudget: () => [],
     ...overrides,
   };
 }
@@ -322,6 +323,93 @@ describe('inconclusive checks', () => {
     const issue = result.issues.find((i) => i.code === 'cwip-dist-missing');
     expect(issue).toBeDefined();
     expect(issue!.description).toContain('inconclusive');
+  });
+});
+
+describe('budget exhaustion', () => {
+  test('reports depleted budget buckets as unfixed issues', () => {
+    const result = runHealer(
+      makeDeps({
+        checkBudget: () => [{ key: 'session_5h', limitUnits: 0, resetAt: NOW_MS + 60 * 60_000 }],
+      }),
+    );
+
+    const issue = result.issues.find((i) => i.code === 'budget-depleted');
+    expect(issue).toBeDefined();
+    expect(issue!.fixed).toBe(false); // auto-reset is not possible
+    expect(issue!.description).toContain('session_5h');
+    expect(issue!.description).toContain('drain may throttle');
+    expect(result.issuesFixed).toBe(0);
+  });
+
+  test('includes reset-in time when resetAt is in the future', () => {
+    const resetAt = NOW_MS + 90 * 60_000; // 90 minutes from now
+    const result = runHealer(
+      makeDeps({
+        checkBudget: () => [{ key: 'weekly_sonnet', limitUnits: 5e-10, resetAt }],
+      }),
+    );
+
+    const issue = result.issues.find((i) => i.code === 'budget-depleted');
+    expect(issue).toBeDefined();
+    expect(issue!.description).toContain('resets in');
+    expect(issue!.description).toContain('m');
+  });
+
+  test('says "reset overdue" when resetAt is in the past', () => {
+    const resetAt = NOW_MS - 10 * 60_000; // 10 minutes ago
+    const result = runHealer(
+      makeDeps({
+        checkBudget: () => [{ key: 'session_5h', limitUnits: 0.001, resetAt }],
+      }),
+    );
+
+    const issue = result.issues.find((i) => i.code === 'budget-depleted');
+    expect(issue).toBeDefined();
+    expect(issue!.description).toContain('reset overdue');
+  });
+
+  test('no issue when all budgets are healthy', () => {
+    const result = runHealer(makeDeps({ checkBudget: () => [] }));
+    expect(result.issues.find((i) => i.code === 'budget-depleted')).toBeUndefined();
+    expect(result.issuesFound).toBe(0);
+  });
+
+  test('silently skips when DB is unavailable', () => {
+    const result = runHealer(makeDeps({ checkBudget: () => 'unavailable' }));
+    expect(result.issues.find((i) => i.code === 'budget-depleted')).toBeUndefined();
+    expect(result.inconclusive).toBe(false);
+  });
+
+  test('marks inconclusive when check throws', () => {
+    const result = runHealer(
+      makeDeps({
+        checkBudget: () => {
+          throw new Error('db error');
+        },
+      }),
+    );
+
+    expect(result.inconclusive).toBe(true);
+    const issue = result.issues.find((i) => i.code === 'budget-depleted');
+    expect(issue).toBeDefined();
+    expect(issue!.description).toContain('inconclusive');
+  });
+
+  test('reports one issue per depleted key', () => {
+    const result = runHealer(
+      makeDeps({
+        checkBudget: () => [
+          { key: 'session_5h', limitUnits: 0, resetAt: NOW_MS + 30 * 60_000 },
+          { key: 'weekly_sonnet', limitUnits: 0.5, resetAt: NOW_MS + 3 * 24 * 60 * 60_000 },
+        ],
+      }),
+    );
+
+    const depleted = result.issues.filter((i) => i.code === 'budget-depleted');
+    expect(depleted).toHaveLength(2);
+    expect(depleted.map((i) => i.description).some((d) => d.includes('session_5h'))).toBe(true);
+    expect(depleted.map((i) => i.description).some((d) => d.includes('weekly_sonnet'))).toBe(true);
   });
 });
 

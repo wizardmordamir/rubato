@@ -63,7 +63,8 @@ export type HealerIssueCode =
   | 'drain-stalled'
   | 'leases-expired'
   | 'needs-owner-cleared'
-  | 'primary-dirty';
+  | 'primary-dirty'
+  | 'budget-depleted';
 
 /** Full result of one healer run. */
 export interface HealerResult {
@@ -130,6 +131,15 @@ export interface HealerDeps {
    * worker handles the actual cleanup (land changes → clean primary).
    */
   checkPrimaryHygiene(): Array<{ dir: string; dirtyFiles: string[] }>;
+  /**
+   * Check for depleted budget buckets in `limit_buckets`.
+   * Returns the list of keys with `limit_units < 1.0` (essentially exhausted),
+   * or `'unavailable'` when the DB cannot be reached. A depleted budget causes
+   * the drain to throttle or stop claiming tasks — surfacing it here explains
+   * apparent drain inactivity without an environment-level fix needed.
+   * Auto-fix is intentionally omitted: budget resets automatically on schedule.
+   */
+  checkBudget(): Array<{ key: string; limitUnits: number; resetAt: number | null }> | 'unavailable';
 }
 
 // How stale watchdog.out must be (ms) before we consider the drain stalled.
@@ -296,6 +306,39 @@ export function runHealer(deps: HealerDeps, opts: HealerOpts = {}): HealerResult
     issues.push({
       code: 'primary-dirty',
       description: 'primary hygiene check failed (inconclusive)',
+      fixed: false,
+      detail: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  // ── 7. Budget exhaustion ──────────────────────────────────────────────────────
+  // Depleted usage-limit buckets (session_5h, weekly_total, weekly_sonnet, …) cause
+  // the drain to throttle or stop claiming tasks. Surface them so the operator knows
+  // why the queue appears idle — the fix is to wait for the window to reset (automatic).
+  // A depleted bucket is NOT a stall in the environment sense, so auto-fix is omitted.
+  try {
+    const depleted = deps.checkBudget();
+    if (depleted !== 'unavailable') {
+      for (const { key, limitUnits, resetAt } of depleted) {
+        const resetInMs = resetAt !== null ? resetAt - now : null;
+        const resetDesc =
+          resetInMs !== null && resetInMs > 0
+            ? ` — resets in ${Math.round(resetInMs / 60_000)}m`
+            : resetAt !== null
+              ? ' — reset overdue'
+              : '';
+        issues.push({
+          code: 'budget-depleted',
+          description: `${key} budget exhausted (${limitUnits.toExponential(2)} units remaining)${resetDesc} — drain may throttle`,
+          fixed: false,
+        });
+      }
+    }
+  } catch (e) {
+    inconclusive = true;
+    issues.push({
+      code: 'budget-depleted',
+      description: 'budget check failed (inconclusive)',
       fixed: false,
       detail: e instanceof Error ? e.message : String(e),
     });
@@ -470,6 +513,18 @@ export function makeHealerDeps(db?: TaskqDb): HealerDeps {
         }
       }
       return dirty;
+    },
+    checkBudget: () => {
+      if (!db) return 'unavailable';
+      try {
+        // Buckets with < 1.0 remaining unit are essentially exhausted.
+        const rows = db
+          .query(`SELECT key, limit_units, reset_at FROM limit_buckets WHERE limit_units < 1.0`)
+          .all() as Array<{ key: string; limit_units: number; reset_at: number | null }>;
+        return rows.map((r) => ({ key: r.key, limitUnits: r.limit_units, resetAt: r.reset_at }));
+      } catch {
+        return 'unavailable';
+      }
     },
   };
 }
