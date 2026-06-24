@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordFinding } from 'cwip/taskq';
 import type { FindingRow, FindingsSummary, TaskqBoard } from '../shared/taskq';
+import type { HealerResult } from './taskq/drainHealer';
+import type { StalledStateSnapshot } from './taskq/selfHealer';
 import { __resetTaskqDbForTests, getTaskqDb } from './taskqDb';
 import { handleTaskqApi } from './taskqRoutes';
 
@@ -234,5 +236,41 @@ describe('taskq routes', () => {
     expect((await call('POST', `/api/taskq/findings/${drift.finding.id}/status`, { status: 'bogus' })).status).toBe(
       400,
     );
+  });
+
+  test('stalled: GET returns a snapshot with expected shape (empty DB)', async () => {
+    const res = await call('GET', '/api/taskq/stalled');
+    expect(res.status).toBe(200);
+    const snap = (await res.json()) as StalledStateSnapshot;
+    expect(Array.isArray(snap.expiredLeases)).toBe(true);
+    expect(Array.isArray(snap.longRunning)).toBe(true);
+    expect(typeof snap.nowMs).toBe('number');
+    // Fresh DB has no leases — nothing stalled.
+    expect(snap.expiredLeases).toHaveLength(0);
+    expect(snap.longRunning).toHaveLength(0);
+  });
+
+  test('stalled: non-GET rejected with 405', async () => {
+    expect((await call('POST', '/api/taskq/stalled')).status).toBe(405);
+  });
+
+  test('healer: POST returns a valid HealerResult shape', async () => {
+    const res = await call('POST', '/api/taskq/healer');
+    expect(res.status).toBe(200);
+    const result = (await res.json()) as HealerResult;
+    expect(typeof result.ranAt).toBe('string');
+    expect(() => new Date(result.ranAt)).not.toThrow();
+    expect(typeof result.issuesFound).toBe('number');
+    expect(typeof result.issuesFixed).toBe('number');
+    expect(Array.isArray(result.issues)).toBe(true);
+    expect(typeof result.inconclusive).toBe('boolean');
+    // Fixed ≤ found.
+    expect(result.issuesFixed).toBeLessThanOrEqual(result.issuesFound);
+    // issuesFound matches issues array length.
+    expect(result.issuesFound).toBe(result.issues.length);
+  });
+
+  test('healer: non-POST rejected with 405', async () => {
+    expect((await call('GET', '/api/taskq/healer')).status).toBe(405);
   });
 });
