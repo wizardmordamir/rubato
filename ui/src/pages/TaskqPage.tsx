@@ -115,6 +115,7 @@ const BOARD_DISPLAY_ORDER: TaskqStatus[] = [
   'not_ready',
   'failed',
   'done',
+  'archived', // frozen/parked out of the flow (e.g. superseded plans kept for later reuse); never claimed
 ];
 
 /** 8 distinct color palettes for serial group color-coding. */

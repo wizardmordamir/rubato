@@ -44,6 +44,51 @@ export function agentPath(): string {
   return `${dirs.join(':')}:${process.env.PATH ?? ''}`;
 }
 
+/**
+ * Repos built CLEAN-ROOM (from scratch, fully isolated from any other codebase). Their workers
+ * get a prompt that references ONLY the repo's own `/specs` — no mention of any other project,
+ * no shared-lib/standards preamble, no integration-branch flow. A PreToolUse hook in the repo
+ * additionally hard-blocks reading any outside code. Add a repo here to build it from scratch.
+ */
+const CLEAN_ROOM_REPOS = new Set(['nova']);
+
+/** Clean-room worker prompt: build from this repo's /specs, uninfluenced by anything prior. */
+function buildCleanRoomPrompt(task: TaskRow, markers: string): string {
+  return [
+    `You are a headless worker building this project from first principles. Do EXACTLY this one task, then stop.`,
+    ``,
+    `TASK #${task.id}${markers ? ` (${markers})` : ''}: ${task.title}`,
+    task.body ? `\nDetails:\n${task.body}` : '',
+    ``,
+    `THIS PROJECT IS BUILT FROM SCRATCH. The ONLY source of truth is this repo's \`/specs\``,
+    `(00-MASTER-PLAN, 01-REQUIREMENTS, 02-LESSONS, and the current phase's spec). There is`,
+    `nothing else to look at, copy, or match — access outside this project is blocked. READ the`,
+    `specs relevant to your task FIRST, then build the optimal thing they describe — fully`,
+    `influenced by what the best way to build it is, and not at all by anything you've seen before.`,
+    ``,
+    `FIXED STACK: React + TypeScript (frontend), Bun + TypeScript (backend). Everything else is`,
+    `chosen on merit per the specs and justified in writing. Do not pre-decide other dependencies`,
+    `beyond what a task explicitly establishes.`,
+    ``,
+    `GIT WORKFLOW (single repo, local only):`,
+    `- Do your work in a per-task git worktree branched from this repo's default branch; verify;`,
+    `  then merge it back to the default branch with \`--ff-only\`. Resolve conflicts preserving`,
+    `  both sides' intent and re-verify. Never land a broken default branch.`,
+    `- VERIFY before done: the project builds, its tests pass, AND it ACTUALLY RUNS — boot it /`,
+    `  render it headless (a green build alone is NOT enough; it can still fail at runtime).`,
+    `- Local only, never push. Do not pick up any other task.`,
+    ``,
+    `DONE REQUIRES LANDED, WORKING CODE on the default branch — a real commit (non-empty git`,
+    `delta), verified to build AND run. A "done" with nothing landed, or one that only makes the`,
+    `build pass, is NOT done and will be reverted. Reference this task (#${task.id}) in the commit.`,
+    ``,
+    `If you hit a blocker you cannot resolve, explain why and stop (do not land partial work). A`,
+    `transient failure is retried automatically — just explain what went wrong. ONLY if the task`,
+    `is fundamentally impossible or needs a human decision you cannot supply, begin your final`,
+    `reply with "${PERMANENT_FAILURE_MARKER}".`,
+  ].join('\n');
+}
+
 /** The instruction prompt handed to the worker agent for one task. */
 export function buildWorkerPrompt(task: TaskRow): string {
   const markers = [
@@ -53,6 +98,7 @@ export function buildWorkerPrompt(task: TaskRow): string {
   ]
     .filter(Boolean)
     .join(' · ');
+  if (task.repo && CLEAN_ROOM_REPOS.has(task.repo)) return buildCleanRoomPrompt(task, markers);
   return [
     `You are a headless taskq worker. Do EXACTLY this one task, then stop.`,
     ``,

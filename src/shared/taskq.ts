@@ -143,6 +143,7 @@ export const TASKQ_STATUS_LABELS: Record<TaskStatus, string> = {
   not_ready: 'Not ready',
   failed: 'Failed',
   done: 'Done',
+  archived: 'Archived (frozen — reusable later)',
 };
 
 export const TASKQ_MODEL_ALIASES = ['opus', 'opus-1m', 'sonnet', 'haiku', 'fable'];
