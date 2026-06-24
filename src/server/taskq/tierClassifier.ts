@@ -55,7 +55,10 @@ export function makeLlmTierClassifier(): AsyncTierClassifier | null {
       });
       if (!res.ok) return null;
       const json = (await res.json()) as AnthropicResponse;
-      const text = json.content?.find((c) => c.type === 'text')?.text?.trim().toLowerCase();
+      const text = json.content
+        ?.find((c) => c.type === 'text')
+        ?.text?.trim()
+        .toLowerCase();
       if (text === 'sonnet') {
         return { model: 'sonnet', think: 'medium', confidence: 'heuristic', reason: 'LLM: routine/mechanical' };
       }

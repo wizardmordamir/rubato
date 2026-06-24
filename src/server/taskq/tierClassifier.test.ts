@@ -14,7 +14,10 @@ afterEach(() => {
   else delete process.env.ANTHROPIC_API_KEY;
 });
 
-function withMockFetch(mockFn: (url: string | URL | Request, init?: RequestInit) => Promise<Response>, fn: () => Promise<void>): Promise<void> {
+function withMockFetch(
+  mockFn: (url: string | URL | Request, init?: RequestInit) => Promise<Response>,
+  fn: () => Promise<void>,
+): Promise<void> {
   const orig = globalThis.fetch;
   globalThis.fetch = mockFn as FetchFn;
   return fn().finally(() => {
@@ -36,11 +39,14 @@ describe('makeLlmTierClassifier', () => {
   test('classifier returns null gracefully on network failure', async () => {
     process.env.ANTHROPIC_API_KEY = 'test-key';
     const classifier = makeLlmTierClassifier()!;
-    await withMockFetch(async () => {
-      throw new Error('network error');
-    }, async () => {
-      expect(await classifier('some task', null)).toBeNull();
-    });
+    await withMockFetch(
+      async () => {
+        throw new Error('network error');
+      },
+      async () => {
+        expect(await classifier('some task', null)).toBeNull();
+      },
+    );
   });
 
   test('classifier returns null on a non-ok API response', async () => {

@@ -15,14 +15,14 @@
  * unit tests, integrationGate.ts, etc.) keep resolving without changes.
  */
 
+import type { SmokeSpec } from 'cwip/testing';
 // Import for use in the app-specific factory functions below (aliased to avoid a
 // duplicate-binding conflict with the re-export below).
 import { planSmoke as _planSmoke } from 'cwip/testing';
-import type { SmokeSpec } from 'cwip/testing';
 
+export type { SmokeDeps, SmokeResult, SmokeSpec, SmokeSpecInput } from 'cwip/testing';
 // Re-export the shared machinery so existing call-sites keep resolving.
 export { pickFreePort, planSmoke, runBootSmoke, smokeEnv, smokeHomeDir } from 'cwip/testing';
-export type { SmokeDeps, SmokeResult, SmokeSpec, SmokeSpecInput } from 'cwip/testing';
 
 /**
  * The rubato (`ru`) preset: boot `rubato-serve` from an integration worktree, isolated
