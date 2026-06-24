@@ -24,6 +24,7 @@ function makeDeps(overrides: Partial<HealerDeps> = {}): HealerDeps {
     freshHeartbeatCount: () => 0,
     leaseCount: () => 0,
     clearNeedsOwner: () => ({ cleared: 0 }),
+    checkPrimaryHygiene: () => [],
     ...overrides,
   };
 }
@@ -229,6 +230,63 @@ describe('owner-gate sweep', () => {
     // 'unavailable' is an expected skip, not an error — no inconclusive flag, no issue
     expect(result.issues.find((i) => i.code === 'needs-owner-cleared')).toBeUndefined();
     expect(result.inconclusive).toBe(false);
+  });
+});
+
+describe('primary checkout hygiene', () => {
+  test('reports dirty primaries as unfixed issues', () => {
+    const result = runHealer(
+      makeDeps({
+        checkPrimaryHygiene: () => [
+          { dir: '/home/user/code/github/cursedbelt', dirtyFiles: ['package.json', 'src/foo.ts'] },
+        ],
+      }),
+    );
+
+    const issue = result.issues.find((i) => i.code === 'primary-dirty');
+    expect(issue).toBeDefined();
+    expect(issue!.fixed).toBe(false); // auto-fix intentionally omitted
+    expect(issue!.description).toContain('cursedbelt');
+    expect(issue!.description).toContain('2 uncommitted');
+    expect(issue!.detail).toContain('package.json');
+    expect(result.issuesFound).toBe(1);
+    expect(result.issuesFixed).toBe(0);
+  });
+
+  test('reports one issue per dirty repo', () => {
+    const result = runHealer(
+      makeDeps({
+        checkPrimaryHygiene: () => [
+          { dir: '/code/rubato', dirtyFiles: ['a.ts'] },
+          { dir: '/code/cwip', dirtyFiles: ['b.ts', 'c.ts'] },
+        ],
+      }),
+    );
+
+    const dirtyIssues = result.issues.filter((i) => i.code === 'primary-dirty');
+    expect(dirtyIssues).toHaveLength(2);
+    expect(result.issuesFound).toBe(2);
+    expect(result.issuesFixed).toBe(0);
+  });
+
+  test('does not report an issue when all primaries are clean', () => {
+    const result = runHealer(makeDeps({ checkPrimaryHygiene: () => [] }));
+    expect(result.issues.find((i) => i.code === 'primary-dirty')).toBeUndefined();
+  });
+
+  test('marks inconclusive when the hygiene check throws', () => {
+    const result = runHealer(
+      makeDeps({
+        checkPrimaryHygiene: () => {
+          throw new Error('git not found');
+        },
+      }),
+    );
+
+    expect(result.inconclusive).toBe(true);
+    const issue = result.issues.find((i) => i.code === 'primary-dirty');
+    expect(issue).toBeDefined();
+    expect(issue!.description).toContain('inconclusive');
   });
 });
 

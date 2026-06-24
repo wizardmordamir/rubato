@@ -1,7 +1,7 @@
 /**
  * Drain self-healer — detect + fix stalled orchestration states.
  *
- * Covers five stall/policy classes (the first four were in drainGuard.sh; all
+ * Covers six stall/policy classes (the first four were in drainGuard.sh; all
  * are now in testable TypeScript with proper dependency injection):
  *
  *  1. **cwip dist missing**: a worker task's `bun run clean` on the cwip checkout
@@ -26,7 +26,14 @@
  *     block their dependency chains and violate the "nothing may block on the owner"
  *     invariant. Fix: clear the hold so the drain can schedule them normally.
  *
- * All five run as one `runHealer()` call that returns a structured report.
+ *  6. **Primary checkout dirty**: uncommitted work in a primary repo checkout
+ *     (rubato/cwip/cursedbelt/cursedalchemy main branch) stalls the promotion gate
+ *     and risks merge conflicts. The healer detects dirty primaries and reports
+ *     them — a self-healer worker lands the changes to integration and cleans the
+ *     primary. Auto-fix is omitted here (committing to another repo from an API
+ *     handler is unsafe); the issue surfaces in the healer result for the worker.
+ *
+ * All six run as one `runHealer()` call that returns a structured report.
  * Each check is independently injectable so tests drive it without real disk/DB.
  */
 
@@ -55,7 +62,8 @@ export type HealerIssueCode =
   | 'symlink-broken'
   | 'drain-stalled'
   | 'leases-expired'
-  | 'needs-owner-cleared';
+  | 'needs-owner-cleared'
+  | 'primary-dirty';
 
 /** Full result of one healer run. */
 export interface HealerResult {
@@ -114,6 +122,14 @@ export interface HealerDeps {
    * drain pass — the "nothing may block on the owner" invariant.
    */
   clearNeedsOwner(): { cleared: number } | 'unavailable';
+  /**
+   * Check primary repo checkouts for uncommitted changes.
+   * Returns an array of { dir, dirtyFiles } for each primary that is dirty.
+   * The healer REPORTS dirty primaries but does NOT auto-commit — committing to
+   * another repo's integration branch from an API handler is unsafe. A self-healer
+   * worker handles the actual cleanup (land changes → clean primary).
+   */
+  checkPrimaryHygiene(): Array<{ dir: string; dirtyFiles: string[] }>;
 }
 
 // How stale watchdog.out must be (ms) before we consider the drain stalled.
@@ -258,6 +274,33 @@ export function runHealer(deps: HealerDeps, opts: HealerOpts = {}): HealerResult
     });
   }
 
+  // ── 6. Primary checkout hygiene ────────────────────────────────────────────
+  // A dirty primary (uncommitted changes in the main branch of ca/ru/cwip/cursedbelt)
+  // stalls the promotion gate and risks merge conflicts when real fixes land. Detect
+  // and surface dirty primaries — a self-healer worker commits the changes to the
+  // integration branch and cleans the primary. Auto-commit is intentionally omitted
+  // (committing to another repo's integration branch from an API handler is unsafe).
+  try {
+    const dirty = deps.checkPrimaryHygiene();
+    for (const { dir, dirtyFiles } of dirty) {
+      const name = dir.split('/').pop() ?? dir;
+      issues.push({
+        code: 'primary-dirty',
+        description: `${name} primary has ${dirtyFiles.length} uncommitted file(s) — land to integration and clean`,
+        fixed: false,
+        detail: dirtyFiles.slice(0, 10).join(', '),
+      });
+    }
+  } catch (e) {
+    inconclusive = true;
+    issues.push({
+      code: 'primary-dirty',
+      description: 'primary hygiene check failed (inconclusive)',
+      fixed: false,
+      detail: e instanceof Error ? e.message : String(e),
+    });
+  }
+
   return {
     ranAt: new Date(now).toISOString(),
     issuesFound: issues.length,
@@ -396,6 +439,37 @@ export function makeHealerDeps(db?: TaskqDb): HealerDeps {
       } catch {
         return 'unavailable';
       }
+    },
+    checkPrimaryHygiene: () => {
+      const { homedir } = require('node:os') as typeof import('node:os');
+      const home = homedir();
+      // Primary checkouts that should stay clean (main/master branch).
+      const primaries = [
+        join(home, 'code', 'github', 'rubato'),
+        join(home, 'code', 'github', 'cwip'),
+        join(home, 'code', 'github', 'cursedbelt'),
+        join(home, 'code', 'github', 'cursedalchemy'),
+      ];
+      const dirty: Array<{ dir: string; dirtyFiles: string[] }> = [];
+      for (const dir of primaries) {
+        try {
+          const r = spawnSync('git', ['-C', dir, 'status', '--porcelain'], {
+            encoding: 'utf8',
+            env: { ...process.env, PATH: agentPath() } as NodeJS.ProcessEnv,
+          });
+          if (r.status === 0 && r.stdout?.trim()) {
+            const dirtyFiles = r.stdout
+              .trim()
+              .split('\n')
+              .map((l) => l.slice(3).trim())
+              .filter(Boolean);
+            if (dirtyFiles.length > 0) dirty.push({ dir, dirtyFiles });
+          }
+        } catch {
+          // skip repos that aren't checked out on this machine
+        }
+      }
+      return dirty;
     },
   };
 }
