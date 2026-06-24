@@ -74,14 +74,28 @@ ISSUES=0
 
 # 1. Check cwip dist — the drain's cwip/taskq import fails if dist is missing.
 #    Worker tasks that run `bun run clean` on cwip or a worktree `bun i` can wipe it.
-if [ ! -f "$CWIP_DIR/dist/services/taskq/index.js" ]; then
+CWIP_DIST="$CWIP_DIR/dist/services/taskq/index.js"
+# Stale = dist older than cwip's newest source commit (an engine fix landed but dist
+# wasn't rebuilt). The promotion gate normally rebuilds on promote; this is the
+# independent backstop. Rebuild only — never restart the drain here (it would strand
+# in-flight workers); the drain loads fresh dist on its next natural restart.
+CWIP_SRC_T=$(git -C "$CWIP_DIR" log -1 --format=%ct 2>/dev/null || echo 0)
+CWIP_DIST_T=$(stat -f '%m' "$CWIP_DIST" 2>/dev/null || echo 0)
+if [ ! -f "$CWIP_DIST" ]; then
   ISSUES=$((ISSUES+1))
   log "ISSUE: cwip dist/services/taskq/index.js missing — rebuilding cwip"
   if (cd "$CWIP_DIR" && "$BUN" run build >> "$LOG" 2>&1); then
-    log "FIX: cwip rebuilt OK"
-    FIXED=$((FIXED+1))
+    log "FIX: cwip rebuilt OK"; FIXED=$((FIXED+1))
   else
     log "ERROR: cwip rebuild failed — drain may stay broken until next check"
+  fi
+elif [ "$CWIP_DIST_T" -gt 0 ] && [ "$CWIP_SRC_T" -gt "$CWIP_DIST_T" ]; then
+  ISSUES=$((ISSUES+1))
+  log "ISSUE: cwip dist STALE (source newer than dist) — rebuilding so engine fixes reach the next drain restart"
+  if (cd "$CWIP_DIR" && "$BUN" run build >> "$LOG" 2>&1); then
+    log "FIX: cwip dist rebuilt (drain picks it up on next restart)"; FIXED=$((FIXED+1))
+  else
+    log "ERROR: cwip rebuild failed"
   fi
 fi
 
