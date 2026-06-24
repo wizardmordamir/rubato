@@ -431,10 +431,12 @@ export function TaskqPage() {
                     ...selectProps,
                   };
                   if (s === "done") {
+                    // Most-recently-finished first, so the top item is what just completed.
+                    const byMostRecentlyDone = (a: TaskqTaskView, b: TaskqTaskView) => (b.ended_at ?? 0) - (a.ended_at ?? 0);
                     // Split done into: regular done + "Done Externally" (transferred to ca orch,
                     // completed there, verified — serial_group='done_externally').
-                    const regularDone = allTasks.filter((t) => t.serial_group !== "done_externally");
-                    const externallyDone = allTasks.filter((t) => t.serial_group === "done_externally");
+                    const regularDone = allTasks.filter((t) => t.serial_group !== "done_externally").sort(byMostRecentlyDone);
+                    const externallyDone = allTasks.filter((t) => t.serial_group === "done_externally").sort(byMostRecentlyDone);
                     return [
                       <DoneHistoryAnnotation key="done-stats" />,
                       regularDone.length > 0 && (
