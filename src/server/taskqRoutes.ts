@@ -205,9 +205,17 @@ function board(): TaskqBoard {
     return base;
   });
 
+  // Sort on_hold tasks newest-first so a freshly-parked task surfaces at the top,
+  // not buried below older on_hold items ordered by id.
+  const sorted = tasks.slice().sort((a, b) => {
+    if (a.status === 'on_hold' && b.status === 'on_hold')
+      return (b.updated_at ?? '').localeCompare(a.updated_at ?? '');
+    return 0;
+  });
+
   const counts = Object.fromEntries(TASK_STATUSES.map((s) => [s, 0])) as Record<TaskStatus, number>;
-  for (const t of tasks) counts[t.status] = (counts[t.status] ?? 0) + 1;
-  return { tasks, counts, total: tasks.length };
+  for (const t of sorted) counts[t.status] = (counts[t.status] ?? 0) + 1;
+  return { tasks: sorted, counts, total: sorted.length };
 }
 
 export async function handleTaskqApi(pathname: string, req: Request): Promise<Response> {
