@@ -12,12 +12,33 @@ CWIP_DIR="$HOME/code/github/cwip"
 RU_DIR="$HOME/code/github/rubato"
 LOG="$HOME/.taskq/drain-guard.log"
 BUN="/Users/curt/.bun/bin/bun"
+DB="$HOME/.taskq/taskq.sqlite"
 LAUNCHD_LABEL="com.taskq.drain-guard"
 PLIST_PATH="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
-SCRIPT_PATH="$RU_DIR/src/scripts/drainGuard.sh"
+# The script runs from a STABLE location (not a per-checkout path), so re-installing
+# never repoints the plist at a worktree that might not have it.
+SCRIPT_PATH="$HOME/.taskq/drainGuard.sh"
+# The drain agent this guard backstops, and the orch UI the owner watches.
+DRAIN_LABEL="com.taskq.drain"
+DRAIN_PLIST="$HOME/Library/LaunchAgents/$DRAIN_LABEL.plist"
+SELF_HEALER_LABEL="com.taskq.drain-guard"   # this guard's own agent (for the mutual check note)
+TASKQ_UI="http://localhost:5175"            # rubato serves the /taskq orch dashboard here
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
-log() { echo "[$(ts)] $*" | tee -a "$LOG"; }
+# Write ONLY to the file. The launchd plist's StandardOutPath also points at a log,
+# so teeing to stdout would double every line. Builds/launchctl below redirect to $LOG directly.
+log() { echo "[$(ts)] $*" >> "$LOG"; }
+
+# Idempotently file a heal task so the orch fixes a code-level break (e.g. /taskq white-screen).
+# No duplicate while an open one exists. Slug is fixed so re-detections collapse onto one task.
+ensure_heal_task() {  # $1=slug  $2=title  $3=repo  $4=note
+  local existing
+  existing=$(sqlite3 "$DB" "SELECT count(*) FROM tasks WHERE slug='$1' AND status IN ('ready','claimed','on_hold')" 2>/dev/null || echo 1)
+  if [ "$existing" = "0" ]; then
+    sqlite3 "$DB" "INSERT INTO tasks (slug,title,note,status,model,think,repo,noop_ok,ord) VALUES ('$1','$2','$4','ready','sonnet','medium','$3',0,-320)" 2>/dev/null \
+      && log "FIX: filed heal task '$1' (orch will repair)"
+  fi
+}
 
 # ── Install mode ─────────────────────────────────────────────────────────────
 if [ "$1" = "--install" ]; then
@@ -34,7 +55,7 @@ if [ "$1" = "--install" ]; then
   </array>
   <key>StartInterval</key><integer>120</integer>
   <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>$HOME/.taskq/drain-guard.log</string>
+  <key>StandardOutPath</key><string>$HOME/.taskq/drain-guard.launchd.log</string>
   <key>StandardErrorPath</key><string>$HOME/.taskq/drain-guard-err.log</string>
 </dict>
 </plist>
@@ -110,13 +131,57 @@ if [ -f "$WATCHDOG_OUT" ]; then
   fi
 fi
 
-# 4. Check for stale expired leases (tasks stuck in 'claimed' but lease expired).
-#    These should be reaped by the drain on its next tick, but if drain is down
-#    they can sit forever. We only log here (the drain reaper handles the fix).
-STALE=$(sqlite3 "$HOME/.taskq/taskq.sqlite" \
-  "SELECT count(*) FROM leases WHERE expires_at < (unixepoch()*1000 - 300000)" 2>/dev/null || echo 0)
-if [ "$STALE" -gt 0 ]; then
-  log "WARNING: $STALE lease(s) expired > 5 min ago (drain reaper should clean these on next tick)"
+# 4. Stale expired leases — but ONLY warn when it's actionable. A group-queued
+#    member's lease legitimately "expires" while it waits its turn (the active
+#    member heartbeats), so a raw expired-count warns on normal operation. Only
+#    flag when leases are expired AND nothing has a fresh heartbeat (drain looks dead).
+STALE=$(sqlite3 "$DB" "SELECT count(*) FROM leases WHERE expires_at < (unixepoch()*1000 - 300000)" 2>/dev/null || echo 0)
+FRESH_ANY=$(sqlite3 "$DB" "SELECT count(*) FROM leases WHERE heartbeat_at > (unixepoch()*1000 - 180000)" 2>/dev/null || echo 0)
+if [ "$STALE" -gt 0 ] && [ "$FRESH_ANY" -eq 0 ]; then
+  log "WARNING: $STALE lease(s) expired and NO fresh heartbeats — drain may be stuck (freshness check above handles restart)"
+fi
+
+# 5. MUTUAL CHECK — keep the DRAIN agent itself loaded (not just running).
+#    `launchctl kickstart` only works if the agent is LOADED; if it was unloaded
+#    (bootout, manual unload, login glitch) nothing restarts the drain. Reload it.
+if ! launchctl list "$DRAIN_LABEL" >/dev/null 2>&1; then
+  ISSUES=$((ISSUES+1))
+  log "ISSUE: $DRAIN_LABEL agent is NOT loaded — reloading its plist"
+  if [ -f "$DRAIN_PLIST" ] && launchctl load "$DRAIN_PLIST" >> "$LOG" 2>&1; then
+    log "FIX: reloaded $DRAIN_LABEL"; FIXED=$((FIXED+1))
+  else
+    log "ERROR: could not load $DRAIN_PLIST"
+  fi
+fi
+
+# 6. MUTUAL CHECK — the in-orch self-healer task must still exist + be a live
+#    recurring task (the reciprocal watcher: it re-loads THIS guard if unloaded).
+#    If it was deleted/disabled, file a heal task to recreate it.
+HEALER=$(sqlite3 "$DB" "SELECT count(*) FROM tasks WHERE slug='orch-self-healer' AND is_saved=1 AND recur_interval_ms IS NOT NULL" 2>/dev/null || echo 1)
+if [ "$HEALER" = "0" ]; then
+  ISSUES=$((ISSUES+1))
+  log "ISSUE: orch-self-healer task missing/disabled — the reciprocal watcher is gone"
+  ensure_heal_task "heal-orch-self-healer" "Recreate the orch-self-healer recurring task (watchdog gone)" "ru" \
+    "The orch-self-healer recurring task is missing or no longer recurring. Recreate it as a saved recurring task (recur_interval_ms=1200000) that audits drain+cwip+bun-link+UI and reloads com.taskq.drain-guard if unloaded. See ~/.taskq notes."
+fi
+
+# 7. ORCH UI HEALTH — the owner watches localhost:5175/taskq to see if the orch is OK.
+#    A green HTTP 200 on /taskq is NOT enough (a white-screen still returns 200), so we
+#    assert the BOARD API returns real task data. (White-screen render detection is the
+#    self-healer's deeper job; here we catch a dead server / dead API / empty board fast.)
+UI_BODY=$(curl -s --max-time 6 "$TASKQ_UI/api/taskq" 2>/dev/null)
+if ! printf '%s' "$UI_BODY" | grep -q '"tasks"'; then
+  ISSUES=$((ISSUES+1))
+  # Is the port even up?
+  if ! curl -s -o /dev/null --max-time 5 "$TASKQ_UI/" 2>/dev/null; then
+    log "ISSUE: orch UI ($TASKQ_UI) is DOWN — the rubato dev server isn't responding"
+    ensure_heal_task "heal-taskq-ui-down" "Orch UI down: rubato dev server on :5175 not responding" "ru" \
+      "localhost:5175 is not responding, so the owner cannot see orch status. The rubato dev server (bun run dev) is not running. Restart it; if it keeps dying, make it resilient (launchd-managed or auto-restart). Until then the orch board is invisible to the owner."
+  else
+    log "ISSUE: orch UI ($TASKQ_UI) up but /api/taskq returned no board data — API/DB path broken"
+    ensure_heal_task "heal-taskq-ui-api" "Orch UI API broken: /api/taskq returns no board data" "ru" \
+      "localhost:5175 responds but GET /api/taskq does not return a tasks board. The taskq API/DB read path is broken (the owner sees no orch data). Diagnose taskqRoutes + the ~/.taskq DB read and fix."
+  fi
 fi
 
 if [ "$ISSUES" -eq 0 ]; then
