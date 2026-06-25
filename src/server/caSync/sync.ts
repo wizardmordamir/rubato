@@ -2,6 +2,7 @@ import { getErrorMessage, logger } from 'cwip';
 import { addTask, type NewTask } from 'cwip/taskq';
 import type { PulledTask } from '../../shared/caSync';
 import { createDraft, kickForgeWorker } from '../forge';
+import { isQuestionTask } from '../taskq/claudeExecutor';
 import { getTaskqDb } from '../taskqDb';
 import { type CaClient, makeCaClient } from './client';
 import { type CaSyncSettings, resolveCaSync } from './config';
@@ -11,19 +12,27 @@ import { buildCapacity, buildTasks, buildTimings, buildUsage } from './snapshots
 // queue (directly, or via Forge/Ollama enhancement), and push orchestration data
 // (usage/capacity/queue/timing) back to ca for the owner's dashboard.
 
-const toNewTask = (t: PulledTask): NewTask => ({
-  title: t.title,
-  body: t.body || undefined,
-  repo: t.repo ?? undefined,
-  model: t.model ?? undefined,
-  think: t.think ?? undefined,
-  fast: t.fast,
-  group_key: t.groupKey ?? undefined,
-  slug: t.slug ?? undefined,
-  needs: t.needs.length ? t.needs : undefined,
-  // ca's `hold` maps to taskq's `on_hold` (queued but paused).
-  status: t.status === 'hold' ? 'on_hold' : 'ready',
-});
+const toNewTask = (t: PulledTask): NewTask => {
+  // A question ("ASK: …") is ANSWERED read-only by a full-access worker, not built. Run it from a
+  // non-clean-room repo (so the worker can read every repo + ~/.taskq to investigate) and mark it
+  // noop_ok, so its no-code answer isn't mistaken for a false-done. The answer comes back as the
+  // task's completion summary, visible on ca's orchestration dashboard.
+  const question = isQuestionTask(t);
+  return {
+    title: t.title,
+    body: t.body || undefined,
+    repo: question ? 'ru' : (t.repo ?? undefined),
+    model: t.model ?? undefined,
+    think: t.think ?? undefined,
+    fast: t.fast,
+    group_key: t.groupKey ?? undefined,
+    slug: t.slug ?? undefined,
+    needs: t.needs.length ? t.needs : undefined,
+    noop_ok: question || undefined,
+    // ca's `hold` maps to taskq's `on_hold` (queued but paused).
+    status: t.status === 'hold' ? 'on_hold' : 'ready',
+  };
+};
 
 export interface SyncDeps {
   settings?: CaSyncSettings;

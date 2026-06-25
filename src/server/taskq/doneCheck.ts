@@ -29,7 +29,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type TaskRow, taskqHome } from 'cwip/taskq';
 import { buildIsGreen } from './buildOutputGate';
-import { agentPath } from './claudeExecutor';
+import { agentPath, isQuestionTask } from './claudeExecutor';
 import { repoRoot, type TaskqConfig } from './config';
 import { type DoneEvidence, type DoneGuard, type DoneVerdict, decideDone, type FalseDoneAlert } from './falseDone';
 import type { TaskResult } from './orchestrator';
@@ -179,10 +179,11 @@ export function makeDoneGuard(config: TaskqConfig, deps: Partial<DoneCheckDeps> 
 
     const evidence: DoneEvidence = {
       enforced: true,
-      // A one-shot audit/check/review task flagged noop_ok may correctly land no
-      // commits — decideDone then skips the empty-done requirement (the regression
-      // check below still applies). Ordinary code-change tasks (noop_ok=0) keep it.
-      noopOk: task.noop_ok === 1,
+      // A one-shot audit/check/review task flagged noop_ok — or an "ASK:" question, which is
+      // answered read-only and lands nothing by design — may correctly land no commits;
+      // decideDone then skips the empty-done requirement (the regression check below still
+      // applies). Ordinary code-change tasks (noop_ok=0) keep it.
+      noopOk: task.noop_ok === 1 || isQuestionTask(task),
       landedCommits,
       buildChecked,
       buildGreen,

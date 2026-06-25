@@ -89,6 +89,42 @@ function buildCleanRoomPrompt(task: TaskRow, markers: string): string {
   ].join('\n');
 }
 
+/**
+ * An "ask" task is a QUESTION the owner posed (e.g. from ca while away), not work to do —
+ * marked by an `ASK` / `Q:` / `Question:` prefix on the title. The worker investigates and
+ * ANSWERS read-only (changes nothing); its final reply IS the answer, surfaced back as the
+ * task's completion summary. The bridge routes these to a full-access cwd + noop_ok so the
+ * no-code answer isn't mistaken for a false-done.
+ */
+export function isQuestionTask(task: { title?: string | null }): boolean {
+  return /^\s*(ask\b|q[:?]\s|question[:?\s])/i.test(task.title ?? '');
+}
+
+/** Read-only "answer the owner's question" prompt: full local access, investigate, change nothing. */
+function buildAskPrompt(task: TaskRow, markers: string): string {
+  return [
+    `You are answering the owner's question while they are away. This is STRICTLY READ-ONLY:`,
+    `investigate however you need, but do NOT modify, create, or delete any file, and do NOT`,
+    `commit or change any state. Your FINAL REPLY *is* the answer the owner reads — make it the`,
+    `clear, complete, honest answer a sharp senior engineer would give.`,
+    ``,
+    `QUESTION #${task.id}${markers ? ` (${markers})` : ''}: ${task.title}`,
+    task.body ? `\n${task.body}` : '',
+    ``,
+    `You have full local access. Investigate the ACTUAL current state before answering — never`,
+    `guess. Useful sources:`,
+    `- the repos under /Users/curt/code/github (nova, cursedalchemy, rubato, cwip, cursedbelt):`,
+    `  read code, \`git log\`/\`git status\`, recent commits.`,
+    `- the orchestrator DB at ~/.taskq/taskq.sqlite via \`sqlite3\`: task status, what's running /`,
+    `  done / failed, completion summaries (e.g. \`SELECT slug,status,repo FROM tasks ...\`).`,
+    `- read-only commands (ls, git, sqlite3, grep) as needed.`,
+    ``,
+    `Answer directly and specifically — what's done, in progress, blocked, or failing, with`,
+    `concrete evidence. If you couldn't determine something, say so honestly instead of inventing.`,
+    `Keep it focused and readable. Change NOTHING — only answer.`,
+  ].join('\n');
+}
+
 /** The instruction prompt handed to the worker agent for one task. */
 export function buildWorkerPrompt(task: TaskRow): string {
   const markers = [
@@ -98,6 +134,7 @@ export function buildWorkerPrompt(task: TaskRow): string {
   ]
     .filter(Boolean)
     .join(' · ');
+  if (isQuestionTask(task)) return buildAskPrompt(task, markers);
   if (task.repo && CLEAN_ROOM_REPOS.has(task.repo)) return buildCleanRoomPrompt(task, markers);
   return [
     `You are a headless taskq worker. Do EXACTLY this one task, then stop.`,
