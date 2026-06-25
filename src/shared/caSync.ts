@@ -93,6 +93,11 @@ export interface CaTaskSummary {
    * waits out a retry backoff, so ca can render "retry N/M in …". Null = due now.
    */
   nextEligibleAt: number | null;
+  /**
+   * The worker's completion summary — i.e. the ANSWER to an "ASK:" question.
+   * Only populated on `recentDone` (the completions table, not the task row).
+   */
+  summary?: string | null;
 }
 export interface CaTasksPayload {
   ready: CaTaskSummary[];
