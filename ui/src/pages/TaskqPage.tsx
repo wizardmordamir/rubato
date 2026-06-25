@@ -432,7 +432,17 @@ export function TaskqPage() {
                   };
                   if (s === "done") {
                     // Most-recently-finished first, so the top item is what just completed.
-                    const byMostRecentlyDone = (a: TaskqTaskView, b: TaskqTaskView) => (b.ended_at ?? 0) - (a.ended_at ?? 0);
+                    // ended_at is normally epoch-ms, but some legacy completion rows store an
+                    // ISO string — coerce both to a number, or a string ended_at makes the
+                    // subtraction NaN and scrambles the whole order (an old task floats to top).
+                    const endedMs = (t: TaskqTaskView): number => {
+                      const v = t.ended_at as number | string | null | undefined;
+                      if (v == null) return 0;
+                      if (typeof v === "number") return v;
+                      const n = Date.parse(v);
+                      return Number.isFinite(n) ? n : 0;
+                    };
+                    const byMostRecentlyDone = (a: TaskqTaskView, b: TaskqTaskView) => endedMs(b) - endedMs(a);
                     // Split done into: regular done + "Done Externally" (transferred to ca orch,
                     // completed there, verified — serial_group='done_externally').
                     const regularDone = allTasks.filter((t) => t.serial_group !== "done_externally").sort(byMostRecentlyDone);
