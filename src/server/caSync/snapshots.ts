@@ -62,12 +62,28 @@ export function buildCapacity(): CaCapacityPayload {
 
 /** Queue snapshot: status counts + the running / recently-finished tasks. */
 export function buildTasks(): CaTasksPayload {
-  const all = listTasks(getTaskqDb());
+  const db = getTaskqDb();
+  const all = listTasks(db);
   const defaultMax = loadTaskqConfig().maxAttempts;
   const sum = (t: TaskRow) => summary(t, defaultMax);
   const counts: Record<string, number> = {};
   for (const t of all) counts[t.status] = (counts[t.status] ?? 0) + 1;
   const byUpdatedDesc = (a: TaskRow, b: TaskRow) => (a.updated_at < b.updated_at ? 1 : -1);
+  const doneRows = all
+    .filter((t) => t.status === 'done')
+    .sort(byUpdatedDesc)
+    .slice(0, 20);
+  // The worker's completion summary (the ANSWER to an "ASK:" question) lives in the
+  // completions table, not the task row — attach it for recentDone so ca can show it.
+  // The snapshot is pushed as a normal POST body now, so the larger payload is fine.
+  const answers = new Map<number, string>();
+  if (doneRows.length) {
+    const ids = doneRows.map((t) => t.id);
+    const rows = db
+      .query(`SELECT task_id, summary FROM completions WHERE task_id IN (${ids.map(() => '?').join(',')})`)
+      .all(...ids) as { task_id: number; summary: string | null }[];
+    for (const r of rows) if (r.summary) answers.set(r.task_id, r.summary);
+  }
   return {
     counts,
     ready: all
@@ -79,11 +95,7 @@ export function buildTasks(): CaTasksPayload {
       .sort(byUpdatedDesc)
       .slice(0, 20)
       .map(sum),
-    recentDone: all
-      .filter((t) => t.status === 'done')
-      .sort(byUpdatedDesc)
-      .slice(0, 20)
-      .map(sum),
+    recentDone: doneRows.map((t) => ({ ...sum(t), summary: answers.get(t.id) ?? null })),
     at: nowIso(),
   };
 }

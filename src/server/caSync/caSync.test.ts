@@ -132,11 +132,15 @@ describe('pullOnce routing', () => {
 describe('makeCaClient wire format', () => {
   // A fake ApiClient that records every GET (path + query).
   const fakeApi = (pullData: unknown = { tasks: [] }) => {
-    const calls: { path: string; query: Record<string, any> }[] = [];
+    const calls: { method: string; path: string; body?: unknown; query: Record<string, any> }[] = [];
     const api = {
       get: async (path: string, opts?: any) => {
-        calls.push({ path, query: opts?.query ?? {} });
+        calls.push({ method: 'GET', path, query: opts?.query ?? {} });
         return { data: pullData, status: 200, headers: new Headers(), url: path };
+      },
+      post: async (path: string, body?: unknown, opts?: any) => {
+        calls.push({ method: 'POST', path, body, query: opts?.query ?? {} });
+        return { data: {}, status: 200, headers: new Headers(), url: path };
       },
     } as unknown as ApiClient;
     return { api, calls };
@@ -147,27 +151,25 @@ describe('makeCaClient wire format', () => {
     const client = makeCaClient(enabled, api);
     const tasks = await client.pull();
     expect(tasks).toHaveLength(1);
-    expect(calls[0]).toEqual({ path: '/tasks/pull', query: { host: 'box-1' } });
+    expect(calls[0]).toMatchObject({ method: 'GET', path: '/tasks/pull', query: { host: 'box-1' } });
   });
 
-  test('update encodes the payload as base64url JSON in the data param', async () => {
+  test('update sends the payload as a normal POST body', async () => {
     const { api, calls } = fakeApi();
     const client = makeCaClient(enabled, api);
     await client.update('ca-9', { status: 'done', totalTokens: 42 });
+    expect(calls[0].method).toBe('POST');
     expect(calls[0].path).toBe('/tasks/ca-9/update');
-    const decoded = JSON.parse(Buffer.from(calls[0].query.data, 'base64url').toString('utf8'));
-    expect(decoded).toMatchObject({ host: 'box-1', status: 'done', totalTokens: 42 });
+    expect(calls[0].body).toMatchObject({ host: 'box-1', status: 'done', totalTokens: 42 });
   });
 
-  test('pushData carries host + kind + encoded payload', async () => {
+  test('pushData carries host + kind in the query and the payload in the POST body', async () => {
     const { api, calls } = fakeApi();
     const client = makeCaClient(enabled, api);
     await client.pushData('usage', { buckets: [], at: 'now' });
+    expect(calls[0].method).toBe('POST');
     expect(calls[0]).toMatchObject({ path: '/data', query: { host: 'box-1', kind: 'usage' } });
-    expect(JSON.parse(Buffer.from(calls[0].query.data, 'base64url').toString('utf8'))).toEqual({
-      buckets: [],
-      at: 'now',
-    });
+    expect(calls[0].body).toEqual({ buckets: [], at: 'now' });
   });
 });
 

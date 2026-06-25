@@ -29,7 +29,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type TaskRow, taskqHome } from 'cwip/taskq';
 import { buildIsGreen } from './buildOutputGate';
-import { agentPath } from './claudeExecutor';
+import { agentPath, isQuestionTask } from './claudeExecutor';
 import { repoRoot, type TaskqConfig } from './config';
 import { type DoneEvidence, type DoneGuard, type DoneVerdict, decideDone, type FalseDoneAlert } from './falseDone';
 import type { TaskResult } from './orchestrator';
@@ -66,6 +66,9 @@ interface EnforcedSnapshot {
   enforced: true;
   repo: string | null;
   repoRoot: string;
+  /** The branch a landing is measured against: `refactor/integration` for the integration
+   *  flow, or the repo's default branch (`main`/`master`) for a single-repo/clean-room build. */
+  branch: string;
   integWorktree: string;
   beforeSha: string;
   knownGreen: boolean | undefined;
@@ -73,6 +76,19 @@ interface EnforcedSnapshot {
 type GuardSnapshot = { enforced: false } | EnforcedSnapshot;
 
 const NOT_ENFORCED: GuardSnapshot = { enforced: false };
+
+/**
+ * The branch landings are verified against. The integration flow uses `refactor/integration`;
+ * a single-repo build (no such branch — e.g. a from-scratch clean-room repo) verifies against
+ * its default branch, so it still gets the empty-done guard. Returns null when none resolve.
+ */
+function resolveVerifyBranch(d: DoneCheckDeps, root: string): string | null {
+  for (const branch of ['refactor/integration', 'main', 'master']) {
+    const r = d.git(['rev-parse', '--verify', '--quiet', branch], root);
+    if (r.code === 0 && r.out.trim()) return branch;
+  }
+  return null;
+}
 
 /**
  * Only a normal one-shot work task is gated. Saved/recurring/template tasks
@@ -102,13 +118,15 @@ export function makeDoneGuard(config: TaskqConfig, deps: Partial<DoneCheckDeps> 
     if (!isOneShotWork(task)) return NOT_ENFORCED; // saved/recurring → never cascades, may land nothing
     const root = repoRoot(config, task.repo);
     if (!root) return NOT_ENFORCED; // no resolved checkout → can't measure a landing
-    const before = d.git(['rev-parse', 'refactor/integration'], root);
-    // No `refactor/integration` branch ⇒ this repo isn't on the integration flow.
+    const branch = resolveVerifyBranch(d, root);
+    if (!branch) return NOT_ENFORCED; // no integration NOR default branch resolves → can't measure
+    const before = d.git(['rev-parse', branch], root);
     if (before.code !== 0 || !before.out.trim()) return NOT_ENFORCED;
     return {
       enforced: true,
       repo: task.repo,
       repoRoot: root,
+      branch,
       integWorktree: integrationWorktree(root),
       beforeSha: before.out.trim(),
       knownGreen: d.knownGreen(task.repo),
@@ -118,8 +136,8 @@ export function makeDoneGuard(config: TaskqConfig, deps: Partial<DoneCheckDeps> 
   function verify(task: TaskRow, _result: TaskResult, snap: GuardSnapshot): DoneVerdict {
     if (!snap.enforced) return { accept: true };
 
-    // 1. Landed-code delta: new commits on refactor/integration in the run window.
-    const after = d.git(['rev-parse', 'refactor/integration'], snap.repoRoot);
+    // 1. Landed-code delta: new commits on the verify branch in the run window.
+    const after = d.git(['rev-parse', snap.branch], snap.repoRoot);
     const afterSha = after.code === 0 ? after.out.trim() : '';
     const rawLanded =
       afterSha && afterSha !== snap.beforeSha ? countNewCommits(d, snap.repoRoot, snap.beforeSha, afterSha) : 0;
@@ -139,7 +157,11 @@ export function makeDoneGuard(config: TaskqConfig, deps: Partial<DoneCheckDeps> 
     //     as a no-op completion instead of reverting to on_hold and freezing the whole `needs:`
     //     chain (which forced manual owner unblocks). A task that has NEVER landed an attributed
     //     commit is still rejected, so the lying-worker guard is preserved.
-    if (landedCommits === 0 && task.noop_ok !== 1 && priorAttributedLanding(d, snap.repoRoot, task.id, task.slug)) {
+    if (
+      landedCommits === 0 &&
+      task.noop_ok !== 1 &&
+      priorAttributedLanding(d, snap.repoRoot, snap.branch, task.id, task.slug)
+    ) {
       return { accept: true };
     }
 
@@ -157,10 +179,11 @@ export function makeDoneGuard(config: TaskqConfig, deps: Partial<DoneCheckDeps> 
 
     const evidence: DoneEvidence = {
       enforced: true,
-      // A one-shot audit/check/review task flagged noop_ok may correctly land no
-      // commits — decideDone then skips the empty-done requirement (the regression
-      // check below still applies). Ordinary code-change tasks (noop_ok=0) keep it.
-      noopOk: task.noop_ok === 1,
+      // A one-shot audit/check/review task flagged noop_ok — or an "ASK:" question, which is
+      // answered read-only and lands nothing by design — may correctly land no commits;
+      // decideDone then skips the empty-done requirement (the regression check below still
+      // applies). Ordinary code-change tasks (noop_ok=0) keep it.
+      noopOk: task.noop_ok === 1 || isQuestionTask(task),
       landedCommits,
       buildChecked,
       buildGreen,
@@ -237,8 +260,14 @@ function getCommitSubjects(d: DoneCheckDeps, cwd: string, before: string, after:
  * re-run of already-complete work be accepted as a no-op instead of false-done-blocked. Bounded
  * to the last 4000 subjects for speed; a git error reads as "no prior landing" (stay strict).
  */
-function priorAttributedLanding(d: DoneCheckDeps, cwd: string, taskId: number, slug: string | null): boolean {
-  const r = d.git(['log', '--format=%s', '-n', '4000', 'refactor/integration'], cwd);
+function priorAttributedLanding(
+  d: DoneCheckDeps,
+  cwd: string,
+  branch: string,
+  taskId: number,
+  slug: string | null,
+): boolean {
+  const r = d.git(['log', '--format=%s', '-n', '4000', branch], cwd);
   if (r.code !== 0 || !r.out.trim()) return false;
   return r.out.split('\n').some((s) => isAttributedToTask(s.trim(), taskId, slug));
 }
