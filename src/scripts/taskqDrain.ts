@@ -49,6 +49,28 @@ function logReconcile(actions: ReturnType<typeof reconcileUsageObservation>): vo
 }
 
 /**
+ * Connectivity preflight. The `claude -p` workers (and the triage / tier-sweep LLM
+ * calls) all depend on api.anthropic.com. During a network outage each worker exits 1
+ * instantly, and the drain would re-claim + re-run the task until it burns its whole
+ * retry budget (→ terminal `failed`) for a failure that has nothing to do with the task
+ * — exactly what stranded nova-c0 the first time. So we confirm the API host is
+ * reachable before claiming anything. A HEAD that gets ANY HTTP response (even a 401)
+ * proves the DNS/TLS/network path is up; only a network-level failure (DNS, connection
+ * refused, timeout) counts as offline. Injectable for tests.
+ */
+export async function isApiReachable(timeoutMs = 5000, fetcher: typeof fetch = fetch): Promise<boolean> {
+  try {
+    const res = await fetcher('https://api.anthropic.com/v1/models', {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return res.status > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Last-resort safety valve against an unforeseen wedge. The per-task timeout
  * (claudeExecutor) already bounds any single hung agent and the loop terminates
  * when the queue drains — but if the process ever got stuck for some reason we
@@ -104,6 +126,21 @@ async function main(): Promise<void> {
   const config = loadTaskqConfig();
   const db = getTaskqDb();
   const dryRun = process.env.TASKQ_DRY_RUN === '1';
+
+  // Connectivity gate: if the API host the workers need is unreachable (a network
+  // outage), skip this ENTIRE tick — claim nothing, spawn no workers, burn no retries.
+  // `.last-fire` was already stamped above, so the drain still reads as alive; launchd
+  // re-fires on the interval and the run resumes the moment the network is back. Without
+  // this, an outage drives every in-flight task through its full retry budget to a
+  // terminal `failed` (which is what stranded nova-c0). Dry-run makes no API calls, so
+  // it skips the check.
+  if (!dryRun && !(await isApiReachable())) {
+    process.stdout.write(
+      `${ts()} taskq drain: OFFLINE — api.anthropic.com unreachable; skipping tick (no claim, no retries burned)\n`,
+    );
+    return;
+  }
+
   const executor = dryRun ? dryRunExecutor : makeClaudeExecutor(config);
   // False-done gate: before a reported success is marked done, require it landed
   // code on refactor/integration + didn't regress the build (see doneCheck.ts).
