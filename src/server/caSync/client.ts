@@ -14,8 +14,6 @@ export interface CaClient {
   pushData(kind: CaDataKind, payload: unknown): Promise<void>;
 }
 
-const encode = (obj: unknown): string => Buffer.from(JSON.stringify(obj)).toString('base64url');
-
 export function makeCaClient(settings: CaSyncSettings, api?: ApiClient): CaClient {
   const client =
     api ??
@@ -35,12 +33,16 @@ export function makeCaClient(settings: CaSyncSettings, api?: ApiClient): CaClien
       return data.tasks ?? [];
     },
     async update(taskId, payload) {
-      await client.get(`/tasks/${encodeURIComponent(taskId)}/update`, {
-        query: { host, data: encode({ host, ...payload }) },
-      });
+      // Server-to-server (key-authed, not a browser session): normal POST body, not the
+      // GET-tunnel — payloads (queue snapshots, ASK answers) exceed the GET URL limit.
+      await client.post(
+        `/tasks/${encodeURIComponent(taskId)}/update`,
+        { host, ...payload },
+        { query: { host } },
+      );
     },
     async pushData(kind, payload) {
-      await client.get('/data', { query: { host, kind, data: encode(payload) } });
+      await client.post('/data', payload, { query: { host, kind } });
     },
   };
 }

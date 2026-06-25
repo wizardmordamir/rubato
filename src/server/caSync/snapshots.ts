@@ -75,6 +75,7 @@ export function buildTasks(): CaTasksPayload {
     .slice(0, 20);
   // The worker's completion summary (the ANSWER to an "ASK:" question) lives in the
   // completions table, not the task row — attach it for recentDone so ca can show it.
+  // The snapshot is pushed as a normal POST body now, so the larger payload is fine.
   const answers = new Map<number, string>();
   if (doneRows.length) {
     const ids = doneRows.map((t) => t.id);
