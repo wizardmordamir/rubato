@@ -35,11 +35,7 @@ export function makeCaClient(settings: CaSyncSettings, api?: ApiClient): CaClien
     async update(taskId, payload) {
       // Server-to-server (key-authed, not a browser session): normal POST body, not the
       // GET-tunnel — payloads (queue snapshots, ASK answers) exceed the GET URL limit.
-      await client.post(
-        `/tasks/${encodeURIComponent(taskId)}/update`,
-        { host, ...payload },
-        { query: { host } },
-      );
+      await client.post(`/tasks/${encodeURIComponent(taskId)}/update`, { host, ...payload }, { query: { host } });
     },
     async pushData(kind, payload) {
       await client.post('/data', payload, { query: { host, kind } });
