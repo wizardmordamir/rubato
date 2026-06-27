@@ -14,9 +14,5 @@ dist/
 .build-tmp/
 *.tgz
 test-results/
-AGENTS.md
-COMMANDS.md
-OVERVIEW.md
-SANDBOX.md
-ROADMAP.md
+*.md
 docs/

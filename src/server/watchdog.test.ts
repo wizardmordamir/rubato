@@ -37,7 +37,7 @@ const PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.curt.agent-drain-watchdog</string>
+  <string>com.local.agent-drain-watchdog</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
@@ -59,8 +59,8 @@ const TASKS = `# TASKS
 const CONFIG = `# saved by drain-queue.sh
 ENABLED=1
 JOBS=3
-STARTDIR="/Users/curt/code/github/cursedalchemy"
-ADD_DIR="/Users/curt/code"
+STARTDIR="~/code/github/cursedalchemy"
+ADD_DIR="~/code"
 `;
 
 beforeEach(async () => {
@@ -262,7 +262,7 @@ describe('patchDrainConfig', () => {
     const onDisk = parseDrainConfig(await readFile(orch('drain.config'), 'utf8'));
     expect(onDisk).toEqual(next);
     // Unknown keys (STARTDIR/ADD_DIR) are preserved.
-    expect(onDisk.startDir).toBe('/Users/curt/code/github/cursedalchemy');
+    expect(onDisk.startDir).toBe('~/code/github/cursedalchemy');
   });
 
   test('creates drain.config when absent', async () => {
@@ -287,8 +287,8 @@ describe('getWatchdog — active-run + pending diff', () => {
         model: 'claude-opus-4-8',
         thinkingLevel: '',
         fastMode: '',
-        startDir: '/Users/curt/code/github/cursedalchemy',
-        addDir: '/Users/curt/code',
+        startDir: '~/code/github/cursedalchemy',
+        addDir: '~/code',
       }),
     );
     const snap = await getWatchdog();

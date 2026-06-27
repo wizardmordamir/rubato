@@ -29,11 +29,11 @@ test('runs a registered script in-process and returns its outcome vars', async (
     },
   });
   const dir = await runDir();
-  const { outcome, output } = await executeScriptById('make-report', { dir, vars: { who: 'curt' }, params: {} });
+  const { outcome, output } = await executeScriptById('make-report', { dir, vars: { who: 'name' }, params: {} });
   expect(outcome.status).toBe('passed');
   expect(outcome.vars).toEqual({ wrote: 'report.txt' });
   expect(output).toContain('writing report');
-  expect(await readFile(join(dir, 'report.txt'), 'utf8')).toBe('hi curt');
+  expect(await readFile(join(dir, 'report.txt'), 'utf8')).toBe('hi name');
 });
 
 test('a throwing registered script becomes a failed outcome', async () => {

@@ -40,11 +40,11 @@ test('with overrides interpolate ${run.dir}/${VAR} and layer per-stage only', as
       { id: 'a', kind: 'script', ref: 'x', with: { path: '${run.dir}/in.csv', who: '${seed}' } },
       { id: 'b', kind: 'script', ref: 'y' },
     ]),
-    { dir: '/tmp/run', vars: { seed: 'curt' }, executors: { script: exec } },
+    { dir: '/tmp/run', vars: { seed: 'tmDir' }, executors: { script: exec } },
   );
-  expect(seen[0]).toEqual({ seed: 'curt', path: '/tmp/run/in.csv', who: 'curt' });
+  expect(seen[0]).toEqual({ seed: 'tmDir', path: '/tmp/run/in.csv', who: 'tmDir' });
   // The `with` overrides don't leak into the bag for the next stage.
-  expect(seen[1]).toEqual({ seed: 'curt' });
+  expect(seen[1]).toEqual({ seed: 'tmDir' });
 });
 
 test('a failed stage hard-stops the pipeline', async () => {

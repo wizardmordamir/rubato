@@ -79,7 +79,7 @@ import type {
 import { notesDir } from './orchestration';
 
 /** The watchdog launchd agent label (matches the installed plist). */
-const DEFAULT_LABEL = 'com.curt.agent-drain-watchdog';
+const DEFAULT_LABEL = 'com.local.agent-drain-watchdog';
 /** How much of a worker `.err` file to surface as a problem excerpt. */
 const ERR_EXCERPT_BYTES = 500;
 /** Default number of log lines a tail returns. */

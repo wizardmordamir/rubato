@@ -38,8 +38,8 @@ import {
 const SAMPLE_CONFIG = `# saved by drain-queue.sh 2026-06-15T01:00:50Z — set ENABLED=0 (or run --disable) to stop auto-restart
 ENABLED=1
 JOBS=3
-STARTDIR="/Users/curt/code/github/cursedalchemy"
-ADD_DIR="/Users/curt/code"
+STARTDIR="~/code/github/cursedalchemy"
+ADD_DIR="~/code"
 `;
 
 // A faithful copy of the real watchdog launchd plist.
@@ -48,11 +48,11 @@ const SAMPLE_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.curt.agent-drain-watchdog</string>
+  <string>com.local.agent-drain-watchdog</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/curt/code/workspaces/___Agent_Workspace/orchestration/watchdog.sh</string>
+    <string>~/code/workspaces/___Agent_Workspace/orchestration/watchdog.sh</string>
   </array>
   <key>StartInterval</key>
   <integer>60</integer>
@@ -66,8 +66,8 @@ describe('parseDrainConfig', () => {
     const cfg = parseDrainConfig(SAMPLE_CONFIG);
     expect(cfg.enabled).toBe(true);
     expect(cfg.jobs).toBe(3);
-    expect(cfg.startDir).toBe('/Users/curt/code/github/cursedalchemy');
-    expect(cfg.addDir).toBe('/Users/curt/code');
+    expect(cfg.startDir).toBe('~/code/github/cursedalchemy');
+    expect(cfg.addDir).toBe('~/code');
     expect(cfg.thinkingLevel).toBeUndefined();
     expect(cfg.fastMode).toBeUndefined();
     expect(cfg.extra).toEqual({});
@@ -223,8 +223,8 @@ describe('parseActiveRun', () => {
     model: 'claude-opus-4-8',
     thinkingLevel: 'high',
     fastMode: '',
-    startDir: '/Users/curt/code/github/cursedalchemy',
-    addDir: '/Users/curt/code',
+    startDir: '~/code/github/cursedalchemy',
+    addDir: '~/code',
   });
 
   test('parses what the drainer wrote (pid/pgid + effective settings)', () => {
@@ -235,7 +235,7 @@ describe('parseActiveRun', () => {
     expect(run?.model).toBe('claude-opus-4-8');
     expect(run?.thinkingLevel).toBe('high');
     expect(run?.fastMode).toBe(''); // empty string preserved (off)
-    expect(run?.startDir).toBe('/Users/curt/code/github/cursedalchemy');
+    expect(run?.startDir).toBe('~/code/github/cursedalchemy');
   });
 
   test('malformed / empty / no-pid JSON → undefined', () => {
@@ -351,7 +351,7 @@ describe('parseWatchdogStatus', () => {
 describe('launchd plist', () => {
   test('parses label, interval, and program', () => {
     const info = parseLaunchdPlist(SAMPLE_PLIST);
-    expect(info.label).toBe('com.curt.agent-drain-watchdog');
+    expect(info.label).toBe('com.local.agent-drain-watchdog');
     expect(info.intervalSeconds).toBe(60);
     expect(info.program?.endsWith('watchdog.sh')).toBe(true);
   });
@@ -360,7 +360,7 @@ describe('launchd plist', () => {
     const updated = setPlistInterval(SAMPLE_PLIST, 300);
     expect(parseLaunchdPlist(updated).intervalSeconds).toBe(300);
     // Untouched keys survive.
-    expect(updated).toContain('com.curt.agent-drain-watchdog');
+    expect(updated).toContain('com.local.agent-drain-watchdog');
   });
 
   test('setPlistInterval inserts StartInterval when missing', () => {
@@ -625,8 +625,8 @@ describe('buildWatchdogCommands', () => {
   const paths: CommandPaths = {
     runner: '/orch/drain-queue.sh',
     watchdogScript: '/orch/watchdog.sh',
-    plist: '/LA/com.curt.agent-drain-watchdog.plist',
-    label: 'com.curt.agent-drain-watchdog',
+    plist: '/LA/com.local.agent-drain-watchdog.plist',
+    label: 'com.local.agent-drain-watchdog',
     queue: '/agent/TASKS.md',
     runsDir: '/orch/runs',
     watchdogLog: '/orch/watchdog.log',
@@ -640,7 +640,7 @@ describe('buildWatchdogCommands', () => {
     expect(cmds.some((c) => c.category === 'control')).toBe(true);
     expect(cmds.some((c) => c.category === 'logs')).toBe(true);
     expect(cmds.find((c) => c.id === 'start-default')?.command).toBe('/orch/drain-queue.sh');
-    expect(cmds.find((c) => c.id === 'wd-stop')?.command).toContain('/LA/com.curt.agent-drain-watchdog.plist');
+    expect(cmds.find((c) => c.id === 'wd-stop')?.command).toContain('/LA/com.local.agent-drain-watchdog.plist');
     // Every command is non-empty + uniquely id'd.
     expect(new Set(cmds.map((c) => c.id)).size).toBe(cmds.length);
   });

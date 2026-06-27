@@ -113,7 +113,7 @@ function buildAskPrompt(task: TaskRow, markers: string): string {
     ``,
     `You have full local access. Investigate the ACTUAL current state before answering — never`,
     `guess. Useful sources:`,
-    `- the repos under /Users/curt/code/github (nova, cursedalchemy, rubato, cwip, cursedbelt):`,
+    `- the repos under ~/code/github`,
     `  read code, \`git log\`/\`git status\`, recent commits.`,
     `- the orchestrator DB at ~/.taskq/taskq.sqlite via \`sqlite3\`: task status, what's running /`,
     `  done / failed, completion summaries (e.g. \`SELECT slug,status,repo FROM tasks ...\`).`,

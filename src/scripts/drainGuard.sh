@@ -11,7 +11,7 @@
 CWIP_DIR="$HOME/code/github/cwip"
 RU_DIR="$HOME/code/github/rubato"
 LOG="$HOME/.taskq/drain-guard.log"
-BUN="/Users/curt/.bun/bin/bun"
+BUN="$HOME/.bun/bin/bun"
 DB="$HOME/.taskq/taskq.sqlite"
 LAUNCHD_LABEL="com.taskq.drain-guard"
 PLIST_PATH="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"

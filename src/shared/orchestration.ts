@@ -777,7 +777,7 @@ export interface WatchdogStatusLine {
 
 /** Parsed launchd plist for the watchdog agent (how often it ticks). */
 export interface LaunchdInfo {
-  /** The agent label (e.g. `com.curt.agent-drain-watchdog`). */
+  /** The agent label (e.g. `com.local.agent-drain-watchdog`). */
   label?: string;
   /** `StartInterval` in seconds (how often the watchdog runs). */
   intervalSeconds?: number;

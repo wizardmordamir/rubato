@@ -1,8 +1,32 @@
 {
   "name": "rubato",
   "version": "1.0.0",
-  "description": "Personal toolbox of TypeScript dev scripts and API helpers, run with bun.",
+  "description": "Toolbox of TypeScript dev scripts and API helpers, run with bun.",
   "type": "module",
+  "scripts": {
+    "biome": "bun x biome check --write --unsafe ./src",
+    "format": "bun x biome format --write ./src",
+    "lint": "bun x biome lint --write --unsafe ./src",
+    "tsc": "tsc --noEmit",
+    "test": "bun test",
+    "test:report": "bun run scripts/testReport.ts",
+    "done": "bun run scripts/done.ts",
+    "loadcheck": "bun run scripts/loadcheck.ts",
+    "e2e": "bun x playwright test -c e2e/playwright.config.ts",
+    "e2e:grep": "bun x playwright test -c e2e/playwright.config.ts -g",
+    "setup": "bun run scripts/setup.ts",
+    "relink": "bun run scripts/relinkFirstParty.ts",
+    "postinstall": "bun run scripts/relinkFirstParty.ts",
+    "update": "bun update --latest",
+    "serve": "bun --hot run src/scripts/serve.ts",
+    "dev": "bun run scripts/dev.ts",
+    "web:dev": "cd ui && bun run dev",
+    "web:build": "bun scripts/buildCache check ui || (cd ui && bun install && bun run build && bun run build:lib && cd .. && bun scripts/buildCache save ui)",
+    "build:lib": "cd ui && bun run build:lib",
+    "clean": "bun scripts/withTimeout 3000 rm -rf dist ui/dist && bun scripts/buildCache clean",
+    "build": "bun run scripts/build.ts",
+    "prepublishOnly": "bun run tsc && bun run test && bun run web:build && bun run build"
+  },
   "bin": {
     "rubato-setup": "./dist/scripts/setup-aliases.js"
   },
@@ -76,34 +100,6 @@
   "engines": {
     "bun": ">=1.0.0"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/wizardmordamir/rubato.git"
-  },
-  "scripts": {
-    "biome": "bun x biome check --write --unsafe ./src",
-    "format": "bun x biome format --write ./src",
-    "lint": "bun x biome lint --write --unsafe ./src",
-    "tsc": "tsc --noEmit",
-    "test": "bun test",
-    "test:report": "bun run scripts/testReport.ts",
-    "done": "bun run scripts/done.ts",
-    "loadcheck": "bun run scripts/loadcheck.ts",
-    "e2e": "bun x playwright test -c e2e/playwright.config.ts",
-    "e2e:grep": "bun x playwright test -c e2e/playwright.config.ts -g",
-    "setup": "bun run scripts/setup.ts",
-    "relink": "bun run scripts/relinkFirstParty.ts",
-    "postinstall": "bun run scripts/relinkFirstParty.ts",
-    "update": "bun update --latest",
-    "serve": "bun --hot run src/scripts/serve.ts",
-    "dev": "bun run scripts/dev.ts",
-    "web:dev": "cd ui && bun run dev",
-    "web:build": "bun scripts/buildCache check ui || (cd ui && bun install && bun run build && bun run build:lib && cd .. && bun scripts/buildCache save ui)",
-    "build:lib": "cd ui && bun run build:lib",
-    "clean": "bun scripts/withTimeout 3000 rm -rf dist ui/dist && bun scripts/buildCache clean",
-    "build": "bun run scripts/build.ts",
-    "prepublishOnly": "bun run tsc && bun run test && bun run web:build && bun run build"
-  },
   "keywords": [
     "scripts",
     "tools",
@@ -111,8 +107,8 @@
   ],
   "license": "ISC",
   "dependencies": {
-    "cursedbelt": "link:cursedbelt",
-    "cwip": "link:cwip",
+    "cursedbelt": "^0.0.0",
+    "cwip": "^2.7.0",
     "exceljs": "^4.4.0",
     "hyperformula": "^3.3.0",
     "yaml": "^2.9.0"

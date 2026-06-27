@@ -9,6 +9,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { $ } from 'bun';
+import { logger } from 'cwip';
 import type { AppAiConfig, AppApi, CommandType, KnownApiName } from './appApis';
 import { APPS_FILE, expandPath } from './config';
 
@@ -342,6 +343,8 @@ export function hasUserData(app: AppConfig): boolean {
 
 /** Every string by which a query can match this app (deduped, non-empty). */
 export function matchKeys(app: AppConfig): string[] {
+  // these can have dups when backups copies of the same repo are in multiple dirs:
+  // app.name, app.dirName, app.repoName, app.packageJsonName
   const raw = [app.name, app.dirName, app.repoName, app.packageJsonName, ...(app.aliases ?? [])];
   const seen = new Set<string>();
   const keys: string[] = [];
@@ -545,9 +548,15 @@ function pickMatch(query: string, apps: AppConfig[]): AppConfig | null {
 
   if (matches.length === 0) return null;
   if (matches.length > 1) {
+    // find a match by alias
+    const bestMatch = matches.find((m) => m.aliases.includes(query));
+    if (bestMatch) {
+      return bestMatch;
+    }
+
     const list = matches.map((m) => `  - ${m.name}  (${m.absolutePath})`).join('\n');
-    throw new Error(
-      `rubato: "${query}" is ambiguous — it matches:\n${list}\nRemove the shared key or rename one in ${APPS_FILE}.`,
+    logger.warn(
+      `rubato: "${query}" is ambiguous — it matches:\n${list}\nRemove the shared key or rename one in ${APPS_FILE}. Using first match`,
     );
   }
 

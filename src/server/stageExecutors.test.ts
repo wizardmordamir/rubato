@@ -114,9 +114,9 @@ describe('transform stage executor', () => {
           },
         },
       ]),
-      { dir, vars: { WHO: 'curt' }, executors: stageExecutors },
+      { dir, vars: { WHO: 'name' }, executors: stageExecutors },
     );
-    expect(result.vars.NAME).toBe('curt');
+    expect(result.vars.NAME).toBe('name');
   });
 
   test('fails the stage (clear reason) when the source var is missing', async () => {
