@@ -9,7 +9,7 @@ function app(over: Partial<AppConfig> & { name: string }): AppConfig {
 describe('matchesGroup', () => {
   test('exact and nested matches; null never matches', () => {
     expect(matchesGroup('github', 'github')).toBe(true);
-    expect(matchesGroup('work/fb', 'work')).toBe(true);
+    expect(matchesGroup('work/fieldBook', 'work')).toBe(true);
     expect(matchesGroup('workspace', 'work')).toBe(false); // not a path boundary
     expect(matchesGroup(null, 'work')).toBe(false);
   });
@@ -28,7 +28,7 @@ describe('appMatchesFilter', () => {
 describe('selectApps', () => {
   const apps = [
     app({ name: 'a', group: 'github', aliases: ['ay'] }),
-    app({ name: 'b', group: 'work/fb' }),
+    app({ name: 'b', group: 'work/fieldBook' }),
     app({ name: 'c', group: 'github', ignoreCommandTypes: ['git'] }),
     app({ name: 'd', group: 'github', missing: true }),
   ];
